@@ -15,31 +15,31 @@ import (
 
 // TelegramBot implements Telegram channel
 type TelegramBot struct {
-	botToken   string
-	manager    *MessageManager
-	allowedIDs map[int64]bool
-	webhookURL string
+	botToken     string
+	manager      *MessageManager
+	userManager  *UserManager
+	webhookURL   string
 	webhookSecret string
-	server     *http.Server
-	stopChan   chan struct{}
-	ctx         context.Context
+	server       *http.Server
+	stopChan     chan struct{}
+	adminID      int64
+	ctx          context.Context
 }
 
 // NewTelegramBot creates a new Telegram bot instance
-func NewTelegramBot(token string, allowedUsers []int64) (*TelegramBot, error) {
-	allowedIDs := make(map[int64]bool)
-	for _, id := range allowedUsers {
-		allowedIDs[id] = true
-	}
+func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*TelegramBot, error) {
+	userManager := NewUserManager(allowedUsers)
 
 	return &TelegramBot{
-		botToken:      token,
-		manager:       NewMessageManager(),
-		allowedIDs:     allowedIDs,
+		botToken:     token,
+		manager:      NewMessageManager(),
+		userManager:  userManager,
+		allowedIDs:    nil, // Use userManager instead
 		webhookURL:     "",
 		webhookSecret: "",
 		server:        nil,
 		stopChan:       make(chan struct{}),
+		adminID:       adminID,
 		ctx:            context.Background(),
 	}, nil
 }
@@ -56,7 +56,7 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 	log.Println("📱 Telegram bot starting...")
 
 	// Start webhook server (if configured)
-	if b.webhookURL != "" && b.webhookSecret != "" {
+	if b.webhookURL != "" {
 		b.server = &http.Server{
 			Addr:    b.webhookURL,
 			Handler:  http.HandlerFunc(b.handleWebhook),
@@ -100,6 +100,7 @@ func (b *TelegramBot) Stop() error {
 // handleWebhook handles incoming Telegram webhook updates
 func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// TODO: Verify webhook secret
+	// secret := r.URL.Query().Get("secret")
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -127,19 +128,114 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if user is allowed
-	if !b.isAllowed(update.Message.From.ID) {
+	if !b.userManager.Authorize(update.Message.From.ID) {
 		log.Printf("🚫 Unauthorized access attempt: User ID %d", update.Message.From.ID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Convert to protocol message
+	// Handle commands
+	if err := b.handleCommand(update.Message); err != nil {
+		log.Printf("Error handling command: %v", err)
+	}
+
+	// Convert to protocol message and send to manager
 	msg := b.convertToProtocolMessage(update.Message)
 
-	// Send to manager
 	if err := b.manager.Send(msg); err != nil {
 		log.Printf("Error sending to message manager: %v", err)
 	}
+}
+
+// handleCommand processes bot commands
+func (b *TelegramBot) handleCommand(msg *TelegramMessage) error {
+	if msg.Text == "" {
+		return nil
+	}
+
+	// Check if it starts with /
+	if msg.Text[0] != '/' {
+		return nil
+	}
+
+	// Parse command
+	parts := splitCommand(msg.Text)
+	if len(parts) == 0 {
+		return nil
+	}
+
+	command := parts[0]
+
+	switch command {
+	case "/adduser":
+		if len(parts) != 2 {
+			return fmt.Errorf("usage: /adduser <user_id>")
+		}
+		return b.userManager.AddUser(parseUserID(parts[1]))
+	case "/removeuser":
+		if len(parts) != 2 {
+			return fmt.Errorf("usage: /removeuser <user_id>")
+		}
+		return b.userManager.RemoveUser(parseUserID(parts[1]))
+	case "/listusers":
+		users := b.userManager.GetAllowedUsers()
+		response := fmt.Sprintf("✅ Authorized users:\n%s", formatUserList(users))
+		_, err := b.SendMessage(b.ctx, msg.Chat.ID, response)
+		return err
+	case "/status":
+		status := fmt.Sprintf("🤖 Bot Status:\n✅ Running\n👤 Admin: %d\n👥 Webhook: %s", b.adminID, b.webhookURL)
+		_, err := b.SendMessage(b.ctx, msg.Chat.ID, status)
+		return err
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
+}
+
+// splitCommand splits command into parts
+func splitCommand(text string) []string {
+	parts := make([]string, 0)
+	current := ""
+	inQuotes := false
+
+	for _, ch := range text {
+		if ch == ' ' {
+			inQuotes = true
+		} else if ch == '"' {
+			inQuotes = true
+		} else if (ch == ' ' || ch == '\t') && !inQuotes {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		} else {
+			current += string(ch)
+		}
+	}
+
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	return parts
+}
+
+// parseUserID extracts user ID from command argument
+func parseUserID(arg string) int64 {
+	var id int64
+	_, err := fmt.Sscanf(arg, "%d", &id)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// formatUserList formats user list for display
+func formatUserList(users []int64) string {
+	result := ""
+	for _, id := range users {
+		result += fmt.Sprintf("  - %d\n", id)
+	}
+	return result
 }
 
 // TelegramMessage represents a Telegram message
@@ -163,11 +259,6 @@ type TelegramChat struct {
 	ID int64 `json:"id"`
 }
 
-// isAllowed checks if user ID is in allowlist
-func (b *TelegramBot) isAllowed(userID int64) bool {
-	return b.allowedIDs[userID]
-}
-
 // convertToProtocolMessage converts Telegram message to protocol message
 func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage) *protocol.Message {
 	return &protocol.Message{
@@ -184,7 +275,6 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage) *protocol.M
 
 // SendMessage sends a message to Telegram user
 func (b *TelegramBot) SendMessage(ctx context.Context, chatID int64, text string) error {
-	// Use Telegram Bot API
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", b.botToken)
 
 	payload := map[string]interface{}{
@@ -223,7 +313,7 @@ func (b *TelegramBot) SendTypingIndicator(ctx context.Context, chatID int64) err
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendChatAction", b.botToken)
 
 	payload := map[string]interface{}{
-		"chat_id":    chatID,
+		"chat_id": chatID,
 		"action":     "typing",
 	}
 
