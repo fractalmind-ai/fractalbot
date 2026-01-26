@@ -1,0 +1,36 @@
+# FractalBot Configuration Example
+# Copy this to config.yaml and customize for your setup
+
+gateway:
+  # Port for WebSocket server
+  port: 18789
+  # Bind address (127.0.0.1 for local only)
+  bind: 127.0.0.1
+
+channels:
+  # Telegram channel configuration
+  telegram:
+    enabled: true
+    # Get from @BotFather on Telegram
+    botToken: "your_bot_token_here"
+    # List of Telegram User IDs allowed to interact
+    allowedUsers:
+      - 1234567890
+
+  # Slack channel configuration (optional)
+  slack:
+    enabled: false
+    botToken: "xoxb-your-bot-token"
+    appToken: "xapp-your-app-token"
+
+  # Discord channel configuration (optional)
+  discord:
+    enabled: false
+    # Get from Discord Developer Portal
+    token: "your-bot-token"
+
+agents:
+  # Workspace directory for agent sessions
+  workspace: ./workspace
+  # Maximum concurrent agent sessions
+  maxConcurrent: 4
