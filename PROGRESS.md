@@ -2,8 +2,9 @@
 
 ## Status Update
 **Date**: 2026-01-27 07:26 GMT+8
+**Last Update**: 2026-01-27 07:33 GMT+8
 **Phase**: Phase 2 - Channel Integrations (Telegram Bot)
-**Overall Progress**: ~40%
+**Overall Progress**: ~45%
 
 ---
 
@@ -11,8 +12,9 @@
 
 ### Commits (Local Only - Not Pushed)
 
-1. **f9648ac** - feat: remove telegram-bot-api dependency, add native HTTP webhook support
-2. **8fecb6d** - feat: add channel and agent management framework (earlier commit, lost)
+1. **3ae854b** - feat: add user authorization and command handling
+2. **f9648ac** - feat: remove telegram-bot-api dependency, add native HTTP webhook support
+3. **8fecb6d** - feat: add channel and agent management framework (earlier commit, lost)
 
 ### Files Modified/Added
 - ✅ `internal/channels/telegram.go` - Native HTTP-based Telegram Bot implementation
