@@ -67,9 +67,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start HTTP server
 	s.httpServer = &http.Server{
-		Addr:     fmt.Sprintf("%s:%d", s.config.Gateway.Bind, s.config.Gateway.Port),
-		Handler:  mux,
-		ErrorLog: log.New(os.Stderr, "HTTP: ", log.LstdFlags),
+		Addr:              fmt.Sprintf("%s:%d", s.config.Gateway.Bind, s.config.Gateway.Port),
+		Handler:           mux,
+		ErrorLog:          log.New(os.Stderr, "HTTP: ", log.LstdFlags),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
@@ -121,6 +123,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
+
+	conn.SetReadLimit(readLimit)
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	clientID := r.URL.Query().Get("session")
 	if clientID == "" {

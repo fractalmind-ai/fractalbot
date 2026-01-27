@@ -3,9 +3,16 @@ package gateway
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 	"github.com/gorilla/websocket"
+)
+
+const (
+	readLimit = 64 * 1024
+	pongWait  = 60 * time.Second
+	writeWait = 10 * time.Second
 )
 
 // Client represents a connected WebSocket client
@@ -129,6 +136,7 @@ func (c *Client) Send(msg *protocol.Message) error {
 	c.sendLock.Lock()
 	defer c.sendLock.Unlock()
 
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 	return c.Conn.WriteJSON(msg)
 }
 

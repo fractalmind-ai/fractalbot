@@ -116,6 +116,19 @@ agents:
 ### Smoke Test (WebSocket Echo)
 
 ```bash
+# Minimal config for echo (no Telegram token required)
+cat > config.yaml <<'EOF'
+gateway:
+  port: 18789
+  bind: 127.0.0.1
+channels:
+  telegram:
+    enabled: false
+agents:
+  workspace: ./workspace
+  maxConcurrent: 1
+EOF
+
 # Terminal 1: start the gateway
 go run ./cmd/fractalbot --config config.yaml
 
