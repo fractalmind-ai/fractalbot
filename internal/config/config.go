@@ -9,9 +9,9 @@ import (
 
 // Config represents the main configuration
 type Config struct {
-	Gateway  *GatewayConfig  `yaml:"gateway"`
-	Channels *ChannelsConfig `yaml:"channels"`
-	Agents   *AgentsConfig   `yaml:"agents"`
+	Gateway  *GatewayConfig      `yaml:"gateway"`
+	Channels *ChannelsConfig      `yaml:"channels"`
+	Agents   *AgentsConfig       `yaml:"agents"`
 }
 
 // GatewayConfig contains gateway settings
@@ -29,16 +29,16 @@ type ChannelsConfig struct {
 
 // TelegramConfig contains Telegram channel settings
 type TelegramConfig struct {
-	Enabled      bool    `yaml:"enabled"`
-	BotToken     string  `yaml:"botToken,omitempty"`
-	AllowedUsers []int64 `yaml:"allowedUsers,omitempty"`
+	Enabled     bool     `yaml:"enabled"`
+	BotToken    string    `yaml:"botToken,omitempty"`
+	AllowedUsers []int64   `yaml:"allowedUsers,omitempty"`
 }
 
 // SlackConfig contains Slack channel settings
 type SlackConfig struct {
-	Enabled  bool   `yaml:"enabled,omitempty"`
-	BotToken string `yaml:"botToken,omitempty"`
-	AppToken string `yaml:"appToken,omitempty"`
+	Enabled    bool   `yaml:"enabled,omitempty"`
+	BotToken   string `yaml:"botToken,omitempty"`
+	AppToken   string `yaml:"appToken,omitempty"`
 }
 
 // DiscordConfig contains Discord channel settings
@@ -49,7 +49,7 @@ type DiscordConfig struct {
 
 // AgentsConfig contains agent runtime settings
 type AgentsConfig struct {
-	Workspace     string `yaml:"workspace"`
+	Workspace    string `yaml:"workspace"`
 	MaxConcurrent int    `yaml:"maxConcurrent"`
 }
 
@@ -95,7 +95,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Agents: &AgentsConfig{
-			Workspace:     "./workspace",
+			Workspace:    "./workspace",
 			MaxConcurrent: 4,
 		},
 	}
