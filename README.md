@@ -113,6 +113,22 @@ agents:
 ./fractalbot gateway --port 18789 --verbose
 ```
 
+### Smoke Test (WebSocket Echo)
+
+```bash
+# Terminal 1: start the gateway
+go run ./cmd/fractalbot --config config.yaml
+
+# Terminal 2: send an echo event
+go run ./cmd/ws-echo-client --url ws://127.0.0.1:18789/ws
+```
+
+Expected output (JSON echo):
+
+```json
+{"kind":"event","action":"echo","data":{"text":"hello"}}
+```
+
 ## 🔧 Development
 
 ### Project Structure

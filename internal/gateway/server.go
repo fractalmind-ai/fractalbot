@@ -4,25 +4,24 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/fractalmind-ai/fractalbot/internal/agent"
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
-	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
-	"nhooyr.io/websocket"
+	"github.com/gorilla/websocket"
 )
 
 // Server represents the gateway WebSocket server
 type Server struct {
-	config      *config.Config
-	upgrader    websocket.Upgrader
-	clients     map[string]*Client
+	config       *config.Config
+	upgrader     websocket.Upgrader
+	clients      map[string]*Client
 	clientsMutex sync.RWMutex
-	httpServer  *http.Server
+	httpServer   *http.Server
 	agentManager *agent.Manager
 }
 
@@ -37,17 +36,18 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Initialize agent manager
 	agentManager := agent.NewManager(cfg.Agents)
+	agentManager.ChannelManager = channelManager
 
 	return &Server{
-		config:      cfg,
-		upgrader:    websocket.Upgrader{
+		config: cfg,
+		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for now (TODO: add origin check)
 			},
 		},
-		clients:     make(map[string]*Client),
+		clients:      make(map[string]*Client),
 		agentManager: agentManager,
 	}, nil
 }
@@ -67,7 +67,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start HTTP server
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", s.config.Gateway.Bind, s.config.Gateway.Port),
+		Addr:     fmt.Sprintf("%s:%d", s.config.Gateway.Bind, s.config.Gateway.Port),
 		Handler:  mux,
 		ErrorLog: log.New(os.Stderr, "HTTP: ", log.LstdFlags),
 	}
@@ -80,8 +80,10 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Start channels
-	if err := s.agentManager.ChannelManager.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start channels: %w", err)
+	if s.agentManager.ChannelManager != nil {
+		if err := s.agentManager.ChannelManager.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start channels: %w", err)
+		}
 	}
 
 	// Start agent manager
