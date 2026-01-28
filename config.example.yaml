@@ -19,17 +19,29 @@ channels:
     allowedUsers:
       - 1234567890
 
-    # Webhook server (local)
+    # Mode controls how FractalBot receives Telegram updates.
+    # - polling: long polling via getUpdates (recommended for local/dev)
+    # - webhook: Telegram calls your HTTPS endpoint
+    # If empty, FractalBot auto-selects (webhook if webhook* configured, else polling).
+    mode: "polling"
+
+    # Long polling settings (only used in mode: polling)
+    pollingTimeoutSeconds: 25
+    pollingLimit: 100
+    # Persist next update offset (UpdateID+1) to avoid re-processing after restart
+    pollingOffsetFile: "./workspace/telegram.offset"
+
+    # Webhook server (local) (only used in mode: webhook)
     # If empty, webhook server will not start.
-    webhookListenAddr: "0.0.0.0:18790"
+    webhookListenAddr: ""
     webhookPath: "/telegram/webhook"
 
-    # Webhook registration (Telegram)
+    # Webhook registration (Telegram) (only used in mode: webhook)
     # If set, FractalBot will call Telegram setWebhook() on startup.
     # Must be publicly reachable HTTPS URL.
-    webhookPublicURL: "https://your-domain.example/telegram/webhook"
+    webhookPublicURL: ""
     # Verified via header: X-Telegram-Bot-Api-Secret-Token
-    webhookSecretToken: "replace-with-random-secret"
+    webhookSecretToken: ""
 
   # Slack channel configuration (optional)
   slack:

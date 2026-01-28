@@ -34,6 +34,17 @@ type TelegramConfig struct {
 	AllowedUsers []int64 `yaml:"allowedUsers,omitempty"`
 	AdminID      int64   `yaml:"adminID,omitempty"`
 
+	// Mode controls how FractalBot receives Telegram updates.
+	// Supported values: "polling", "webhook". Empty means auto.
+	Mode string `yaml:"mode,omitempty"`
+
+	// PollingTimeoutSeconds is the long polling timeout used by getUpdates().
+	PollingTimeoutSeconds int `yaml:"pollingTimeoutSeconds,omitempty"`
+	// PollingLimit is the maximum number of updates returned per request.
+	PollingLimit int `yaml:"pollingLimit,omitempty"`
+	// PollingOffsetFile persists the next update offset (UpdateID+1).
+	PollingOffsetFile string `yaml:"pollingOffsetFile,omitempty"`
+
 	// WebhookListenAddr is the local bind address for receiving webhooks.
 	// Example: "0.0.0.0:18790".
 	WebhookListenAddr string `yaml:"webhookListenAddr,omitempty"`

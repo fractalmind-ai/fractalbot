@@ -11,13 +11,20 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
-const defaultTelegramWebhookPath = "/telegram/webhook"
+const (
+	defaultTelegramWebhookPath          = "/telegram/webhook"
+	defaultTelegramPollingTimeout       = 25 * time.Second
+	defaultTelegramPollingLimit         = 100
+	maxTelegramRequestBodyBytes   int64 = 512 * 1024
+)
 
 // TelegramBot implements Telegram channel.
 type TelegramBot struct {
@@ -28,10 +35,19 @@ type TelegramBot struct {
 
 	adminID int64
 
+	mode string
+
 	webhookListenAddr  string
 	webhookPath        string
 	webhookPublicURL   string
 	webhookSecretToken string
+
+	pollingTimeout    time.Duration
+	pollingLimit      int
+	pollingOffsetFile string
+	nextUpdateID      int64
+
+	httpClient *http.Client
 
 	server    *http.Server
 	ctx       context.Context
@@ -51,12 +67,15 @@ func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*Telegra
 	}
 
 	return &TelegramBot{
-		botToken:    token,
-		userManager: userManager,
-		adminID:     adminID,
-		webhookPath: defaultTelegramWebhookPath,
-		ctx:         context.Background(),
-		startTime:   time.Now(),
+		botToken:       token,
+		userManager:    userManager,
+		adminID:        adminID,
+		webhookPath:    defaultTelegramWebhookPath,
+		ctx:            context.Background(),
+		startTime:      time.Now(),
+		pollingTimeout: defaultTelegramPollingTimeout,
+		pollingLimit:   defaultTelegramPollingLimit,
+		httpClient:     &http.Client{Timeout: 35 * time.Second},
 	}, nil
 }
 
@@ -68,6 +87,12 @@ func (b *TelegramBot) Name() string {
 // SetHandler sets the inbound message handler.
 func (b *TelegramBot) SetHandler(handler IncomingMessageHandler) {
 	b.handler = handler
+}
+
+// ConfigureMode sets the channel mode.
+// Supported values: "polling", "webhook". Empty means auto.
+func (b *TelegramBot) ConfigureMode(mode string) {
+	b.mode = strings.ToLower(strings.TrimSpace(mode))
 }
 
 // ConfigureWebhook configures webhook settings.
@@ -82,11 +107,55 @@ func (b *TelegramBot) ConfigureWebhook(listenAddr, path, publicURL, secretToken 
 	b.webhookSecretToken = strings.TrimSpace(secretToken)
 }
 
+// ConfigurePolling configures long polling settings.
+// timeoutSeconds defaults to 25 if <=0. limit defaults to 100 if <=0.
+// offsetFile, if set, persists next update offset to avoid re-processing after restart.
+func (b *TelegramBot) ConfigurePolling(timeoutSeconds int, limit int, offsetFile string) {
+	if timeoutSeconds > 0 {
+		b.pollingTimeout = time.Duration(timeoutSeconds) * time.Second
+	} else {
+		b.pollingTimeout = defaultTelegramPollingTimeout
+	}
+
+	if limit > 0 {
+		b.pollingLimit = limit
+	} else {
+		b.pollingLimit = defaultTelegramPollingLimit
+	}
+
+	b.pollingOffsetFile = strings.TrimSpace(offsetFile)
+}
+
 // Start starts the Telegram bot.
 func (b *TelegramBot) Start(ctx context.Context) error {
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
 	log.Println("📱 Telegram bot starting...")
+
+	mode := b.mode
+	if mode == "" || mode == "auto" {
+		if b.webhookListenAddr != "" || b.webhookPublicURL != "" {
+			mode = "webhook"
+		} else {
+			mode = "polling"
+		}
+	}
+	if mode != "polling" && mode != "webhook" {
+		return fmt.Errorf("invalid telegram mode: %q (expected polling|webhook)", b.mode)
+	}
+	b.mode = mode
+
+	if mode == "polling" {
+		if err := b.deleteWebhook(b.ctx); err != nil {
+			return err
+		}
+		if err := b.loadPollingOffset(); err != nil {
+			return err
+		}
+		b.startPollingLoop()
+		log.Printf("🔁 Telegram polling enabled (timeout=%s, limit=%d, nextUpdateID=%d)", b.pollingTimeout, b.pollingLimit, b.nextUpdateID)
+		return nil
+	}
 
 	if b.webhookListenAddr != "" {
 		mux := http.NewServeMux()
@@ -139,7 +208,7 @@ func (b *TelegramBot) Stop() error {
 	return nil
 }
 
-type telegramSetWebhookResponse struct {
+type telegramBoolResponse struct {
 	OK          bool   `json:"ok"`
 	Result      bool   `json:"result"`
 	ErrorCode   int    `json:"error_code"`
@@ -167,8 +236,7 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call setWebhook: %w", err)
 	}
@@ -179,7 +247,7 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 		return fmt.Errorf("telegram setWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var parsed telegramSetWebhookResponse
+	var parsed telegramBoolResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return fmt.Errorf("failed to parse setWebhook response: %w", err)
 	}
@@ -188,6 +256,204 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 			return fmt.Errorf("telegram setWebhook failed: %s", parsed.Description)
 		}
 		return fmt.Errorf("telegram setWebhook failed")
+	}
+
+	return nil
+}
+
+func (b *TelegramBot) deleteWebhook(ctx context.Context) error {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/deleteWebhook", b.botToken)
+
+	payload := map[string]interface{}{
+		"drop_pending_updates": false,
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal deleteWebhook payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("failed to create deleteWebhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call deleteWebhook: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram deleteWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed telegramBoolResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("failed to parse deleteWebhook response: %w", err)
+	}
+	if !parsed.OK || !parsed.Result {
+		if parsed.Description != "" {
+			return fmt.Errorf("telegram deleteWebhook failed: %s", parsed.Description)
+		}
+		return fmt.Errorf("telegram deleteWebhook failed")
+	}
+
+	return nil
+}
+
+type telegramUpdate struct {
+	UpdateID int64            `json:"update_id"`
+	Message  *TelegramMessage `json:"message"`
+}
+
+type telegramGetUpdatesResponse struct {
+	OK          bool             `json:"ok"`
+	Result      []telegramUpdate `json:"result"`
+	ErrorCode   int              `json:"error_code"`
+	Description string           `json:"description"`
+}
+
+func (b *TelegramBot) getUpdates(ctx context.Context) ([]telegramUpdate, error) {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", b.botToken)
+
+	payload := map[string]interface{}{
+		"timeout":         int(b.pollingTimeout.Seconds()),
+		"limit":           b.pollingLimit,
+		"allowed_updates": []string{"message"},
+	}
+	if b.nextUpdateID > 0 {
+		payload["offset"] = b.nextUpdateID
+	}
+
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal getUpdates payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create getUpdates request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call getUpdates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("telegram getUpdates returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed telegramGetUpdatesResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse getUpdates response: %w", err)
+	}
+	if !parsed.OK {
+		if parsed.Description != "" {
+			return nil, fmt.Errorf("telegram getUpdates failed: %s", parsed.Description)
+		}
+		return nil, fmt.Errorf("telegram getUpdates failed")
+	}
+
+	return parsed.Result, nil
+}
+
+func (b *TelegramBot) startPollingLoop() {
+	go func() {
+		backoff := 1 * time.Second
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			default:
+			}
+
+			updates, err := b.getUpdates(b.ctx)
+			if err != nil {
+				log.Printf("Telegram polling error: %v", err)
+				time.Sleep(backoff)
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
+				continue
+			}
+			backoff = 1 * time.Second
+
+			for _, update := range updates {
+				b.handleUpdate(update)
+				b.nextUpdateID = update.UpdateID + 1
+				if err := b.persistPollingOffset(); err != nil {
+					log.Printf("Telegram polling offset persist error: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func (b *TelegramBot) loadPollingOffset() error {
+	if b.pollingOffsetFile == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(b.pollingOffsetFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to read telegram polling offset file: %w", err)
+	}
+
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil
+	}
+
+	next, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid telegram polling offset value %q: %w", text, err)
+	}
+	if next < 0 {
+		next = 0
+	}
+	b.nextUpdateID = next
+	return nil
+}
+
+func (b *TelegramBot) persistPollingOffset() error {
+	if b.pollingOffsetFile == "" {
+		return nil
+	}
+
+	dir := filepath.Dir(b.pollingOffsetFile)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create offset dir: %w", err)
+		}
+	}
+
+	tmp, err := os.CreateTemp(dir, ".telegram-offset-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp offset file: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(tmp.Name())
+	}()
+
+	if _, err := tmp.WriteString(strconv.FormatInt(b.nextUpdateID, 10) + "\n"); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to write temp offset file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp offset file: %w", err)
+	}
+
+	if err := os.Rename(tmp.Name(), b.pollingOffsetFile); err != nil {
+		return fmt.Errorf("failed to rename temp offset file: %w", err)
 	}
 
 	return nil
@@ -208,7 +474,7 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxTelegramRequestBodyBytes))
 	if err != nil {
 		log.Printf("Failed to read Telegram webhook body: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -216,34 +482,37 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	var update struct {
-		UpdateID int64            `json:"update_id"`
-		Message  *TelegramMessage `json:"message"`
-	}
-
+	var update telegramUpdate
 	if err := json.Unmarshal(body, &update); err != nil {
 		log.Printf("Failed to parse Telegram webhook update: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
+	b.handleUpdate(update)
+}
+
+func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 	if update.Message == nil || update.Message.From == nil || update.Message.Chat == nil {
 		return
 	}
+	b.handleIncomingMessage(update.Message)
+}
 
-	if !b.userManager.Authorize(update.Message.From.ID) {
-		log.Printf("🚫 Unauthorized Telegram user: %d", update.Message.From.ID)
+func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
+	if !b.userManager.Authorize(message.From.ID) {
+		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
 		return
 	}
 
-	if handled, cmdErr := b.handleCommand(update.Message); handled {
+	if handled, cmdErr := b.handleCommand(message); handled {
 		if cmdErr != nil {
-			_ = b.SendMessage(b.ctx, update.Message.Chat.ID, fmt.Sprintf("❌ %v", cmdErr))
+			_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", cmdErr))
 		}
 		return
 	}
 
-	msg := b.convertToProtocolMessage(update.Message)
+	msg := b.convertToProtocolMessage(message)
 
 	if b.handler != nil {
 		replyText, err := b.handler.HandleIncoming(b.ctx, msg)
@@ -252,14 +521,14 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			replyText = fmt.Sprintf("❌ %v", err)
 		}
 		if strings.TrimSpace(replyText) != "" {
-			_ = b.SendMessage(b.ctx, update.Message.Chat.ID, replyText)
+			_ = b.SendMessage(b.ctx, message.Chat.ID, replyText)
 		}
 		return
 	}
 
-	if update.Message.Text != "" {
-		reply := fmt.Sprintf("echo: %s", update.Message.Text)
-		_ = b.SendMessage(b.ctx, update.Message.Chat.ID, reply)
+	if message.Text != "" {
+		reply := fmt.Sprintf("echo: %s", message.Text)
+		_ = b.SendMessage(b.ctx, message.Chat.ID, reply)
 	}
 }
 
@@ -331,11 +600,16 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 
 	case "/status":
 		uptime := time.Since(b.startTime).Truncate(time.Second)
-		status := fmt.Sprintf("🤖 Bot Status:\n✅ Running\n👤 Admin: %d\n🌐 Webhook listen: %s%s\n🔗 Webhook public: %s\n⏱ Uptime: %s",
+		status := fmt.Sprintf(
+			"🤖 Bot Status:\n✅ Running\n👤 Admin: %d\n🔧 Mode: %s\n🌐 Webhook listen: %s%s\n🔗 Webhook public: %s\n🔁 Polling timeout: %s\n🔁 Polling limit: %d\n🧾 Polling offset file: %s\n⏱ Uptime: %s",
 			b.adminID,
+			b.mode,
 			b.webhookListenAddr,
 			b.webhookPath,
 			b.webhookPublicURL,
+			b.pollingTimeout,
+			b.pollingLimit,
+			b.pollingOffsetFile,
 			uptime,
 		)
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, status)
@@ -422,8 +696,7 @@ func (b *TelegramBot) SendMessage(ctx context.Context, chatID int64, text string
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
