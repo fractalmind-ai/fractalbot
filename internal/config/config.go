@@ -70,10 +70,32 @@ type DiscordConfig struct {
 	Token   string `yaml:"token,omitempty"`
 }
 
+// OhMyCodeConfig contains integration settings for the oh-my-code workspace.
+// This is a minimal bridge to route Telegram messages to the oh-my-code agent-manager.
+type OhMyCodeConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// Workspace is the path to the oh-my-code repository.
+	// Example: "/home/elliot245/workspace/elliot245/oh-my-code".
+	Workspace string `yaml:"workspace,omitempty"`
+
+	// AgentManagerScript is the path (relative to Workspace or absolute) to the agent-manager entrypoint.
+	// Default: ".claude/skills/agent-manager/scripts/main.py".
+	AgentManagerScript string `yaml:"agentManagerScript,omitempty"`
+
+	// DefaultAgent is the agent name to assign tasks to when a Telegram message is received.
+	// Example: "qa-1".
+	DefaultAgent string `yaml:"defaultAgent,omitempty"`
+
+	// AssignTimeoutSeconds limits how long we wait for agent-manager output.
+	AssignTimeoutSeconds int `yaml:"assignTimeoutSeconds,omitempty"`
+}
+
 // AgentsConfig contains agent runtime settings.
 type AgentsConfig struct {
-	Workspace     string `yaml:"workspace"`
-	MaxConcurrent int    `yaml:"maxConcurrent"`
+	Workspace     string          `yaml:"workspace"`
+	MaxConcurrent int             `yaml:"maxConcurrent"`
+	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
 }
 
 // LoadConfig loads configuration from file.

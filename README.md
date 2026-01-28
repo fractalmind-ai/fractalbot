@@ -119,6 +119,13 @@ channels:
 agents:
   workspace: ./workspace
   maxConcurrent: 4
+
+  # Optional: route Telegram messages to oh-my-code agent-manager
+  # (requires python3 + tmux + agent-manager installed in that workspace)
+  ohMyCode:
+    enabled: false
+    workspace: "/home/elliot245/workspace/elliot245/oh-my-code"
+    defaultAgent: "qa-1"
 ```
 
 ### Running the Gateway
