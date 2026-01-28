@@ -103,13 +103,18 @@ channels:
     allowedUsers:
       - 1234567890
 
-    # Optional: start a local webhook server
-    webhookListenAddr: "0.0.0.0:18790"
-    webhookPath: "/telegram/webhook"
+    # Recommended: long polling (local/dev friendly)
+    mode: "polling"
+    pollingTimeoutSeconds: 25
+    pollingLimit: 100
+    pollingOffsetFile: "./workspace/telegram.offset"
 
-    # Optional: register webhook with Telegram on startup
-    webhookPublicURL: "https://your-domain.example/telegram/webhook"
-    webhookSecretToken: "replace-with-random-secret"
+    # Optional: webhook mode (public HTTPS required)
+    # mode: "webhook"
+    # webhookListenAddr: "0.0.0.0:18790"
+    # webhookPath: "/telegram/webhook"
+    # webhookPublicURL: "https://your-domain.example/telegram/webhook"
+    # webhookSecretToken: "replace-with-random-secret"
 
 agents:
   workspace: ./workspace

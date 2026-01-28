@@ -45,6 +45,12 @@ func (m *Manager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to init telegram bot: %w", err)
 		}
 
+		bot.ConfigureMode(m.cfg.Telegram.Mode)
+		bot.ConfigurePolling(
+			m.cfg.Telegram.PollingTimeoutSeconds,
+			m.cfg.Telegram.PollingLimit,
+			m.cfg.Telegram.PollingOffsetFile,
+		)
 		bot.ConfigureWebhook(
 			m.cfg.Telegram.WebhookListenAddr,
 			m.cfg.Telegram.WebhookPath,
