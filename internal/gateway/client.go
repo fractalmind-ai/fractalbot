@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	readLimit = 64 * 1024
-	pongWait  = 60 * time.Second
-	writeWait = 10 * time.Second
+	readLimit  = 64 * 1024
+	pongWait   = 60 * time.Second
+	writeWait  = 10 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 )
 
 // Client represents a connected WebSocket client
@@ -38,6 +39,8 @@ func NewClient(id string, conn *websocket.Conn, server *Server) *Client {
 func (c *Client) Handle() {
 	defer c.Close()
 
+	go c.pingLoop()
+
 	for {
 		select {
 		case <-c.closeChan:
@@ -56,6 +59,32 @@ func (c *Client) Handle() {
 			c.ProcessMessage(&msg)
 		}
 	}
+}
+
+func (c *Client) pingLoop() {
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.closeChan:
+			return
+		case <-ticker.C:
+			if err := c.sendPing(); err != nil {
+				log.Printf("Ping failed [%s]: %v", c.ID, err)
+				c.Close()
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) sendPing() error {
+	c.sendLock.Lock()
+	defer c.sendLock.Unlock()
+
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+	return c.Conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
 }
 
 // ProcessMessage handles incoming message based on type
@@ -149,6 +178,9 @@ func (c *Client) Close() {
 	default:
 		close(c.closeChan)
 		c.Conn.Close()
+		if c.Server != nil {
+			c.Server.removeClient(c.ID)
+		}
 		log.Printf("🔌 Client disconnected: %s", c.ID)
 	}
 }
