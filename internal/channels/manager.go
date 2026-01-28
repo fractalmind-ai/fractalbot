@@ -10,13 +10,23 @@ import (
 
 // Manager starts and stops configured channels.
 type Manager struct {
-	cfg      *config.ChannelsConfig
+	cfg     *config.ChannelsConfig
+	handler IncomingMessageHandler
+
 	telegram *TelegramBot
 }
 
 // NewManager creates a new channel manager.
 func NewManager(cfg *config.ChannelsConfig) *Manager {
 	return &Manager{cfg: cfg}
+}
+
+// SetHandler sets the inbound message handler used by channels.
+func (m *Manager) SetHandler(handler IncomingMessageHandler) {
+	m.handler = handler
+	if m.telegram != nil {
+		m.telegram.SetHandler(handler)
+	}
 }
 
 // Start starts configured channels.
@@ -41,6 +51,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.cfg.Telegram.WebhookPublicURL,
 			m.cfg.Telegram.WebhookSecretToken,
 		)
+		bot.SetHandler(m.handler)
 
 		m.telegram = bot
 		if err := bot.Start(ctx); err != nil {

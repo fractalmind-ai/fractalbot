@@ -23,7 +23,7 @@ const defaultTelegramWebhookPath = "/telegram/webhook"
 type TelegramBot struct {
 	botToken string
 
-	manager     *MessageManager
+	handler     IncomingMessageHandler
 	userManager *UserManager
 
 	adminID int64
@@ -52,7 +52,6 @@ func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*Telegra
 
 	return &TelegramBot{
 		botToken:    token,
-		manager:     NewMessageManager(),
 		userManager: userManager,
 		adminID:     adminID,
 		webhookPath: defaultTelegramWebhookPath,
@@ -64,6 +63,11 @@ func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*Telegra
 // Name returns the bot name.
 func (b *TelegramBot) Name() string {
 	return "telegram"
+}
+
+// SetHandler sets the inbound message handler.
+func (b *TelegramBot) SetHandler(handler IncomingMessageHandler) {
+	b.handler = handler
 }
 
 // ConfigureWebhook configures webhook settings.
@@ -239,14 +243,23 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	msg := b.convertToProtocolMessage(update.Message)
+
+	if b.handler != nil {
+		replyText, err := b.handler.HandleIncoming(b.ctx, msg)
+		if err != nil {
+			log.Printf("Telegram handler error: %v", err)
+			replyText = fmt.Sprintf("❌ %v", err)
+		}
+		if strings.TrimSpace(replyText) != "" {
+			_ = b.SendMessage(b.ctx, update.Message.Chat.ID, replyText)
+		}
+		return
+	}
+
 	if update.Message.Text != "" {
 		reply := fmt.Sprintf("echo: %s", update.Message.Text)
 		_ = b.SendMessage(b.ctx, update.Message.Chat.ID, reply)
-	}
-
-	msg := b.convertToProtocolMessage(update.Message)
-	if err := b.manager.Send(msg); err != nil {
-		log.Printf("Error routing Telegram message: %v", err)
 	}
 }
 
@@ -381,6 +394,7 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage) *protocol.M
 		Data: map[string]interface{}{
 			"channel":  "telegram",
 			"text":     msg.Text,
+			"chat_id":  msg.Chat.ID,
 			"user_id":  msg.From.ID,
 			"username": msg.From.UserName,
 		},
