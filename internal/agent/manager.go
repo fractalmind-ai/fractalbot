@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
@@ -47,4 +49,30 @@ func (m *Manager) List() []protocol.AgentInfo {
 		agents = append(agents, info)
 	}
 	return agents
+}
+
+// HandleIncoming implements channels.IncomingMessageHandler.
+func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (string, error) {
+	_ = ctx
+	if msg == nil {
+		return "", nil
+	}
+
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return "", nil
+	}
+
+	channel, _ := data["channel"].(string)
+	if channel != "telegram" {
+		return "", nil
+	}
+
+	text, _ := data["text"].(string)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", nil
+	}
+
+	return fmt.Sprintf("echo: %s", text), nil
 }
