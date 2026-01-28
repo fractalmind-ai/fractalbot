@@ -20,14 +20,15 @@ const (
 	ActionList    Action = "list"
 	ActionAssign  Action = "assign"
 	ActionMonitor Action = "monitor"
+	ActionEcho    Action = "echo"
 )
 
 // Message represents a protocol message
 type Message struct {
 	Kind   MessageKind `json:"kind"`
-	Action Action     `json:"action,omitempty"`
+	Action Action      `json:"action,omitempty"`
 	Data   interface{} `json:"data,omitempty"`
-	Error  string     `json:"error,omitempty"`
+	Error  string      `json:"error,omitempty"`
 }
 
 // AgentInfo contains information about an agent
@@ -54,5 +55,5 @@ type ToolInfo struct {
 type Response struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
-	Error   string       `json:"error,omitempty"`
+	Error   string      `json:"error,omitempty"`
 }

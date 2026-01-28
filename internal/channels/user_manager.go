@@ -1,13 +1,13 @@
 package channels
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
-
-	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
+	"time"
 )
 
 // UserManager handles user authorization and validation
@@ -56,7 +56,7 @@ func (m *UserManager) GetAllowedUsers() []int64 {
 }
 
 // HandleAddUserCommand handles /adduser command
-func HandleAddUserCommand(ctx context.Context, botToken, chatID, adminID, userID int64, newUserID int64) error {
+func HandleAddUserCommand(ctx context.Context, botToken string, chatID, adminID, userID int64, newUserID int64) error {
 	// Verify admin is authorized
 	if adminID != 5088760910 {
 		return fmt.Errorf("unauthorized: only admin can add users")
@@ -69,7 +69,7 @@ func HandleAddUserCommand(ctx context.Context, botToken, chatID, adminID, userID
 }
 
 // HandleRemoveUserCommand handles /removeuser command
-func HandleRemoveUserCommand(ctx context.Context, botToken, chatID, adminID, userID int64, targetUserID int64) error {
+func HandleRemoveUserCommand(ctx context.Context, botToken string, chatID, adminID, userID int64, targetUserID int64) error {
 	// Verify admin is authorized
 	if adminID != 5088760910 {
 		return fmt.Errorf("unauthorized: only admin can remove users")
@@ -82,7 +82,7 @@ func HandleRemoveUserCommand(ctx context.Context, botToken, chatID, adminID, use
 }
 
 // SendAdminResponse sends a response to admin
-func SendAdminResponse(ctx context.Context, botToken, chatID int64, text string) error {
+func SendAdminResponse(ctx context.Context, botToken string, chatID int64, text string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	payload := map[string]interface{}{
