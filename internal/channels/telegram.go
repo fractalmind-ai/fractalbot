@@ -3,12 +3,14 @@ package channels
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -93,7 +95,7 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 		b.server = &http.Server{
 			Addr:              b.webhookListenAddr,
 			Handler:           mux,
-			ErrorLog:          log.New(io.Discard, "", log.LstdFlags),
+			ErrorLog:          log.New(os.Stderr, "telegram-webhook: ", log.LstdFlags),
 			ReadHeaderTimeout: 5 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
@@ -189,10 +191,6 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 
 // handleWebhook handles incoming Telegram webhook updates.
 func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		w.WriteHeader(http.StatusOK)
-	}()
-
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -200,7 +198,7 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if b.webhookSecretToken != "" {
 		got := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
-		if got != b.webhookSecretToken {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(b.webhookSecretToken)) != 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -212,7 +210,7 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	_ = r.Body.Close()
 
 	var update struct {
 		UpdateID int64            `json:"update_id"`
@@ -267,6 +265,9 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	}
 
 	command := parts[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
 
 	requireAdmin := func() error {
 		if b.adminID == 0 {
