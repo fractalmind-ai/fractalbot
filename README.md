@@ -99,8 +99,17 @@ channels:
   telegram:
     enabled: true
     botToken: "your_bot_token"
+    adminID: 1234567890
     allowedUsers:
       - 1234567890
+
+    # Optional: start a local webhook server
+    webhookListenAddr: "0.0.0.0:18790"
+    webhookPath: "/telegram/webhook"
+
+    # Optional: register webhook with Telegram on startup
+    webhookPublicURL: "https://your-domain.example/telegram/webhook"
+    webhookSecretToken: "replace-with-random-secret"
 
 agents:
   workspace: ./workspace

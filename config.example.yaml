@@ -13,9 +13,23 @@ channels:
     enabled: true
     # Get from @BotFather on Telegram
     botToken: "your_bot_token_here"
-    # List of Telegram User IDs allowed to interact
+    # Admin Telegram User ID (required for /adduser, /removeuser, /listusers)
+    adminID: 5088760910
+    # List of Telegram User IDs allowed to interact (admin will be auto-added)
     allowedUsers:
       - 1234567890
+
+    # Webhook server (local)
+    # If empty, webhook server will not start.
+    webhookListenAddr: "0.0.0.0:18790"
+    webhookPath: "/telegram/webhook"
+
+    # Webhook registration (Telegram)
+    # If set, FractalBot will call Telegram setWebhook() on startup.
+    # Must be publicly reachable HTTPS URL.
+    webhookPublicURL: "https://your-domain.example/telegram/webhook"
+    # Verified via header: X-Telegram-Bot-Api-Secret-Token
+    webhookSecretToken: "replace-with-random-secret"
 
   # Slack channel configuration (optional)
   slack:
