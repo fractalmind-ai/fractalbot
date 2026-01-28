@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,6 +24,7 @@ type Server struct {
 	clientsMutex sync.RWMutex
 	httpServer   *http.Server
 	agentManager *agent.Manager
+	startTime    time.Time
 }
 
 // NewServer creates a new gateway server
@@ -65,6 +67,13 @@ func (s *Server) Start(ctx context.Context) error {
 		w.Write([]byte("OK"))
 	})
 
+	// Status endpoint
+	mux.HandleFunc("/status", s.handleStatus)
+
+	if s.startTime.IsZero() {
+		s.startTime = time.Now()
+	}
+
 	// Start HTTP server
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", s.config.Gateway.Bind, s.config.Gateway.Port),
@@ -102,16 +111,28 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("server shutdown error: %w", err)
+	if s.agentManager != nil {
+		if s.agentManager.ChannelManager != nil {
+			if err := s.agentManager.ChannelManager.Stop(); err != nil {
+				return fmt.Errorf("failed to stop channels: %w", err)
+			}
+		}
+		if err := s.agentManager.Stop(ctx); err != nil {
+			return fmt.Errorf("failed to stop agent manager: %w", err)
+		}
 	}
 
 	// Disconnect all clients
-	s.clientsMutex.Lock()
-	for _, client := range s.clients {
+	clients := s.snapshotClients()
+	for _, client := range clients {
 		client.Close()
 	}
-	s.clientsMutex.Unlock()
+
+	if s.httpServer != nil {
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			return fmt.Errorf("server shutdown error: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -155,4 +176,49 @@ func generateClientID() string {
 // GetAgentManager returns the agent manager
 func (s *Server) GetAgentManager() *agent.Manager {
 	return s.agentManager
+}
+
+type statusResponse struct {
+	Status        string `json:"status"`
+	ActiveClients int    `json:"active_clients"`
+	Uptime        string `json:"uptime"`
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	uptime := time.Duration(0)
+	if !s.startTime.IsZero() {
+		uptime = time.Since(s.startTime)
+	}
+
+	resp := statusResponse{
+		Status:        "ok",
+		ActiveClients: s.activeClients(),
+		Uptime:        uptime.String(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) activeClients() int {
+	s.clientsMutex.RLock()
+	defer s.clientsMutex.RUnlock()
+	return len(s.clients)
+}
+
+func (s *Server) snapshotClients() []*Client {
+	s.clientsMutex.RLock()
+	defer s.clientsMutex.RUnlock()
+
+	clients := make([]*Client, 0, len(s.clients))
+	for _, client := range s.clients {
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+func (s *Server) removeClient(id string) {
+	s.clientsMutex.Lock()
+	defer s.clientsMutex.Unlock()
+	delete(s.clients, id)
 }
