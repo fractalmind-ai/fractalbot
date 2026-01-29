@@ -63,6 +63,7 @@ agents:
 
   # Optional: oh-my-code integration (route Telegram messages to agent-manager)
   ohMyCode:
+    # Set true for local demo (requires python3 + tmux + agent-manager in that workspace)
     enabled: false
     # Path to the oh-my-code repository
     workspace: "/home/elliot245/workspace/elliot245/oh-my-code"
