@@ -6,6 +6,8 @@ fractalbot-*
 *.dll
 *.so
 *.dylib
+!cmd/fractalbot/
+!cmd/fractalbot/**
 
 # Test binary, built with `go test -c`
 *.test
