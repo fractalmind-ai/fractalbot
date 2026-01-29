@@ -10,15 +10,16 @@ import (
 
 // Manager starts and stops configured channels.
 type Manager struct {
-	cfg     *config.ChannelsConfig
-	handler IncomingMessageHandler
+	cfg       *config.ChannelsConfig
+	agentsCfg *config.AgentsConfig
+	handler   IncomingMessageHandler
 
 	telegram *TelegramBot
 }
 
 // NewManager creates a new channel manager.
-func NewManager(cfg *config.ChannelsConfig) *Manager {
-	return &Manager{cfg: cfg}
+func NewManager(cfg *config.ChannelsConfig, agentsCfg *config.AgentsConfig) *Manager {
+	return &Manager{cfg: cfg, agentsCfg: agentsCfg}
 }
 
 // SetHandler sets the inbound message handler used by channels.
@@ -40,7 +41,13 @@ func (m *Manager) Start(ctx context.Context) error {
 			return errors.New("channels.telegram.botToken is required when telegram is enabled")
 		}
 
-		bot, err := NewTelegramBot(m.cfg.Telegram.BotToken, m.cfg.Telegram.AllowedUsers, m.cfg.Telegram.AdminID)
+		var defaultAgent string
+		var allowedAgents []string
+		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
+			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
+			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
+		}
+		bot, err := NewTelegramBot(m.cfg.Telegram.BotToken, m.cfg.Telegram.AllowedUsers, m.cfg.Telegram.AdminID, defaultAgent, allowedAgents)
 		if err != nil {
 			return fmt.Errorf("failed to init telegram bot: %w", err)
 		}

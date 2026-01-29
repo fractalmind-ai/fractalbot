@@ -28,7 +28,9 @@ const (
 
 // TelegramBot implements Telegram channel.
 type TelegramBot struct {
-	botToken string
+	botToken       string
+	defaultAgent   string
+	agentAllowlist AgentAllowlist
 
 	handler     IncomingMessageHandler
 	userManager *UserManager
@@ -56,7 +58,7 @@ type TelegramBot struct {
 }
 
 // NewTelegramBot creates a new Telegram bot instance.
-func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*TelegramBot, error) {
+func NewTelegramBot(token string, allowedUsers []int64, adminID int64, defaultAgent string, allowedAgents []string) (*TelegramBot, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("telegram bot token is required")
 	}
@@ -68,6 +70,8 @@ func NewTelegramBot(token string, allowedUsers []int64, adminID int64) (*Telegra
 
 	return &TelegramBot{
 		botToken:       token,
+		defaultAgent:   strings.TrimSpace(defaultAgent),
+		agentAllowlist: NewAgentAllowlist(allowedAgents),
 		userManager:    userManager,
 		adminID:        adminID,
 		webhookPath:    defaultTelegramWebhookPath,
@@ -512,7 +516,26 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		return
 	}
 
-	msg := b.convertToProtocolMessage(message)
+	selection, err := ParseAgentSelection(message.Text)
+	if err != nil {
+		_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", err))
+		return
+	}
+
+	if strings.TrimSpace(selection.Task) == "" {
+		return
+	}
+
+	enforceSelection := selection.Specified || b.defaultAgent != "" || b.agentAllowlist.configured
+	if enforceSelection {
+		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllowlist)
+		if err != nil {
+			_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", err))
+			return
+		}
+	}
+
+	msg := b.convertToProtocolMessage(message, selection.Task, selection.Agent)
 
 	if b.handler != nil {
 		replyText, err := b.handler.HandleIncoming(b.ctx, msg)
@@ -526,8 +549,8 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		return
 	}
 
-	if message.Text != "" {
-		reply := fmt.Sprintf("echo: %s", message.Text)
+	if selection.Task != "" {
+		reply := fmt.Sprintf("echo: %s", selection.Task)
 		_ = b.SendMessage(b.ctx, message.Chat.ID, reply)
 	}
 }
@@ -549,6 +572,9 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	command := parts[0]
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
+	}
+	if command == "/agent" {
+		return false, nil
 	}
 
 	requireAdmin := func() error {
@@ -661,13 +687,14 @@ type TelegramChat struct {
 	ID int64 `json:"id"`
 }
 
-func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage) *protocol.Message {
+func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent string) *protocol.Message {
 	return &protocol.Message{
 		Kind:   protocol.MessageKindChannel,
 		Action: protocol.ActionCreate,
 		Data: map[string]interface{}{
 			"channel":  "telegram",
-			"text":     msg.Text,
+			"text":     text,
+			"agent":    agent,
 			"chat_id":  msg.Chat.ID,
 			"user_id":  msg.From.ID,
 			"username": msg.From.UserName,

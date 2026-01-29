@@ -87,6 +87,10 @@ type OhMyCodeConfig struct {
 	// Example: "qa-1".
 	DefaultAgent string `yaml:"defaultAgent,omitempty"`
 
+	// AllowedAgents restricts which agents can be targeted by Telegram messages.
+	// If empty, only DefaultAgent is allowed.
+	AllowedAgents []string `yaml:"allowedAgents,omitempty"`
+
 	// AssignTimeoutSeconds limits how long we wait for agent-manager output.
 	AssignTimeoutSeconds int `yaml:"assignTimeoutSeconds,omitempty"`
 }

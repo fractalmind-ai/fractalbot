@@ -92,7 +92,8 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	if m.isOhMyCodeEnabled() {
-		out, err := m.assignOhMyCode(ctx, text)
+		agentName, _ := data["agent"].(string)
+		out, err := m.assignOhMyCode(ctx, text, agentName)
 		if err != nil {
 			return "", err
 		}
@@ -112,7 +113,7 @@ func (m *Manager) isOhMyCodeEnabled() bool {
 	return strings.TrimSpace(m.config.OhMyCode.Workspace) != ""
 }
 
-func (m *Manager) assignOhMyCode(ctx context.Context, userText string) (string, error) {
+func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride string) (string, error) {
 	if m.config == nil || m.config.OhMyCode == nil {
 		return "", errors.New("agents.ohMyCode is not configured")
 	}
@@ -130,9 +131,12 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText string) (string, 
 		script = filepath.Join(workspace, script)
 	}
 
-	agentName := strings.TrimSpace(m.config.OhMyCode.DefaultAgent)
+	agentName := strings.TrimSpace(agentOverride)
 	if agentName == "" {
-		agentName = defaultOhMyCodeDefaultAgent
+		agentName = strings.TrimSpace(m.config.OhMyCode.DefaultAgent)
+		if agentName == "" {
+			agentName = defaultOhMyCodeDefaultAgent
+		}
 	}
 
 	timeout := defaultOhMyCodeAssignTimeout
