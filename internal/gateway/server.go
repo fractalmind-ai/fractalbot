@@ -84,13 +84,6 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	go func() {
-		log.Printf("🌐 HTTP server listening on %s", s.httpServer.Addr)
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
-		}
-	}()
-
 	// Start channels
 	if s.agentManager.ChannelManager != nil {
 		if err := s.agentManager.ChannelManager.Start(ctx); err != nil {
@@ -102,6 +95,13 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.agentManager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start agent manager: %w", err)
 	}
+
+	go func() {
+		log.Printf("🌐 HTTP server listening on %s", s.httpServer.Addr)
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", err)
+		}
+	}()
 
 	<-ctx.Done()
 	return nil

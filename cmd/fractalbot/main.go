@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	configPath := flag.String("config", "./config.yaml", "path to config file")
 	portOverride := flag.Int("port", 0, "override gateway port")
 	verbose := flag.Bool("verbose", false, "enable verbose logging")
@@ -24,7 +28,8 @@ func main() {
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Printf("failed to load config: %v", err)
+		return 1
 	}
 
 	if cfg.Gateway == nil {
@@ -39,14 +44,22 @@ func main() {
 
 	server, err := gateway.NewServer(cfg)
 	if err != nil {
-		log.Fatalf("failed to initialize gateway: %v", err)
+		log.Printf("failed to initialize gateway: %v", err)
+		return 1
 	}
 
 	if err := server.Start(ctx); err != nil {
 		log.Printf("gateway error: %v", err)
+		if err := server.Stop(); err != nil {
+			log.Printf("gateway shutdown error: %v", err)
+		}
+		return 1
 	}
 
 	if err := server.Stop(); err != nil {
 		log.Printf("gateway shutdown error: %v", err)
+		return 1
 	}
+
+	return 0
 }

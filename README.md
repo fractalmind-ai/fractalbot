@@ -83,7 +83,7 @@ cd fractalbot
 go build -o fractalbot ./cmd/fractalbot
 
 # Run (development mode)
-./fractalbot gateway --port 18789
+./fractalbot --config ./config.yaml
 ```
 
 ### Configuration
@@ -133,10 +133,52 @@ agents:
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted.
 
+### Local Demo (Telegram + polling + oh-my-code)
+
+This is the fastest path to a local, end-to-end demo after the CLI entrypoint lands.
+
+1) Copy the example config:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+2) Edit the minimum fields:
+
+- `channels.telegram.botToken`
+- `channels.telegram.adminID`
+- `channels.telegram.allowedUsers` (include your Telegram user ID)
+- `agents.ohMyCode.enabled: true`
+- `agents.ohMyCode.workspace` (path to your oh-my-code repo)
+- `agents.ohMyCode.defaultAgent` (e.g. `qa-1` or `coder-a`)
+- `agents.ohMyCode.allowedAgents` (include default agent and any others you want)
+
+3) Start the gateway:
+
+```bash
+# Option A: build + run
+make build
+./fractalbot --config ./config.yaml
+
+# Option B: go run (config default is ./config.yaml)
+go run ./cmd/fractalbot --config ./config.yaml
+```
+
+4) Send Telegram messages:
+
+- Normal routing:
+  - Message: `Hello from demo`
+  - Expected: bot replies with agent-manager output (assignment confirmation plus recent monitor snapshot).
+- Explicit agent selection:
+  - Message: `/agent coder-a summarize current status`
+  - Expected: task is routed to `coder-a`. If not allowed, the bot replies with an `agent \"...\" is not allowed` error.
+
+If the bot is silent, verify the allowlist, and confirm `agents.ohMyCode.enabled: true` and that the agent-manager is running in the oh-my-code workspace.
+
 ### Running the Gateway
 
 ```bash
-./fractalbot gateway --port 18789 --verbose
+./fractalbot --config ./config.yaml --verbose
 ```
 
 ### Smoke Test (WebSocket Echo)
