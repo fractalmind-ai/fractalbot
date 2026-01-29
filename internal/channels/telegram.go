@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
@@ -55,6 +56,9 @@ type TelegramBot struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	startTime time.Time
+
+	runningMu sync.RWMutex
+	running   bool
 }
 
 // NewTelegramBot creates a new Telegram bot instance.
@@ -91,6 +95,19 @@ func (b *TelegramBot) Name() string {
 // SetHandler sets the inbound message handler.
 func (b *TelegramBot) SetHandler(handler IncomingMessageHandler) {
 	b.handler = handler
+}
+
+// IsRunning reports whether the bot has been started.
+func (b *TelegramBot) IsRunning() bool {
+	b.runningMu.RLock()
+	defer b.runningMu.RUnlock()
+	return b.running
+}
+
+func (b *TelegramBot) setRunning(running bool) {
+	b.runningMu.Lock()
+	b.running = running
+	b.runningMu.Unlock()
 }
 
 // ConfigureMode sets the channel mode.
@@ -158,6 +175,7 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 		}
 		b.startPollingLoop()
 		log.Printf("🔁 Telegram polling enabled (timeout=%s, limit=%d, nextUpdateID=%d)", b.pollingTimeout, b.pollingLimit, b.nextUpdateID)
+		b.setRunning(true)
 		return nil
 	}
 
@@ -192,6 +210,7 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 		log.Printf("🔗 Telegram webhook registered: %s", b.webhookPublicURL)
 	}
 
+	b.setRunning(true)
 	return nil
 }
 
@@ -209,6 +228,7 @@ func (b *TelegramBot) Stop() error {
 		_ = b.server.Shutdown(ctx)
 	}
 
+	b.setRunning(false)
 	return nil
 }
 
