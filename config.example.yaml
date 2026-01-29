@@ -70,5 +70,9 @@ agents:
     agentManagerScript: ".claude/skills/agent-manager/scripts/main.py"
     # Which agent receives Telegram messages by default
     defaultAgent: "qa-1"
+    # Optional allowlist for /agent routing (defaults to only defaultAgent)
+    allowedAgents:
+      - "qa-1"
+      - "coder-a"
     # How long to wait for agent-manager output
     assignTimeoutSeconds: 90

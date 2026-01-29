@@ -9,7 +9,7 @@ import (
 func TestTelegramPollingOffset_MissingFile(t *testing.T) {
 	t.Parallel()
 
-	bot, err := NewTelegramBot("token", nil, 0)
+	bot, err := NewTelegramBot("token", nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("NewTelegramBot: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestTelegramPollingOffset_MissingFile(t *testing.T) {
 func TestTelegramPollingOffset_LoadsValue(t *testing.T) {
 	t.Parallel()
 
-	bot, err := NewTelegramBot("token", nil, 0)
+	bot, err := NewTelegramBot("token", nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("NewTelegramBot: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestTelegramPollingOffset_LoadsValue(t *testing.T) {
 func TestTelegramPollingOffset_PersistsValue(t *testing.T) {
 	t.Parallel()
 
-	bot, err := NewTelegramBot("token", nil, 0)
+	bot, err := NewTelegramBot("token", nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("NewTelegramBot: %v", err)
 	}

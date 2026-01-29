@@ -34,7 +34,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Initialize channels
-	channelManager := channels.NewManager(cfg.Channels)
+	channelManager := channels.NewManager(cfg.Channels, cfg.Agents)
 
 	// Initialize agent manager
 	agentManager := agent.NewManager(cfg.Agents)

@@ -126,7 +126,12 @@ agents:
     enabled: false
     workspace: "/home/elliot245/workspace/elliot245/oh-my-code"
     defaultAgent: "qa-1"
+    allowedAgents:
+      - "qa-1"
+      - "coder-a"
 ```
+
+Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted.
 
 ### Running the Gateway
 
