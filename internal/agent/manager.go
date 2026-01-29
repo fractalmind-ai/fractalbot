@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,12 @@ const (
 	defaultOhMyCodeAgentManagerScript = ".claude/skills/agent-manager/scripts/main.py"
 	defaultOhMyCodeDefaultAgent       = "qa-1"
 	defaultOhMyCodeAssignTimeout      = 90 * time.Second
-	maxTelegramReplyChars             = 3500
+
+	defaultOhMyCodeMonitorDelay   = 1 * time.Second
+	defaultOhMyCodeMonitorTimeout = 15 * time.Second
+	defaultOhMyCodeMonitorLines   = 60
+
+	maxTelegramReplyChars = 3500
 )
 
 // Manager is a minimal stub for agent lifecycle management.
@@ -141,11 +147,39 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText string) (string, 
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(assignCtx, "python3", script, "assign", agentName)
+	assignOut, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", agentName)
+	if err != nil {
+		return "", err
+	}
+
+	if defaultOhMyCodeMonitorDelay > 0 {
+		time.Sleep(defaultOhMyCodeMonitorDelay)
+	}
+
+	monitorCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeMonitorTimeout)
+	defer cancel()
+
+	monitorOut, monitorErr := runOhMyCodeAgentManager(monitorCtx, workspace, script, "", "monitor", agentName, "--lines", strconv.Itoa(defaultOhMyCodeMonitorLines))
+	if monitorErr != nil {
+		return assignOut, nil
+	}
+
+	snapshot := extractMonitorSnapshot(monitorOut)
+	if strings.TrimSpace(snapshot) == "" {
+		return assignOut, nil
+	}
+
+	return strings.TrimSpace(assignOut) + "\n\n" + snapshot, nil
+}
+
+func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin string, args ...string) (string, error) {
+	cmdArgs := append([]string{script}, args...)
+	cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
 	cmd.Dir = workspace
 
-	prompt := buildOhMyCodeTaskPrompt(userText)
-	cmd.Stdin = strings.NewReader(prompt)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -153,29 +187,51 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText string) (string, 
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	outText := strings.TrimSpace(stdout.String())
+	errText := strings.TrimSpace(stderr.String())
+
 	if err != nil {
-		errText := strings.TrimSpace(stderr.String())
-		if errText == "" {
-			errText = strings.TrimSpace(stdout.String())
-		}
 		if errText != "" {
 			return "", fmt.Errorf("oh-my-code agent-manager failed: %s", errText)
+		}
+		if outText != "" {
+			return "", fmt.Errorf("oh-my-code agent-manager failed: %s", outText)
 		}
 		return "", fmt.Errorf("oh-my-code agent-manager failed: %w", err)
 	}
 
-	out := strings.TrimSpace(stdout.String())
-	if out == "" {
-		out = strings.TrimSpace(stderr.String())
+	if outText == "" {
+		outText = errText
 	}
-	if out == "" {
-		return "", nil
-	}
-	return out, nil
+	return outText, nil
 }
 
 func buildOhMyCodeTaskPrompt(userText string) string {
 	return fmt.Sprintf("Telegram user message:\n%s\n", strings.TrimSpace(userText))
+}
+
+func extractMonitorSnapshot(monitorOutput string) string {
+	lines := strings.Split(monitorOutput, "\n")
+	firstSep := -1
+	secondSep := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "====") {
+			if firstSep == -1 {
+				firstSep = i
+				continue
+			}
+			secondSep = i
+			break
+		}
+	}
+
+	if firstSep == -1 || secondSep == -1 || secondSep <= firstSep {
+		return strings.TrimSpace(monitorOutput)
+	}
+
+	snapshot := strings.Join(lines[firstSep+1:secondSep], "\n")
+	return strings.TrimSpace(snapshot)
 }
 
 func truncateTelegramReply(text string) string {
