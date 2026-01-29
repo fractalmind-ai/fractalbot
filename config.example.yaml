@@ -60,3 +60,15 @@ agents:
   workspace: ./workspace
   # Maximum concurrent agent sessions
   maxConcurrent: 4
+
+  # Optional: oh-my-code integration (route Telegram messages to agent-manager)
+  ohMyCode:
+    enabled: false
+    # Path to the oh-my-code repository
+    workspace: "/home/elliot245/workspace/elliot245/oh-my-code"
+    # Optional override (relative to workspace or absolute)
+    agentManagerScript: ".claude/skills/agent-manager/scripts/main.py"
+    # Which agent receives Telegram messages by default
+    defaultAgent: "qa-1"
+    # How long to wait for agent-manager output
+    assignTimeoutSeconds: 90
