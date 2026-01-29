@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
@@ -14,29 +15,114 @@ type Manager struct {
 	agentsCfg *config.AgentsConfig
 	handler   IncomingMessageHandler
 
-	telegram *TelegramBot
+	channels map[string]Channel
 }
 
 // NewManager creates a new channel manager.
 func NewManager(cfg *config.ChannelsConfig, agentsCfg *config.AgentsConfig) *Manager {
-	return &Manager{cfg: cfg, agentsCfg: agentsCfg}
+	return &Manager{
+		cfg:       cfg,
+		agentsCfg: agentsCfg,
+		channels:  make(map[string]Channel),
+	}
 }
 
 // SetHandler sets the inbound message handler used by channels.
 func (m *Manager) SetHandler(handler IncomingMessageHandler) {
 	m.handler = handler
-	if m.telegram != nil {
-		m.telegram.SetHandler(handler)
+	for _, channel := range m.channels {
+		if handlerAware, ok := channel.(HandlerAware); ok {
+			handlerAware.SetHandler(handler)
+		}
 	}
+}
+
+// Register adds a channel to the manager.
+func (m *Manager) Register(channel Channel) error {
+	if channel == nil {
+		return errors.New("channel is nil")
+	}
+	name := channel.Name()
+	if name == "" {
+		return errors.New("channel name is required")
+	}
+	if _, exists := m.channels[name]; exists {
+		return fmt.Errorf("channel %q already registered", name)
+	}
+	if m.handler != nil {
+		if handlerAware, ok := channel.(HandlerAware); ok {
+			handlerAware.SetHandler(m.handler)
+		}
+	}
+	m.channels[name] = channel
+	return nil
+}
+
+// Get returns a channel by name.
+func (m *Manager) Get(name string) Channel {
+	return m.channels[name]
+}
+
+// List returns registered channels in name order.
+func (m *Manager) List() []Channel {
+	names := make([]string, 0, len(m.channels))
+	for name := range m.channels {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	channels := make([]Channel, 0, len(names))
+	for _, name := range names {
+		channels = append(channels, m.channels[name])
+	}
+	return channels
 }
 
 // Start starts configured channels.
 func (m *Manager) Start(ctx context.Context) error {
+	if err := m.registerConfiguredChannels(); err != nil {
+		return err
+	}
+
+	for _, channel := range m.List() {
+		if channel.IsRunning() {
+			continue
+		}
+		if err := channel.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start %s: %w", channel.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+// Stop stops configured channels.
+func (m *Manager) Stop() error {
+	var errs []error
+	for _, channel := range m.List() {
+		if !channel.IsRunning() {
+			continue
+		}
+		if err := channel.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", channel.Name(), err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to stop channels: %v", errs)
+	}
+
+	return nil
+}
+
+func (m *Manager) registerConfiguredChannels() error {
 	if m.cfg == nil {
 		return nil
 	}
 
 	if m.cfg.Telegram != nil && m.cfg.Telegram.Enabled {
+		if m.Get("telegram") != nil {
+			return nil
+		}
 		if m.cfg.Telegram.BotToken == "" {
 			return errors.New("channels.telegram.botToken is required when telegram is enabled")
 		}
@@ -47,6 +133,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
 			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
 		}
+
 		bot, err := NewTelegramBot(m.cfg.Telegram.BotToken, m.cfg.Telegram.AllowedUsers, m.cfg.Telegram.AdminID, defaultAgent, allowedAgents)
 		if err != nil {
 			return fmt.Errorf("failed to init telegram bot: %w", err)
@@ -64,30 +151,10 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.cfg.Telegram.WebhookPublicURL,
 			m.cfg.Telegram.WebhookSecretToken,
 		)
-		bot.SetHandler(m.handler)
 
-		m.telegram = bot
-		if err := bot.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start telegram bot: %w", err)
+		if err := m.Register(bot); err != nil {
+			return fmt.Errorf("failed to register telegram bot: %w", err)
 		}
-	}
-
-	return nil
-}
-
-// Stop stops configured channels.
-func (m *Manager) Stop() error {
-	var errs []error
-	if m.telegram != nil {
-		err := m.telegram.Stop()
-		if err != nil {
-			errs = append(errs, err)
-		}
-		m.telegram = nil
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to stop channels: %v", errs)
 	}
 
 	return nil
