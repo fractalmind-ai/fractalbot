@@ -564,10 +564,10 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		replyText, err := b.handler.HandleIncoming(b.ctx, msg)
 		if err != nil {
 			log.Printf("Telegram handler error: %v", err)
-			replyText = fmt.Sprintf("❌ %v", err)
+			replyText = "❌ Something went wrong. Please try again."
 		}
 		if strings.TrimSpace(replyText) != "" {
-			_ = b.SendMessage(b.ctx, message.Chat.ID, replyText)
+			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(replyText))
 		}
 		return
 	}
