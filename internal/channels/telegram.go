@@ -608,6 +608,9 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	}
 
 	switch command {
+	case "/help", "/start":
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, b.helpText())
+
 	case "/adduser":
 		if err := requireAdmin(); err != nil {
 			return true, err
@@ -663,6 +666,31 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	default:
 		return true, fmt.Errorf("unknown command: %s", command)
 	}
+}
+
+func (b *TelegramBot) helpText() string {
+	var sb strings.Builder
+	sb.WriteString("FractalBot Telegram Help\n")
+	sb.WriteString("\n")
+	sb.WriteString("Commands:\n")
+	sb.WriteString("  /help - show this help\n")
+	sb.WriteString("  /status - bot status\n")
+	sb.WriteString("  /adduser <user_id> - admin only\n")
+	sb.WriteString("  /removeuser <user_id> - admin only\n")
+	sb.WriteString("  /listusers - admin only\n")
+	sb.WriteString("\n")
+	sb.WriteString("Agent routing:\n")
+	sb.WriteString("  /agent <name> <task...>\n")
+	if b.defaultAgent != "" {
+		sb.WriteString(fmt.Sprintf("Default agent: %s\n", b.defaultAgent))
+	}
+	if names := b.agentAllowlist.Names(); len(names) > 0 {
+		sb.WriteString("Allowed agents:\n")
+		for _, name := range names {
+			sb.WriteString(fmt.Sprintf("  - %s\n", name))
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func splitCommand(text string) []string {
