@@ -132,6 +132,12 @@ agents:
 ```
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted.
+Additional lifecycle commands:
+- `/agents` (list allowed agent names)
+- `/monitor <name> [lines]` (show recent agent output; lines capped to 200)
+- `/startagent <name>` (admin only)
+- `/stopagent <name>` (admin only)
+- `/doctor` (admin only)
 
 ### Local Demo (Telegram + polling + oh-my-code)
 

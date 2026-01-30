@@ -77,3 +77,9 @@ agents:
       - "coder-a"
     # How long to wait for agent-manager output
     assignTimeoutSeconds: 90
+    # Telegram lifecycle commands:
+    # - /agents (list allowed agent names)
+    # - /monitor <name> [lines] (show recent output, capped at 200 lines)
+    # - /startagent <name> (admin only)
+    # - /stopagent <name> (admin only)
+    # - /doctor (admin only)
