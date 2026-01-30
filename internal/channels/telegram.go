@@ -534,6 +534,9 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if handled, cmdErr := b.handleCommand(message); handled {
 		if cmdErr != nil {
 			reply := fmt.Sprintf("❌ %v", cmdErr)
+			if isAgentAllowlistError(cmdErr) {
+				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+			}
 			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 		}
 		return
@@ -541,7 +544,11 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 
 	selection, err := ParseAgentSelection(message.Text)
 	if err != nil {
-		_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", err))
+		reply := fmt.Sprintf("❌ %v", err)
+		if isAgentAllowlistError(err) {
+			reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+		}
+		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 		return
 	}
 
@@ -553,7 +560,11 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if enforceSelection {
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllowlist)
 		if err != nil {
-			_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", err))
+			reply := fmt.Sprintf("❌ %v", err)
+			if isAgentAllowlistError(err) {
+				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+			}
+			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 			return
 		}
 	}
@@ -646,6 +657,9 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
+		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		}
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
 		}
@@ -797,6 +811,15 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 func (b *TelegramBot) sanitizeLifecycleError(command string, err error) error {
 	log.Printf("Telegram command %s failed: %v", command, err)
 	return errors.New("agent-manager error; please check server logs")
+}
+
+func isAgentAllowlistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "agent") && strings.Contains(msg, "not allowed") ||
+		strings.Contains(msg, "invalid agent name")
 }
 
 func (b *TelegramBot) helpText() string {
