@@ -531,7 +531,8 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 
 	if handled, cmdErr := b.handleCommand(message); handled {
 		if cmdErr != nil {
-			_ = b.SendMessage(b.ctx, message.Chat.ID, fmt.Sprintf("❌ %v", cmdErr))
+			reply := fmt.Sprintf("❌ %v", cmdErr)
+			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 		}
 		return
 	}
@@ -642,7 +643,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		out, err := lifecycle.MonitorAgent(b.ctx, agentName, lines)
 		if err != nil {
-			return true, err
+			return true, b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = "No output from agent-monitor."
@@ -666,7 +667,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		out, err := lifecycle.StartAgent(b.ctx, agentName)
 		if err != nil {
-			return true, err
+			return true, b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Started agent %s", agentName)
@@ -690,7 +691,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		out, err := lifecycle.StopAgent(b.ctx, agentName)
 		if err != nil {
-			return true, err
+			return true, b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Stopped agent %s", agentName)
@@ -707,7 +708,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		out, err := lifecycle.Doctor(b.ctx)
 		if err != nil {
-			return true, err
+			return true, b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = "✅ agent-manager doctor completed"
@@ -769,6 +770,11 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	default:
 		return true, fmt.Errorf("unknown command: %s", command)
 	}
+}
+
+func (b *TelegramBot) sanitizeLifecycleError(command string, err error) error {
+	log.Printf("Telegram command %s failed: %v", command, err)
+	return errors.New("agent-manager error; please check server logs")
 }
 
 func (b *TelegramBot) helpText() string {
