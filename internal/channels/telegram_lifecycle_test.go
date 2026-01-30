@@ -189,3 +189,61 @@ func TestTelegramLifecycleErrorSanitized(t *testing.T) {
 		t.Fatalf("expected sanitized error, got %v", err)
 	}
 }
+
+func TestTelegramLifecycleErrorSanitizedCommands(t *testing.T) {
+	cases := []struct {
+		name       string
+		command    string
+		setupError func(*fakeLifecycle)
+	}{
+		{
+			name:    "startagent",
+			command: "/startagent qa-1",
+			setupError: func(l *fakeLifecycle) {
+				l.startErr = errors.New("start failed")
+			},
+		},
+		{
+			name:    "stopagent",
+			command: "/stopagent qa-1",
+			setupError: func(l *fakeLifecycle) {
+				l.stopErr = errors.New("stop failed")
+			},
+		},
+		{
+			name:    "doctor",
+			command: "/doctor",
+			setupError: func(l *fakeLifecycle) {
+				l.doctorErr = errors.New("doctor failed")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bot, err := NewTelegramBot("token", nil, 123, "qa-1", []string{"qa-1"})
+			if err != nil {
+				t.Fatalf("NewTelegramBot: %v", err)
+			}
+			bot.httpClient = stubHTTPClient()
+
+			lifecycle := &fakeLifecycle{}
+			tc.setupError(lifecycle)
+			bot.SetHandler(lifecycle)
+
+			msg := &TelegramMessage{
+				Text: tc.command,
+				From: &TelegramUser{ID: 123},
+				Chat: &TelegramChat{ID: 1},
+			}
+
+			handled, err := bot.handleCommand(msg)
+			if !handled {
+				t.Fatalf("expected handled")
+			}
+			if err == nil || err.Error() != "agent-manager error; please check server logs" {
+				t.Fatalf("expected sanitized error, got %v", err)
+			}
+		})
+	}
+}
