@@ -94,6 +94,9 @@ Create `config.yaml`:
 gateway:
   port: 18789
   bind: 127.0.0.1
+  # Optional: restrict allowed WebSocket origins
+  # allowedOrigins:
+  #   - "http://localhost:3000"
 
 channels:
   telegram:
