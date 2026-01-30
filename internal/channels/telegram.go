@@ -526,6 +526,8 @@ func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if !b.userManager.Authorize(message.From.ID) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
+		hint := "❌ Unauthorized. Ask an admin to add your Telegram user ID in channels.telegram.allowedUsers.\nTip: use /whoami to get your user ID."
+		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(hint))
 		return
 	}
 
@@ -611,6 +613,9 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	switch command {
 	case "/help", "/start":
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, b.helpText())
+
+	case "/ping":
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, "pong")
 
 	case "/whoami":
 		username := strings.TrimSpace(msg.From.UserName)
@@ -800,6 +805,7 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("\n")
 	sb.WriteString("Commands:\n")
 	sb.WriteString("  /help - show this help\n")
+	sb.WriteString("  /ping - simple health check\n")
 	sb.WriteString("  /whoami - show your Telegram IDs\n")
 	sb.WriteString("  /status - bot status\n")
 	sb.WriteString("  /agents - list allowed agents\n")
