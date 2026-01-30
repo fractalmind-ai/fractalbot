@@ -134,13 +134,15 @@ agents:
       - "coder-a"
 ```
 
-Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted.
+Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)
 - `/monitor <name> [lines]` (show recent agent output; lines capped to 200)
 - `/startagent <name>` (admin only)
 - `/stopagent <name>` (admin only)
 - `/doctor` (admin only)
+- `/whoami` (show your Telegram IDs)
+- `/ping` (simple health check)
 
 ### Local Demo (Telegram + polling + oh-my-code)
 
@@ -173,7 +175,16 @@ make build
 go run ./cmd/fractalbot --config ./config.yaml
 ```
 
-4) Send Telegram messages:
+4) Start the gateway and fetch your Telegram IDs:
+
+- Message: `/whoami`
+- Expected: reply includes your User ID. Add it to `channels.telegram.allowedUsers`, restart the bot, and try again.
+
+5) Send Telegram messages:
+
+- Health check:
+  - Message: `/ping`
+  - Expected: `pong`
 
 - Normal routing:
   - Message: `Hello from demo`

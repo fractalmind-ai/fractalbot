@@ -86,3 +86,5 @@ agents:
     # - /startagent <name> (admin only)
     # - /stopagent <name> (admin only)
     # - /doctor (admin only)
+    # - /whoami (show your Telegram IDs)
+    # - /ping (simple health check)
