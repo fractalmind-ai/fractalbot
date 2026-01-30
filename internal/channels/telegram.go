@@ -612,6 +612,23 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	case "/help", "/start":
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, b.helpText())
 
+	case "/whoami":
+		username := strings.TrimSpace(msg.From.UserName)
+		if username != "" {
+			username = "@" + username
+		} else {
+			username = "(none)"
+		}
+		isAdmin := b.adminID != 0 && msg.From.ID == b.adminID
+		reply := fmt.Sprintf(
+			"User ID: %d\nUsername: %s\nChat ID: %d\nIs admin: %t",
+			msg.From.ID,
+			username,
+			msg.Chat.ID,
+			isAdmin,
+		)
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(reply))
+
 	case "/agents":
 		names := b.agentAllowlist.Names()
 		if len(names) == 0 {
@@ -783,6 +800,7 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("\n")
 	sb.WriteString("Commands:\n")
 	sb.WriteString("  /help - show this help\n")
+	sb.WriteString("  /whoami - show your Telegram IDs\n")
 	sb.WriteString("  /status - bot status\n")
 	sb.WriteString("  /agents - list allowed agents\n")
 	sb.WriteString("  /monitor <name> [lines] - show recent agent output\n")

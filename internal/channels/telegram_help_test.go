@@ -15,6 +15,9 @@ func TestTelegramHelpTextIncludesAgentInfo(t *testing.T) {
 	if !strings.Contains(text, "/agent <name> <task") {
 		t.Fatalf("expected help text to include /agent usage")
 	}
+	if !strings.Contains(text, "/whoami") {
+		t.Fatalf("expected help text to include /whoami command")
+	}
 	if !strings.Contains(text, "/agents") {
 		t.Fatalf("expected help text to include /agents command")
 	}
