@@ -26,7 +26,8 @@ const (
 	defaultOhMyCodeMonitorTimeout = 15 * time.Second
 	defaultOhMyCodeMonitorLines   = 60
 
-	maxTelegramReplyChars = 3500
+	defaultOhMyCodeLifecycleTimeout = 20 * time.Second
+	maxOhMyCodeMonitorLines         = 200
 )
 
 // Manager is a minimal stub for agent lifecycle management.
@@ -97,7 +98,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
-		return truncateTelegramReply(out), nil
+		return channels.TruncateTelegramReply(out), nil
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil
@@ -114,21 +115,9 @@ func (m *Manager) isOhMyCodeEnabled() bool {
 }
 
 func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride string) (string, error) {
-	if m.config == nil || m.config.OhMyCode == nil {
-		return "", errors.New("agents.ohMyCode is not configured")
-	}
-
-	workspace := strings.TrimSpace(m.config.OhMyCode.Workspace)
-	if workspace == "" {
-		return "", errors.New("agents.ohMyCode.workspace is required")
-	}
-
-	script := strings.TrimSpace(m.config.OhMyCode.AgentManagerScript)
-	if script == "" {
-		script = defaultOhMyCodeAgentManagerScript
-	}
-	if !filepath.IsAbs(script) {
-		script = filepath.Join(workspace, script)
+	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
+	if err != nil {
+		return "", err
 	}
 
 	agentName := strings.TrimSpace(agentOverride)
@@ -174,6 +163,119 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 	}
 
 	return strings.TrimSpace(assignOut) + "\n\n" + snapshot, nil
+}
+
+// MonitorAgent returns the latest agent-manager monitor output.
+func (m *Manager) MonitorAgent(ctx context.Context, agentName string, lines int) (string, error) {
+	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
+	if err != nil {
+		return "", err
+	}
+
+	name, err := m.validateOhMyCodeAgent(agentName)
+	if err != nil {
+		return "", err
+	}
+
+	if lines <= 0 {
+		lines = defaultOhMyCodeMonitorLines
+	}
+	if lines > maxOhMyCodeMonitorLines {
+		lines = maxOhMyCodeMonitorLines
+	}
+
+	monitorCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeMonitorTimeout)
+	defer cancel()
+
+	return runOhMyCodeAgentManager(monitorCtx, workspace, script, "", "monitor", name, "--lines", strconv.Itoa(lines))
+}
+
+// StartAgent starts a configured agent-manager session.
+func (m *Manager) StartAgent(ctx context.Context, agentName string) (string, error) {
+	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
+	if err != nil {
+		return "", err
+	}
+
+	name, err := m.validateOhMyCodeAgent(agentName)
+	if err != nil {
+		return "", err
+	}
+
+	lifecycleCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeLifecycleTimeout)
+	defer cancel()
+
+	return runOhMyCodeAgentManager(lifecycleCtx, workspace, script, "", "start", name)
+}
+
+// StopAgent stops a running agent-manager session.
+func (m *Manager) StopAgent(ctx context.Context, agentName string) (string, error) {
+	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
+	if err != nil {
+		return "", err
+	}
+
+	name, err := m.validateOhMyCodeAgent(agentName)
+	if err != nil {
+		return "", err
+	}
+
+	lifecycleCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeLifecycleTimeout)
+	defer cancel()
+
+	return runOhMyCodeAgentManager(lifecycleCtx, workspace, script, "", "stop", name)
+}
+
+// DoctorAgentManager runs a diagnostic check for agent-manager.
+func (m *Manager) Doctor(ctx context.Context) (string, error) {
+	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
+	if err != nil {
+		return "", err
+	}
+
+	lifecycleCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeLifecycleTimeout)
+	defer cancel()
+
+	return runOhMyCodeAgentManager(lifecycleCtx, workspace, script, "", "doctor")
+}
+
+func (m *Manager) resolveOhMyCodeWorkspaceAndScript() (string, string, error) {
+	if m.config == nil || m.config.OhMyCode == nil {
+		return "", "", errors.New("agents.ohMyCode is not configured")
+	}
+	if !m.config.OhMyCode.Enabled {
+		return "", "", errors.New("agents.ohMyCode is disabled")
+	}
+
+	workspace := strings.TrimSpace(m.config.OhMyCode.Workspace)
+	if workspace == "" {
+		return "", "", errors.New("agents.ohMyCode.workspace is required")
+	}
+
+	script := strings.TrimSpace(m.config.OhMyCode.AgentManagerScript)
+	if script == "" {
+		script = defaultOhMyCodeAgentManagerScript
+	}
+	if !filepath.IsAbs(script) {
+		script = filepath.Join(workspace, script)
+	}
+
+	return workspace, script, nil
+}
+
+func (m *Manager) validateOhMyCodeAgent(agentName string) (string, error) {
+	name := strings.TrimSpace(agentName)
+	if name == "" {
+		return "", errors.New("agent name is required")
+	}
+	if err := channels.ValidateAgentName(name); err != nil {
+		return "", err
+	}
+	allowlist := channels.NewAgentAllowlist(m.config.OhMyCode.AllowedAgents)
+	if err := allowlist.Validate(name, m.config.OhMyCode.DefaultAgent); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin string, args ...string) (string, error) {
@@ -236,12 +338,4 @@ func extractMonitorSnapshot(monitorOutput string) string {
 
 	snapshot := strings.Join(lines[firstSep+1:secondSep], "\n")
 	return strings.TrimSpace(snapshot)
-}
-
-func truncateTelegramReply(text string) string {
-	text = strings.TrimSpace(text)
-	if len(text) <= maxTelegramReplyChars {
-		return text
-	}
-	return strings.TrimSpace(text[:maxTelegramReplyChars]) + "\n…(truncated)"
 }

@@ -611,6 +611,109 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	case "/help", "/start":
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, b.helpText())
 
+	case "/agents":
+		names := b.agentAllowlist.Names()
+		if len(names) == 0 {
+			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
+				names = []string{trimmed}
+			}
+		}
+		if len(names) == 0 {
+			return true, b.SendMessage(b.ctx, msg.Chat.ID, "⚠️ No agents configured")
+		}
+		var sb strings.Builder
+		sb.WriteString("Allowed agents:\n")
+		for _, name := range names {
+			sb.WriteString(fmt.Sprintf("  - %s\n", name))
+		}
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, strings.TrimSpace(sb.String()))
+
+	case "/monitor":
+		agentName, lines, err := parseMonitorArgs(parts)
+		if err != nil {
+			return true, err
+		}
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllowlist); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.MonitorAgent(b.ctx, agentName, lines)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(out) == "" {
+			out = "No output from agent-monitor."
+		}
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+
+	case "/startagent":
+		if err := requireAdmin(); err != nil {
+			return true, err
+		}
+		if len(parts) != 2 {
+			return true, fmt.Errorf("usage: /startagent <name>")
+		}
+		agentName := strings.TrimSpace(parts[1])
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllowlist); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.StartAgent(b.ctx, agentName)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(out) == "" {
+			out = fmt.Sprintf("✅ Started agent %s", agentName)
+		}
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+
+	case "/stopagent":
+		if err := requireAdmin(); err != nil {
+			return true, err
+		}
+		if len(parts) != 2 {
+			return true, fmt.Errorf("usage: /stopagent <name>")
+		}
+		agentName := strings.TrimSpace(parts[1])
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllowlist); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.StopAgent(b.ctx, agentName)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(out) == "" {
+			out = fmt.Sprintf("✅ Stopped agent %s", agentName)
+		}
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+
+	case "/doctor":
+		if err := requireAdmin(); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.Doctor(b.ctx)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(out) == "" {
+			out = "✅ agent-manager doctor completed"
+		}
+		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+
 	case "/adduser":
 		if err := requireAdmin(); err != nil {
 			return true, err
@@ -675,9 +778,14 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("Commands:\n")
 	sb.WriteString("  /help - show this help\n")
 	sb.WriteString("  /status - bot status\n")
+	sb.WriteString("  /agents - list allowed agents\n")
+	sb.WriteString("  /monitor <name> [lines] - show recent agent output\n")
 	sb.WriteString("  /adduser <user_id> - admin only\n")
 	sb.WriteString("  /removeuser <user_id> - admin only\n")
 	sb.WriteString("  /listusers - admin only\n")
+	sb.WriteString("  /startagent <name> - admin only\n")
+	sb.WriteString("  /stopagent <name> - admin only\n")
+	sb.WriteString("  /doctor - admin only\n")
 	sb.WriteString("\n")
 	sb.WriteString("Agent routing:\n")
 	sb.WriteString("  /agent <name> <task...>\n")
