@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,9 +48,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for now (TODO: add origin check)
-			},
+			CheckOrigin:     buildOriginChecker(cfg.Gateway.AllowedOrigins),
 		},
 		clients:      make(map[string]*Client),
 		agentManager: agentManager,
@@ -136,6 +136,46 @@ func (s *Server) Stop() error {
 	}
 
 	return nil
+}
+
+func buildOriginChecker(allowed []string) func(*http.Request) bool {
+	configured := len(allowed) > 0
+	allowedSet := make(map[string]struct{})
+	for _, origin := range allowed {
+		normalized, ok := normalizeOrigin(origin)
+		if !ok {
+			continue
+		}
+		allowedSet[normalized] = struct{}{}
+	}
+
+	return func(r *http.Request) bool {
+		if !configured {
+			return true
+		}
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return false
+		}
+		normalized, ok := normalizeOrigin(origin)
+		if !ok {
+			return false
+		}
+		_, ok = allowedSet[normalized]
+		return ok
+	}
+}
+
+func normalizeOrigin(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+	return fmt.Sprintf("%s://%s", strings.ToLower(parsed.Scheme), strings.ToLower(parsed.Host)), true
 }
 
 // handleWebSocket handles incoming WebSocket connections

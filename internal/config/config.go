@@ -18,6 +18,8 @@ type Config struct {
 type GatewayConfig struct {
 	Port int    `yaml:"port"`
 	Bind string `yaml:"bind"`
+	// AllowedOrigins restricts WebSocket origins. Empty means allow all.
+	AllowedOrigins []string `yaml:"allowedOrigins,omitempty"`
 }
 
 // ChannelsConfig contains channel configurations.

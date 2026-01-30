@@ -6,6 +6,9 @@ gateway:
   port: 18789
   # Bind address (127.0.0.1 for local only)
   bind: 127.0.0.1
+  # Optional: restrict allowed WebSocket origins (scheme + host + optional port)
+  # allowedOrigins:
+  #   - "http://localhost:3000"
 
 channels:
   # Telegram channel configuration
