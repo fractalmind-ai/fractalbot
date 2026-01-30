@@ -3,6 +3,7 @@ package channels
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -116,4 +117,17 @@ func (a AgentAllowlist) Validate(agentName, defaultAgent string) error {
 		return fmt.Errorf("agent %q is not allowed", agentName)
 	}
 	return nil
+}
+
+// Names returns the configured allowlist names in sorted order.
+func (a AgentAllowlist) Names() []string {
+	if !a.configured {
+		return nil
+	}
+	names := make([]string, 0, len(a.allowed))
+	for name := range a.allowed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
