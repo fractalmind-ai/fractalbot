@@ -118,6 +118,8 @@ channels:
     # webhookPath: "/telegram/webhook"
     # webhookPublicURL: "https://your-domain.example/telegram/webhook"
     # webhookSecretToken: "replace-with-random-secret"
+    # webhookRegisterOnStart: true
+    # webhookDeleteOnStop: true
 
 agents:
   workspace: ./workspace

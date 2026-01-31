@@ -155,6 +155,10 @@ func (m *Manager) registerConfiguredChannels() error {
 			m.cfg.Telegram.WebhookPublicURL,
 			m.cfg.Telegram.WebhookSecretToken,
 		)
+		bot.ConfigureWebhookLifecycle(
+			m.cfg.Telegram.WebhookRegisterOnStart,
+			m.cfg.Telegram.WebhookDeleteOnStop,
+		)
 
 		if err := m.Register(bot); err != nil {
 			return fmt.Errorf("failed to register telegram bot: %w", err)
