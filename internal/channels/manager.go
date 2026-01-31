@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
@@ -133,6 +134,9 @@ func (m *Manager) registerConfiguredChannels() error {
 			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
 			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
 		}
+		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
+			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+		}
 
 		bot, err := NewTelegramBot(m.cfg.Telegram.BotToken, m.cfg.Telegram.AllowedUsers, m.cfg.Telegram.AdminID, defaultAgent, allowedAgents)
 		if err != nil {
@@ -154,6 +158,37 @@ func (m *Manager) registerConfiguredChannels() error {
 
 		if err := m.Register(bot); err != nil {
 			return fmt.Errorf("failed to register telegram bot: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func validateOhMyCodeAgentConfig(defaultAgent string, allowedAgents []string) error {
+	trimmedDefault := strings.TrimSpace(defaultAgent)
+	if trimmedDefault != "" {
+		if err := ValidateAgentName(trimmedDefault); err != nil {
+			return err
+		}
+	}
+
+	for _, agent := range allowedAgents {
+		trimmed := strings.TrimSpace(agent)
+		if trimmed == "" {
+			continue
+		}
+		if err := ValidateAgentName(trimmed); err != nil {
+			return err
+		}
+	}
+
+	allowlist := NewAgentAllowlist(allowedAgents)
+	if allowlist.configured {
+		if trimmedDefault == "" {
+			return fmt.Errorf("default agent is required when allowedAgents is configured")
+		}
+		if err := allowlist.Validate(trimmedDefault, trimmedDefault); err != nil {
+			return err
 		}
 	}
 

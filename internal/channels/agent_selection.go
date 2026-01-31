@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -8,6 +9,8 @@ import (
 )
 
 var agentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]*$`)
+
+var errDefaultAgentMissing = errors.New("default agent is not configured")
 
 // AgentSelection describes the resolved target agent and task text.
 type AgentSelection struct {
@@ -76,7 +79,7 @@ func ResolveAgentSelection(selection AgentSelection, defaultAgent string, allowl
 	if !selection.Specified {
 		agent = strings.TrimSpace(defaultAgent)
 		if agent == "" {
-			return AgentSelection{}, fmt.Errorf("default agent is not configured")
+			return AgentSelection{}, errDefaultAgentMissing
 		}
 	}
 
@@ -111,7 +114,7 @@ func (a AgentAllowlist) Validate(agentName, defaultAgent string) error {
 
 	defaultName := strings.TrimSpace(defaultAgent)
 	if defaultName == "" {
-		return fmt.Errorf("default agent is not configured")
+		return errDefaultAgentMissing
 	}
 	if agentName != defaultName {
 		return fmt.Errorf("agent %q is not allowed", agentName)
