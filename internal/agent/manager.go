@@ -82,7 +82,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	channel, _ := data["channel"].(string)
-	if channel != "telegram" {
+	if channel != "telegram" && channel != "feishu" {
 		return "", nil
 	}
 
@@ -98,7 +98,10 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
-		return channels.TruncateTelegramReply(out), nil
+		if channel == "telegram" {
+			return channels.TruncateTelegramReply(out), nil
+		}
+		return out, nil
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil

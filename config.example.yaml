@@ -52,6 +52,19 @@ channels:
     botToken: "xoxb-your-bot-token"
     appToken: "xapp-your-app-token"
 
+  # Feishu/Lark channel configuration (optional)
+  feishu:
+    enabled: false
+    # App ID from Feishu/Lark developer console
+    appId: "cli_xxx"
+    # App Secret from Feishu/Lark developer console
+    appSecret: "your_app_secret"
+    # Domain: "feishu" (China) or "lark" (International)
+    domain: "feishu"
+    # Allowed Feishu open_id/user_id values
+    allowedUsers:
+      - "ou_xxxxx"
+
   # Discord channel configuration (optional)
   discord:
     enabled: false
