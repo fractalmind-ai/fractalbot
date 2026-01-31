@@ -104,6 +104,21 @@ type statusPayload struct {
 	Status        string `json:"status"`
 	ActiveClients int    `json:"active_clients"`
 	Uptime        string `json:"uptime"`
+	Channels      []struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		Running bool   `json:"running"`
+	} `json:"channels"`
+	Agents *struct {
+		WorkspaceConfigured bool `json:"workspace_configured"`
+		MaxConcurrent       int  `json:"max_concurrent"`
+		OhMyCode            *struct {
+			Enabled             bool     `json:"enabled"`
+			WorkspaceConfigured bool     `json:"workspace_configured"`
+			DefaultAgent        string   `json:"default_agent"`
+			AllowedAgents       []string `json:"allowed_agents"`
+		} `json:"oh_my_code"`
+	} `json:"agents"`
 }
 
 func fetchStatus(url string) (*statusPayload, error) {
@@ -133,4 +148,77 @@ func waitForActiveClients(server *Server, want int, timeout time.Duration) error
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("active clients did not reach %d", want)
+}
+
+func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			Bind: "127.0.0.1",
+			Port: 0,
+		},
+		Channels: &config.ChannelsConfig{
+			Telegram: &config.TelegramConfig{Enabled: true},
+		},
+		Agents: &config.AgentsConfig{
+			Workspace:     "/tmp/agents",
+			MaxConcurrent: 3,
+			OhMyCode: &config.OhMyCodeConfig{
+				Enabled:       true,
+				Workspace:     "/tmp/oh-my-code",
+				DefaultAgent:  "qa-1",
+				AllowedAgents: []string{"qa-1", "coder-a"},
+			},
+		},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	statusResp, err := fetchStatus(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+
+	if len(statusResp.Channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(statusResp.Channels))
+	}
+	if statusResp.Channels[0].Name != "telegram" {
+		t.Fatalf("unexpected channel name: %s", statusResp.Channels[0].Name)
+	}
+	if !statusResp.Channels[0].Enabled {
+		t.Fatalf("expected telegram to be enabled")
+	}
+	if statusResp.Channels[0].Running {
+		t.Fatalf("expected telegram running=false before start")
+	}
+
+	if statusResp.Agents == nil {
+		t.Fatalf("expected agents info")
+	}
+	if !statusResp.Agents.WorkspaceConfigured {
+		t.Fatalf("expected workspace configured")
+	}
+	if statusResp.Agents.MaxConcurrent != 3 {
+		t.Fatalf("unexpected max_concurrent: %d", statusResp.Agents.MaxConcurrent)
+	}
+	if statusResp.Agents.OhMyCode == nil {
+		t.Fatalf("expected oh_my_code info")
+	}
+	if !statusResp.Agents.OhMyCode.Enabled {
+		t.Fatalf("expected oh_my_code enabled")
+	}
+	if statusResp.Agents.OhMyCode.DefaultAgent != "qa-1" {
+		t.Fatalf("unexpected default_agent: %s", statusResp.Agents.OhMyCode.DefaultAgent)
+	}
+	if len(statusResp.Agents.OhMyCode.AllowedAgents) != 2 {
+		t.Fatalf("unexpected allowed_agents: %v", statusResp.Agents.OhMyCode.AllowedAgents)
+	}
 }

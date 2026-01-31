@@ -220,9 +220,11 @@ func (s *Server) GetAgentManager() *agent.Manager {
 }
 
 type statusResponse struct {
-	Status        string `json:"status"`
-	ActiveClients int    `json:"active_clients"`
-	Uptime        string `json:"uptime"`
+	Status        string          `json:"status"`
+	ActiveClients int             `json:"active_clients"`
+	Uptime        string          `json:"uptime"`
+	Channels      []channelStatus `json:"channels,omitempty"`
+	Agents        *agentStatus    `json:"agents,omitempty"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +237,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Status:        "ok",
 		ActiveClients: s.activeClients(),
 		Uptime:        uptime.String(),
+		Channels:      s.channelStatus(),
+		Agents:        s.agentStatus(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -245,6 +249,92 @@ func (s *Server) activeClients() int {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 	return len(s.clients)
+}
+
+type channelStatus struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Running bool   `json:"running"`
+}
+
+type agentStatus struct {
+	WorkspaceConfigured bool            `json:"workspace_configured"`
+	MaxConcurrent       int             `json:"max_concurrent,omitempty"`
+	OhMyCode            *ohMyCodeStatus `json:"oh_my_code,omitempty"`
+}
+
+type ohMyCodeStatus struct {
+	Enabled             bool     `json:"enabled"`
+	WorkspaceConfigured bool     `json:"workspace_configured"`
+	DefaultAgent        string   `json:"default_agent,omitempty"`
+	AllowedAgents       []string `json:"allowed_agents,omitempty"`
+}
+
+func (s *Server) channelStatus() []channelStatus {
+	if s.config == nil || s.config.Channels == nil {
+		return nil
+	}
+
+	statuses := make([]channelStatus, 0, 3)
+	lookup := func(name string) bool {
+		if s.agentManager == nil || s.agentManager.ChannelManager == nil {
+			return false
+		}
+		ch := s.agentManager.ChannelManager.Get(name)
+		if ch == nil {
+			return false
+		}
+		return ch.IsRunning()
+	}
+
+	if s.config.Channels.Telegram != nil {
+		statuses = append(statuses, channelStatus{
+			Name:    "telegram",
+			Enabled: s.config.Channels.Telegram.Enabled,
+			Running: lookup("telegram"),
+		})
+	}
+	if s.config.Channels.Slack != nil {
+		statuses = append(statuses, channelStatus{
+			Name:    "slack",
+			Enabled: s.config.Channels.Slack.Enabled,
+			Running: lookup("slack"),
+		})
+	}
+	if s.config.Channels.Discord != nil {
+		statuses = append(statuses, channelStatus{
+			Name:    "discord",
+			Enabled: s.config.Channels.Discord.Enabled,
+			Running: lookup("discord"),
+		})
+	}
+
+	return statuses
+}
+
+func (s *Server) agentStatus() *agentStatus {
+	if s.config == nil || s.config.Agents == nil {
+		return nil
+	}
+
+	status := &agentStatus{
+		WorkspaceConfigured: strings.TrimSpace(s.config.Agents.Workspace) != "",
+		MaxConcurrent:       s.config.Agents.MaxConcurrent,
+	}
+
+	if s.config.Agents.OhMyCode != nil {
+		ohMyCode := s.config.Agents.OhMyCode
+		status.OhMyCode = &ohMyCodeStatus{
+			Enabled:             ohMyCode.Enabled,
+			WorkspaceConfigured: strings.TrimSpace(ohMyCode.Workspace) != "",
+			DefaultAgent:        strings.TrimSpace(ohMyCode.DefaultAgent),
+		}
+		if len(ohMyCode.AllowedAgents) > 0 {
+			status.OhMyCode.AllowedAgents = append([]string{}, ohMyCode.AllowedAgents...)
+		}
+	}
+
+	return status
 }
 
 func (s *Server) snapshotClients() []*Client {
