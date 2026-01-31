@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	defaultTelegramWebhookPath          = "/telegram/webhook"
-	defaultTelegramPollingTimeout       = 25 * time.Second
-	defaultTelegramPollingLimit         = 100
-	maxTelegramRequestBodyBytes   int64 = 512 * 1024
+	defaultTelegramWebhookPath             = "/telegram/webhook"
+	defaultTelegramPollingTimeout          = 25 * time.Second
+	defaultTelegramPollingLimit            = 100
+	defaultTelegramPollingBackoffMin       = 1 * time.Second
+	defaultTelegramPollingBackoffMax       = 30 * time.Second
+	maxTelegramRequestBodyBytes      int64 = 512 * 1024
 )
 
 // TelegramBot implements Telegram channel.
@@ -51,6 +53,7 @@ type TelegramBot struct {
 	nextUpdateID      int64
 
 	httpClient *http.Client
+	sleeper    func(time.Duration)
 
 	server    *http.Server
 	ctx       context.Context
@@ -84,6 +87,7 @@ func NewTelegramBot(token string, allowedUsers []int64, adminID int64, defaultAg
 		pollingTimeout: defaultTelegramPollingTimeout,
 		pollingLimit:   defaultTelegramPollingLimit,
 		httpClient:     &http.Client{Timeout: 35 * time.Second},
+		sleeper:        time.Sleep,
 	}, nil
 }
 
@@ -389,7 +393,11 @@ func (b *TelegramBot) getUpdates(ctx context.Context) ([]telegramUpdate, error) 
 
 func (b *TelegramBot) startPollingLoop() {
 	go func() {
-		backoff := 1 * time.Second
+		backoff := defaultTelegramPollingBackoffMin
+		sleeper := b.sleeper
+		if sleeper == nil {
+			sleeper = time.Sleep
+		}
 		for {
 			select {
 			case <-b.ctx.Done():
@@ -400,13 +408,11 @@ func (b *TelegramBot) startPollingLoop() {
 			updates, err := b.getUpdates(b.ctx)
 			if err != nil {
 				log.Printf("Telegram polling error: %v", err)
-				time.Sleep(backoff)
-				if backoff < 30*time.Second {
-					backoff *= 2
-				}
+				sleeper(backoff)
+				backoff = nextPollingBackoff(backoff)
 				continue
 			}
-			backoff = 1 * time.Second
+			backoff = defaultTelegramPollingBackoffMin
 
 			for _, update := range updates {
 				b.handleUpdate(update)
@@ -417,6 +423,14 @@ func (b *TelegramBot) startPollingLoop() {
 			}
 		}
 	}()
+}
+
+func nextPollingBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > defaultTelegramPollingBackoffMax {
+		return defaultTelegramPollingBackoffMax
+	}
+	return next
 }
 
 func (b *TelegramBot) loadPollingOffset() error {
