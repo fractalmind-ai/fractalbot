@@ -127,6 +127,32 @@ func TestFeishuWhoamiCommand(t *testing.T) {
 	}
 }
 
+func TestFeishuReplyTruncation(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_1"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	msg := &feishuInboundMessage{replyIDType: "open_id", replyID: "ou_1"}
+	longText := strings.Repeat("a", maxFeishuReplyChars+10)
+
+	if err := bot.reply(context.Background(), msg, longText); err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+	if !strings.Contains(sent.text, "…(truncated)") {
+		t.Fatalf("expected truncated suffix, got %q", sent.text)
+	}
+	if len(sent.text) < maxFeishuReplyChars {
+		t.Fatalf("expected truncated text length >= max, got %d", len(sent.text))
+	}
+}
+
 func buildFeishuEvent(text, chatType, openID, userID, chatID string) *larkim.P2MessageReceiveV1 {
 	content := fmt.Sprintf(`{"text":%q}`, text)
 	return &larkim.P2MessageReceiveV1{
