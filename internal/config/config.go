@@ -25,6 +25,7 @@ type GatewayConfig struct {
 // ChannelsConfig contains channel configurations.
 type ChannelsConfig struct {
 	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+	Feishu   *FeishuConfig   `yaml:"feishu,omitempty"`
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 }
@@ -57,6 +58,20 @@ type TelegramConfig struct {
 	WebhookPublicURL string `yaml:"webhookPublicURL,omitempty"`
 	// WebhookSecretToken is verified against X-Telegram-Bot-Api-Secret-Token.
 	WebhookSecretToken string `yaml:"webhookSecretToken,omitempty"`
+}
+
+// FeishuConfig contains Feishu/Lark channel settings.
+type FeishuConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// AppID from Feishu/Lark developer console.
+	AppID string `yaml:"appId,omitempty"`
+	// AppSecret from Feishu/Lark developer console.
+	AppSecret string `yaml:"appSecret,omitempty"`
+	// Domain selects Feishu (China) or Lark (International).
+	// Supported values: "feishu", "lark". Defaults to "feishu".
+	Domain string `yaml:"domain,omitempty"`
+	// AllowedUsers is an allowlist of open_id or user_id values.
+	AllowedUsers []string `yaml:"allowedUsers,omitempty"`
 }
 
 // SlackConfig contains Slack channel settings.

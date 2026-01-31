@@ -7,4 +7,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require golang.org/x/net v0.17.0 // indirect
+require (
+	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/larksuite/oapi-sdk-go/v3 v3.5.3 // indirect
+	golang.org/x/net v0.17.0 // indirect
+)
