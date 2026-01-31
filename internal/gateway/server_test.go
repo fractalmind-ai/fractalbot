@@ -108,6 +108,14 @@ type statusPayload struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 		Running bool   `json:"running"`
+		Mode    string `json:"mode"`
+		Webhook *struct {
+			RegisterOnStart      bool `json:"register_on_start"`
+			DeleteOnStop         bool `json:"delete_on_stop"`
+			PublicURLConfigured  bool `json:"public_url_configured"`
+			ListenAddrConfigured bool `json:"listen_addr_configured"`
+			Registered           bool `json:"registered"`
+		} `json:"webhook"`
 	} `json:"channels"`
 	Agents *struct {
 		WorkspaceConfigured bool `json:"workspace_configured"`
@@ -157,7 +165,14 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 			Port: 0,
 		},
 		Channels: &config.ChannelsConfig{
-			Telegram: &config.TelegramConfig{Enabled: true},
+			Telegram: &config.TelegramConfig{
+				Enabled:                true,
+				Mode:                   "webhook",
+				WebhookListenAddr:      "0.0.0.0:18790",
+				WebhookPublicURL:       "https://example.com/telegram/webhook",
+				WebhookRegisterOnStart: true,
+				WebhookDeleteOnStop:    true,
+			},
 		},
 		Agents: &config.AgentsConfig{
 			Workspace:     "/tmp/agents",
@@ -198,6 +213,24 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 	}
 	if statusResp.Channels[0].Running {
 		t.Fatalf("expected telegram running=false before start")
+	}
+	if statusResp.Channels[0].Mode != "webhook" {
+		t.Fatalf("unexpected telegram mode: %s", statusResp.Channels[0].Mode)
+	}
+	if statusResp.Channels[0].Webhook == nil {
+		t.Fatalf("expected webhook status")
+	}
+	if !statusResp.Channels[0].Webhook.RegisterOnStart {
+		t.Fatalf("expected webhook register_on_start true")
+	}
+	if !statusResp.Channels[0].Webhook.DeleteOnStop {
+		t.Fatalf("expected webhook delete_on_stop true")
+	}
+	if !statusResp.Channels[0].Webhook.PublicURLConfigured {
+		t.Fatalf("expected webhook public_url_configured true")
+	}
+	if !statusResp.Channels[0].Webhook.ListenAddrConfigured {
+		t.Fatalf("expected webhook listen_addr_configured true")
 	}
 
 	if statusResp.Agents == nil {

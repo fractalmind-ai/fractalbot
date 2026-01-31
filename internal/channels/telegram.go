@@ -42,10 +42,13 @@ type TelegramBot struct {
 
 	mode string
 
-	webhookListenAddr  string
-	webhookPath        string
-	webhookPublicURL   string
-	webhookSecretToken string
+	webhookListenAddr      string
+	webhookPath            string
+	webhookPublicURL       string
+	webhookSecretToken     string
+	webhookRegisterOnStart bool
+	webhookDeleteOnStop    bool
+	webhookRegistered      bool
 
 	pollingTimeout    time.Duration
 	pollingLimit      int
@@ -62,6 +65,15 @@ type TelegramBot struct {
 
 	runningMu sync.RWMutex
 	running   bool
+}
+
+// TelegramWebhookStatus exposes safe webhook lifecycle details for status output.
+type TelegramWebhookStatus struct {
+	RegisterOnStart      bool `json:"register_on_start,omitempty"`
+	DeleteOnStop         bool `json:"delete_on_stop,omitempty"`
+	PublicURLConfigured  bool `json:"public_url_configured,omitempty"`
+	ListenAddrConfigured bool `json:"listen_addr_configured,omitempty"`
+	Registered           bool `json:"registered,omitempty"`
 }
 
 // NewTelegramBot creates a new Telegram bot instance.
@@ -96,6 +108,11 @@ func (b *TelegramBot) Name() string {
 	return "telegram"
 }
 
+// Mode returns the configured or active Telegram mode.
+func (b *TelegramBot) Mode() string {
+	return b.mode
+}
+
 // SetHandler sets the inbound message handler.
 func (b *TelegramBot) SetHandler(handler IncomingMessageHandler) {
 	b.handler = handler
@@ -106,6 +123,17 @@ func (b *TelegramBot) IsRunning() bool {
 	b.runningMu.RLock()
 	defer b.runningMu.RUnlock()
 	return b.running
+}
+
+// WebhookStatus returns lifecycle configuration for webhook mode.
+func (b *TelegramBot) WebhookStatus() TelegramWebhookStatus {
+	return TelegramWebhookStatus{
+		RegisterOnStart:      b.webhookRegisterOnStart,
+		DeleteOnStop:         b.webhookDeleteOnStop,
+		PublicURLConfigured:  b.webhookPublicURL != "",
+		ListenAddrConfigured: b.webhookListenAddr != "",
+		Registered:           b.webhookRegistered,
+	}
 }
 
 func (b *TelegramBot) setRunning(running bool) {
@@ -130,6 +158,12 @@ func (b *TelegramBot) ConfigureWebhook(listenAddr, path, publicURL, secretToken 
 	}
 	b.webhookPublicURL = strings.TrimSpace(publicURL)
 	b.webhookSecretToken = strings.TrimSpace(secretToken)
+}
+
+// ConfigureWebhookLifecycle controls webhook registration and cleanup behavior.
+func (b *TelegramBot) ConfigureWebhookLifecycle(registerOnStart, deleteOnStop bool) {
+	b.webhookRegisterOnStart = registerOnStart
+	b.webhookDeleteOnStop = deleteOnStop
 }
 
 // ConfigurePolling configures long polling settings.
@@ -174,6 +208,7 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 		if err := b.deleteWebhook(b.ctx); err != nil {
 			return err
 		}
+		b.webhookRegistered = false
 		if err := b.loadPollingOffset(); err != nil {
 			return err
 		}
@@ -207,11 +242,12 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 		}()
 	}
 
-	if b.webhookPublicURL != "" {
+	if b.webhookPublicURL != "" && b.webhookRegisterOnStart {
 		if err := b.setWebhook(b.ctx); err != nil {
 			return err
 		}
-		log.Printf("🔗 Telegram webhook registered: %s", b.webhookPublicURL)
+		b.webhookRegistered = true
+		log.Printf("🔗 Telegram webhook registered")
 	}
 
 	b.setRunning(true)
@@ -230,6 +266,15 @@ func (b *TelegramBot) Stop() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = b.server.Shutdown(ctx)
+	}
+
+	if b.mode == "webhook" && b.webhookDeleteOnStop {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.deleteWebhook(ctx); err != nil {
+			return err
+		}
+		b.webhookRegistered = false
 	}
 
 	b.setRunning(false)

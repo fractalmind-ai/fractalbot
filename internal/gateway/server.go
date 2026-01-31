@@ -252,9 +252,11 @@ func (s *Server) activeClients() int {
 }
 
 type channelStatus struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
-	Running bool   `json:"running"`
+	Name    string                          `json:"name"`
+	Enabled bool                            `json:"enabled"`
+	Running bool                            `json:"running"`
+	Mode    string                          `json:"mode,omitempty"`
+	Webhook *channels.TelegramWebhookStatus `json:"webhook,omitempty"`
 }
 
 type agentStatus struct {
@@ -288,10 +290,25 @@ func (s *Server) channelStatus() []channelStatus {
 	}
 
 	if s.config.Channels.Telegram != nil {
+		mode := telegramModeFromConfig(s.config.Channels.Telegram)
+		webhookStatus := telegramWebhookStatusFromConfig(s.config.Channels.Telegram)
+		if s.agentManager != nil && s.agentManager.ChannelManager != nil {
+			if ch := s.agentManager.ChannelManager.Get("telegram"); ch != nil {
+				if bot, ok := ch.(*channels.TelegramBot); ok {
+					if bot.Mode() != "" {
+						mode = bot.Mode()
+					}
+					status := bot.WebhookStatus()
+					webhookStatus = &status
+				}
+			}
+		}
 		statuses = append(statuses, channelStatus{
 			Name:    "telegram",
 			Enabled: s.config.Channels.Telegram.Enabled,
 			Running: lookup("telegram"),
+			Mode:    mode,
+			Webhook: webhookStatus,
 		})
 	}
 	if s.config.Channels.Slack != nil {
@@ -310,6 +327,32 @@ func (s *Server) channelStatus() []channelStatus {
 	}
 
 	return statuses
+}
+
+func telegramModeFromConfig(cfg *config.TelegramConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode == "" || mode == "auto" {
+		if strings.TrimSpace(cfg.WebhookListenAddr) != "" || strings.TrimSpace(cfg.WebhookPublicURL) != "" {
+			return "webhook"
+		}
+		return "polling"
+	}
+	return mode
+}
+
+func telegramWebhookStatusFromConfig(cfg *config.TelegramConfig) *channels.TelegramWebhookStatus {
+	if cfg == nil {
+		return nil
+	}
+	return &channels.TelegramWebhookStatus{
+		RegisterOnStart:      cfg.WebhookRegisterOnStart,
+		DeleteOnStop:         cfg.WebhookDeleteOnStop,
+		PublicURLConfigured:  strings.TrimSpace(cfg.WebhookPublicURL) != "",
+		ListenAddrConfigured: strings.TrimSpace(cfg.WebhookListenAddr) != "",
+	}
 }
 
 func (s *Server) agentStatus() *agentStatus {

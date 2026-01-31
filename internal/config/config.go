@@ -58,6 +58,10 @@ type TelegramConfig struct {
 	WebhookPublicURL string `yaml:"webhookPublicURL,omitempty"`
 	// WebhookSecretToken is verified against X-Telegram-Bot-Api-Secret-Token.
 	WebhookSecretToken string `yaml:"webhookSecretToken,omitempty"`
+	// WebhookRegisterOnStart controls whether FractalBot registers the webhook on startup.
+	WebhookRegisterOnStart bool `yaml:"webhookRegisterOnStart,omitempty"`
+	// WebhookDeleteOnStop controls whether FractalBot deletes the webhook on shutdown.
+	WebhookDeleteOnStop bool `yaml:"webhookDeleteOnStop,omitempty"`
 }
 
 // FeishuConfig contains Feishu/Lark channel settings.

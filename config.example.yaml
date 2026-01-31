@@ -40,11 +40,14 @@ channels:
     webhookPath: "/telegram/webhook"
 
     # Webhook registration (Telegram) (only used in mode: webhook)
-    # If set, FractalBot will call Telegram setWebhook() on startup.
     # Must be publicly reachable HTTPS URL.
     webhookPublicURL: ""
     # Verified via header: X-Telegram-Bot-Api-Secret-Token
     webhookSecretToken: ""
+    # If true, FractalBot will call Telegram setWebhook() on startup.
+    webhookRegisterOnStart: false
+    # If true, FractalBot will call Telegram deleteWebhook() on shutdown.
+    webhookDeleteOnStop: false
 
   # Slack channel configuration (optional)
   slack:
