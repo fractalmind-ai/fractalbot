@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,17 +107,19 @@ type statusPayload struct {
 	ActiveClients int    `json:"active_clients"`
 	Uptime        string `json:"uptime"`
 	Channels      []struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-		Running bool   `json:"running"`
-		Mode    string `json:"mode"`
-		Webhook *struct {
+		Name         string `json:"name"`
+		Enabled      bool   `json:"enabled"`
+		Running      bool   `json:"running"`
+		Mode         string `json:"mode"`
+		Webhook      *struct {
 			RegisterOnStart      bool `json:"register_on_start"`
 			DeleteOnStop         bool `json:"delete_on_stop"`
 			PublicURLConfigured  bool `json:"public_url_configured"`
 			ListenAddrConfigured bool `json:"listen_addr_configured"`
 			Registered           bool `json:"registered"`
 		} `json:"webhook"`
+		LastError    string `json:"last_error"`
+		LastActivity string `json:"last_activity"`
 	} `json:"channels"`
 	Agents *struct {
 		WorkspaceConfigured bool `json:"workspace_configured"`
@@ -253,5 +257,142 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 	}
 	if len(statusResp.Agents.OhMyCode.AllowedAgents) != 2 {
 		t.Fatalf("unexpected allowed_agents: %v", statusResp.Agents.OhMyCode.AllowedAgents)
+	}
+}
+
+type fakeTelemetryChannel struct {
+	name         string
+	running      bool
+	lastError    time.Time
+	lastActivity time.Time
+}
+
+func (f *fakeTelemetryChannel) Name() string {
+	return f.name
+}
+
+func (f *fakeTelemetryChannel) Start(ctx context.Context) error {
+	f.running = true
+	return nil
+}
+
+func (f *fakeTelemetryChannel) Stop() error {
+	f.running = false
+	return nil
+}
+
+func (f *fakeTelemetryChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+	_ = ctx
+	_ = chatID
+	_ = text
+	return nil
+}
+
+func (f *fakeTelemetryChannel) IsRunning() bool {
+	return f.running
+}
+
+func (f *fakeTelemetryChannel) LastError() time.Time {
+	return f.lastError
+}
+
+func (f *fakeTelemetryChannel) LastActivity() time.Time {
+	return f.lastActivity
+}
+
+func TestStatusIncludesChannelTelemetry(t *testing.T) {
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			Bind: "127.0.0.1",
+			Port: 0,
+		},
+		Channels: &config.ChannelsConfig{
+			Telegram: &config.TelegramConfig{Enabled: true},
+		},
+		Agents: &config.AgentsConfig{},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	lastError := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	lastActivity := time.Date(2024, 1, 3, 4, 5, 6, 0, time.UTC)
+	fake := &fakeTelemetryChannel{
+		name:         "telegram",
+		lastError:    lastError,
+		lastActivity: lastActivity,
+	}
+	if err := server.agentManager.ChannelManager.Register(fake); err != nil {
+		t.Fatalf("register fake channel: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	statusResp, err := fetchStatus(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	if len(statusResp.Channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(statusResp.Channels))
+	}
+	if got := statusResp.Channels[0].LastError; got != lastError.Format(time.RFC3339) {
+		t.Fatalf("last_error=%q", got)
+	}
+	if got := statusResp.Channels[0].LastActivity; got != lastActivity.Format(time.RFC3339) {
+		t.Fatalf("last_activity=%q", got)
+	}
+}
+
+func TestStatusDoesNotExposeSecrets(t *testing.T) {
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			Bind: "127.0.0.1",
+			Port: 0,
+		},
+		Channels: &config.ChannelsConfig{
+			Telegram: &config.TelegramConfig{
+				Enabled:  true,
+				BotToken: "bot-token-secret",
+			},
+			Feishu: &config.FeishuConfig{
+				Enabled:   true,
+				AppID:     "cli_secret",
+				AppSecret: "app-secret",
+			},
+		},
+		Agents: &config.AgentsConfig{},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+
+	text := string(body)
+	if strings.Contains(text, "bot-token-secret") || strings.Contains(text, "app-secret") || strings.Contains(text, "cli_secret") {
+		t.Fatalf("status response leaked secrets: %s", text)
 	}
 }
