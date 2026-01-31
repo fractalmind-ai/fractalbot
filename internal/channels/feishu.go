@@ -304,7 +304,7 @@ func (b *FeishuBot) reply(ctx context.Context, msg *feishuInboundMessage, text s
 	if b.sendMessageFn == nil {
 		return errors.New("feishu sender not configured")
 	}
-	return b.sendMessageFn(ctx, msg.replyIDType, msg.replyID, text)
+	return b.sendMessageFn(ctx, msg.replyIDType, msg.replyID, TruncateFeishuReply(text))
 }
 
 func (b *FeishuBot) toProtocolMessage(msg *feishuInboundMessage, text, agent string) *protocol.Message {
