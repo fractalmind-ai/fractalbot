@@ -107,11 +107,11 @@ type statusPayload struct {
 	ActiveClients int    `json:"active_clients"`
 	Uptime        string `json:"uptime"`
 	Channels      []struct {
-		Name         string `json:"name"`
-		Enabled      bool   `json:"enabled"`
-		Running      bool   `json:"running"`
-		Mode         string `json:"mode"`
-		Webhook      *struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		Running bool   `json:"running"`
+		Mode    string `json:"mode"`
+		Webhook *struct {
 			RegisterOnStart      bool `json:"register_on_start"`
 			DeleteOnStop         bool `json:"delete_on_stop"`
 			PublicURLConfigured  bool `json:"public_url_configured"`
