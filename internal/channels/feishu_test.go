@@ -127,6 +127,53 @@ func TestFeishuWhoamiCommand(t *testing.T) {
 	}
 }
 
+func TestFeishuAgentsCommand(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "qa-1", []string{"qa-1", "coder-a"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agents", "p2p", "ou_me", "u_me", "chat1"))
+
+	if !strings.Contains(sent.text, "Allowed agents:") {
+		t.Fatalf("expected agents header, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "Default agent: qa-1") {
+		t.Fatalf("expected default agent, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "coder-a") {
+		t.Fatalf("expected allowlisted agent, got %q", sent.text)
+	}
+}
+
+func TestFeishuAgentAllowlistHint(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "coder-a", []string{"coder-a"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agent other test", "p2p", "ou_allowed", "u1", "chat1"))
+
+	if !strings.Contains(sent.text, "not allowed") {
+		t.Fatalf("expected not allowed error, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "Tip: use /agents") {
+		t.Fatalf("expected /agents hint, got %q", sent.text)
+	}
+}
+
 func TestFeishuReplyTruncation(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_1"}, "", nil)
 	if err != nil {
