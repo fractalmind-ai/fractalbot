@@ -11,6 +11,9 @@ Usage: install.sh [--systemd-user]
 
 Options:
   --systemd-user   Install a systemd user service (Linux only).
+
+Environment:
+  FRACTALBOT_REF / FRACTALBOT_VERSION   Git ref (tag/branch/commit) to install.
 EOF
 }
 
@@ -43,24 +46,33 @@ config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fractalbot"
 config_path="${config_dir}/config.yaml"
 data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fractalbot"
 workspace_dir="${data_dir}/workspace"
+default_ref="e4131c8e470dc92622d5c87c68ff426d7e5e05d1"
 
 repo_root=""
 cleanup=""
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_file="${BASH_SOURCE[0]:-}"
+script_dir=""
+if [ -n "${script_file}" ] && [ -f "${script_file}" ]; then
+  script_dir="$(cd "$(dirname "${script_file}")" && pwd)"
+fi
 
-if [ -f "${script_dir}/go.mod" ]; then
+if [ -n "${script_dir}" ] && [ -f "${script_dir}/go.mod" ]; then
   repo_root="${script_dir}"
-elif command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
-  repo_root="$(git rev-parse --show-toplevel)"
+elif [ -n "${script_dir}" ] && command -v git >/dev/null 2>&1 && git -C "${script_dir}" rev-parse --show-toplevel >/dev/null 2>&1; then
+  repo_root="$(git -C "${script_dir}" rev-parse --show-toplevel)"
 else
   if ! command -v git >/dev/null 2>&1; then
     log "git is required for curl|bash installs."
     exit 1
   fi
+  ref="${FRACTALBOT_REF:-${FRACTALBOT_VERSION:-${default_ref}}}"
   tmp_dir="$(mktemp -d)"
   cleanup="${tmp_dir}"
-  log "Cloning fractalbot into ${tmp_dir}..."
-  git clone --depth 1 https://github.com/fractalmind-ai/fractalbot.git "${tmp_dir}" >/dev/null 2>&1
+  log "Cloning fractalbot (${ref}) into ${tmp_dir}..."
+  git -C "${tmp_dir}" init -q
+  git -C "${tmp_dir}" remote add origin https://github.com/fractalmind-ai/fractalbot.git
+  git -C "${tmp_dir}" fetch --depth 1 origin "${ref}" >/dev/null 2>&1
+  git -C "${tmp_dir}" checkout -q FETCH_HEAD
   repo_root="${tmp_dir}"
 fi
 
