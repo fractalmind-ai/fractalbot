@@ -264,6 +264,11 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 		return nil
 	}
 
+	if isIncompleteFeishuAgentCommand(msg.text) {
+		_ = b.reply(ctx, msg, "❌ usage: /agent <name> <task>\nTip: use /agents to see allowed agents.")
+		return nil
+	}
+
 	selection, err := ParseAgentSelection(msg.text)
 	if err != nil {
 		reply := fmt.Sprintf("❌ %v", err)
@@ -467,6 +472,25 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func isIncompleteFeishuAgentCommand(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "/agent") {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return false
+	}
+	command := fields[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
+	if command != "/agent" {
+		return false
+	}
+	return len(fields) < 3
 }
 
 func resolveFeishuDomain(domain string) string {
