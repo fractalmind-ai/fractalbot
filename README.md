@@ -76,12 +76,12 @@ FractalBot is a Go-based reimagining of [Clawdbot](https://github.com/clawdbot/c
 
 ```bash
 # One-line install (pinned; builds and installs to ~/.local/bin)
-curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/e4131c8e470dc92622d5c87c68ff426d7e5e05d1/install.sh | \
-  FRACTALBOT_REF=e4131c8e470dc92622d5c87c68ff426d7e5e05d1 bash
+curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/cb052356b79b4e679efb03a93210ab4628590076/install.sh | \
+  FRACTALBOT_REF=cb052356b79b4e679efb03a93210ab4628590076 bash
 
 # Optional: install as a systemd user service (Linux)
-curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/e4131c8e470dc92622d5c87c68ff426d7e5e05d1/install.sh | \
-  FRACTALBOT_REF=e4131c8e470dc92622d5c87c68ff426d7e5e05d1 bash -s -- --systemd-user
+curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/cb052356b79b4e679efb03a93210ab4628590076/install.sh | \
+  FRACTALBOT_REF=cb052356b79b4e679efb03a93210ab4628590076 bash -s -- --systemd-user
 
 # Smoke check
 ~/.local/bin/fractalbot --help

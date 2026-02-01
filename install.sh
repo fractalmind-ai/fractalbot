@@ -46,7 +46,7 @@ config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fractalbot"
 config_path="${config_dir}/config.yaml"
 data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fractalbot"
 workspace_dir="${data_dir}/workspace"
-default_ref="e4131c8e470dc92622d5c87c68ff426d7e5e05d1"
+default_ref="cb052356b79b4e679efb03a93210ab4628590076"
 
 repo_root=""
 cleanup=""
