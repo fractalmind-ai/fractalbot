@@ -266,7 +266,11 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 
 	selection, err := ParseAgentSelection(msg.text)
 	if err != nil {
-		_ = b.reply(ctx, msg, fmt.Sprintf("❌ %v", err))
+		reply := fmt.Sprintf("❌ %v", err)
+		if isAgentAllowlistError(err) {
+			reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+		}
+		_ = b.reply(ctx, msg, reply)
 		return nil
 	}
 	if strings.TrimSpace(selection.Task) == "" {
@@ -277,7 +281,11 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	if enforceSelection {
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllow)
 		if err != nil {
-			_ = b.reply(ctx, msg, fmt.Sprintf("❌ %v", err))
+			reply := fmt.Sprintf("❌ %v", err)
+			if isAgentAllowlistError(err) {
+				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+			}
+			_ = b.reply(ctx, msg, reply)
 			return nil
 		}
 	}
@@ -314,10 +322,32 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
+	if command == "/agent" {
+		return false, nil
+	}
 
 	switch command {
 	case "/help", "/start":
 		return true, b.reply(ctx, msg, b.helpText())
+	case "/agents":
+		names := b.agentAllow.Names()
+		if len(names) == 0 {
+			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
+				names = []string{trimmed}
+			}
+		}
+		if len(names) == 0 {
+			return true, b.reply(ctx, msg, "⚠️ No agents configured")
+		}
+		var sb strings.Builder
+		sb.WriteString("Allowed agents:\n")
+		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		}
+		for _, name := range names {
+			sb.WriteString(fmt.Sprintf("  - %s\n", name))
+		}
+		return true, b.reply(ctx, msg, strings.TrimSpace(sb.String()))
 	case "/whoami":
 		reply := fmt.Sprintf("open_id: %s\nuser_id: %s\nchat_id: %s", msg.openID, msg.userID, msg.chatID)
 		return true, b.reply(ctx, msg, reply)
@@ -332,6 +362,7 @@ func (b *FeishuBot) helpText() string {
 		"",
 		"Commands:",
 		"  /help - show this help",
+		"  /agents - list allowed agents",
 		"  /whoami - show your Feishu IDs",
 		"",
 		"Agent routing:",
