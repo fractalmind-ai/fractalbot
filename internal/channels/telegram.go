@@ -65,6 +65,10 @@ type TelegramBot struct {
 
 	runningMu sync.RWMutex
 	running   bool
+
+	telemetryMu  sync.RWMutex
+	lastActivity time.Time
+	lastError    time.Time
 }
 
 // TelegramWebhookStatus exposes safe webhook lifecycle details for status output.
@@ -134,6 +138,32 @@ func (b *TelegramBot) WebhookStatus() TelegramWebhookStatus {
 		ListenAddrConfigured: b.webhookListenAddr != "",
 		Registered:           b.webhookRegistered,
 	}
+}
+
+// LastActivity reports the last time the bot saw a message or successfully sent one.
+func (b *TelegramBot) LastActivity() time.Time {
+	b.telemetryMu.RLock()
+	defer b.telemetryMu.RUnlock()
+	return b.lastActivity
+}
+
+// LastError reports the last time the bot encountered a channel error.
+func (b *TelegramBot) LastError() time.Time {
+	b.telemetryMu.RLock()
+	defer b.telemetryMu.RUnlock()
+	return b.lastError
+}
+
+func (b *TelegramBot) markActivity() {
+	b.telemetryMu.Lock()
+	b.lastActivity = time.Now().UTC()
+	b.telemetryMu.Unlock()
+}
+
+func (b *TelegramBot) markError() {
+	b.telemetryMu.Lock()
+	b.lastError = time.Now().UTC()
+	b.telemetryMu.Unlock()
 }
 
 func (b *TelegramBot) setRunning(running bool) {
@@ -291,6 +321,11 @@ type telegramBoolResponse struct {
 func (b *TelegramBot) setWebhook(ctx context.Context) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/setWebhook", b.botToken)
 
+	fail := func(err error) error {
+		b.markError()
+		return err
+	}
+
 	payload := map[string]interface{}{
 		"url": b.webhookPublicURL,
 	}
@@ -300,35 +335,35 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal setWebhook payload: %w", err)
+		return fail(fmt.Errorf("failed to marshal setWebhook payload: %w", err))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
 	if err != nil {
-		return fmt.Errorf("failed to create setWebhook request: %w", err)
+		return fail(fmt.Errorf("failed to create setWebhook request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to call setWebhook: %w", err)
+		return fail(fmt.Errorf("failed to call setWebhook: %w", err))
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram setWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fail(fmt.Errorf("telegram setWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	var parsed telegramBoolResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return fmt.Errorf("failed to parse setWebhook response: %w", err)
+		return fail(fmt.Errorf("failed to parse setWebhook response: %w", err))
 	}
 	if !parsed.OK || !parsed.Result {
 		if parsed.Description != "" {
-			return fmt.Errorf("telegram setWebhook failed: %s", parsed.Description)
+			return fail(fmt.Errorf("telegram setWebhook failed: %s", parsed.Description))
 		}
-		return fmt.Errorf("telegram setWebhook failed")
+		return fail(fmt.Errorf("telegram setWebhook failed"))
 	}
 
 	return nil
@@ -337,40 +372,45 @@ func (b *TelegramBot) setWebhook(ctx context.Context) error {
 func (b *TelegramBot) deleteWebhook(ctx context.Context) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/deleteWebhook", b.botToken)
 
+	fail := func(err error) error {
+		b.markError()
+		return err
+	}
+
 	payload := map[string]interface{}{
 		"drop_pending_updates": false,
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal deleteWebhook payload: %w", err)
+		return fail(fmt.Errorf("failed to marshal deleteWebhook payload: %w", err))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
 	if err != nil {
-		return fmt.Errorf("failed to create deleteWebhook request: %w", err)
+		return fail(fmt.Errorf("failed to create deleteWebhook request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to call deleteWebhook: %w", err)
+		return fail(fmt.Errorf("failed to call deleteWebhook: %w", err))
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram deleteWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fail(fmt.Errorf("telegram deleteWebhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	var parsed telegramBoolResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return fmt.Errorf("failed to parse deleteWebhook response: %w", err)
+		return fail(fmt.Errorf("failed to parse deleteWebhook response: %w", err))
 	}
 	if !parsed.OK || !parsed.Result {
 		if parsed.Description != "" {
-			return fmt.Errorf("telegram deleteWebhook failed: %s", parsed.Description)
+			return fail(fmt.Errorf("telegram deleteWebhook failed: %s", parsed.Description))
 		}
-		return fmt.Errorf("telegram deleteWebhook failed")
+		return fail(fmt.Errorf("telegram deleteWebhook failed"))
 	}
 
 	return nil
@@ -452,6 +492,7 @@ func (b *TelegramBot) startPollingLoop() {
 
 			updates, err := b.getUpdates(b.ctx)
 			if err != nil {
+				b.markError()
 				log.Printf("Telegram polling error: %v", err)
 				sleeper(backoff)
 				backoff = nextPollingBackoff(backoff)
@@ -559,6 +600,7 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxTelegramRequestBodyBytes))
 	if err != nil {
+		b.markError()
 		log.Printf("Failed to read Telegram webhook body: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -567,6 +609,7 @@ func (b *TelegramBot) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	var update telegramUpdate
 	if err := json.Unmarshal(body, &update); err != nil {
+		b.markError()
 		log.Printf("Failed to parse Telegram webhook update: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -579,6 +622,7 @@ func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 	if update.Message == nil || update.Message.From == nil || update.Message.Chat == nil {
 		return
 	}
+	b.markActivity()
 	b.handleIncomingMessage(update.Message)
 }
 
@@ -987,11 +1031,13 @@ func (b *TelegramBot) SendMessage(ctx context.Context, chatID int64, text string
 
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
+		b.markError()
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
 	if err != nil {
+		b.markError()
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -999,15 +1045,18 @@ func (b *TelegramBot) SendMessage(ctx context.Context, chatID int64, text string
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
+		b.markError()
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		b.markError()
 		return fmt.Errorf("telegram API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	b.markActivity()
 	return nil
 }
 
@@ -1022,11 +1071,13 @@ func (b *TelegramBot) SendTypingIndicator(ctx context.Context, chatID int64) err
 
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
+		b.markError()
 		return err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonPayload))
 	if err != nil {
+		b.markError()
 		return err
 	}
 
@@ -1035,9 +1086,16 @@ func (b *TelegramBot) SendTypingIndicator(ctx context.Context, chatID int64) err
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		b.markError()
 		return err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		b.markError()
+		return fmt.Errorf("telegram API returned status %d", resp.StatusCode)
+	}
+
+	b.markActivity()
 	return nil
 }

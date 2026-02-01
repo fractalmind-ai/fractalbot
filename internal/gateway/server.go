@@ -252,11 +252,13 @@ func (s *Server) activeClients() int {
 }
 
 type channelStatus struct {
-	Name    string                          `json:"name"`
-	Enabled bool                            `json:"enabled"`
-	Running bool                            `json:"running"`
-	Mode    string                          `json:"mode,omitempty"`
-	Webhook *channels.TelegramWebhookStatus `json:"webhook,omitempty"`
+	Name         string                          `json:"name"`
+	Enabled      bool                            `json:"enabled"`
+	Running      bool                            `json:"running"`
+	Mode         string                          `json:"mode,omitempty"`
+	Webhook      *channels.TelegramWebhookStatus `json:"webhook,omitempty"`
+	LastError    string                          `json:"last_error"`
+	LastActivity string                          `json:"last_activity"`
 }
 
 type agentStatus struct {
@@ -278,51 +280,81 @@ func (s *Server) channelStatus() []channelStatus {
 	}
 
 	statuses := make([]channelStatus, 0, 3)
-	lookup := func(name string) bool {
+	getChannel := func(name string) channels.Channel {
 		if s.agentManager == nil || s.agentManager.ChannelManager == nil {
-			return false
+			return nil
 		}
-		ch := s.agentManager.ChannelManager.Get(name)
+		return s.agentManager.ChannelManager.Get(name)
+	}
+	isRunning := func(ch channels.Channel) bool {
 		if ch == nil {
 			return false
 		}
 		return ch.IsRunning()
 	}
+	telemetry := func(ch channels.Channel) (string, string) {
+		if ch == nil {
+			return "", ""
+		}
+		if provider, ok := ch.(channels.TelemetryProvider); ok {
+			return formatStatusTime(provider.LastError()), formatStatusTime(provider.LastActivity())
+		}
+		return "", ""
+	}
 
 	if s.config.Channels.Telegram != nil {
 		mode := telegramModeFromConfig(s.config.Channels.Telegram)
 		webhookStatus := telegramWebhookStatusFromConfig(s.config.Channels.Telegram)
-		if s.agentManager != nil && s.agentManager.ChannelManager != nil {
-			if ch := s.agentManager.ChannelManager.Get("telegram"); ch != nil {
-				if bot, ok := ch.(*channels.TelegramBot); ok {
-					if bot.Mode() != "" {
-						mode = bot.Mode()
-					}
-					status := bot.WebhookStatus()
-					webhookStatus = &status
-				}
+		ch := getChannel("telegram")
+		lastError, lastActivity := telemetry(ch)
+		if bot, ok := ch.(*channels.TelegramBot); ok {
+			if bot.Mode() != "" {
+				mode = bot.Mode()
 			}
+			status := bot.WebhookStatus()
+			webhookStatus = &status
 		}
 		statuses = append(statuses, channelStatus{
-			Name:    "telegram",
-			Enabled: s.config.Channels.Telegram.Enabled,
-			Running: lookup("telegram"),
-			Mode:    mode,
-			Webhook: webhookStatus,
+			Name:         "telegram",
+			Enabled:      s.config.Channels.Telegram.Enabled,
+			Running:      isRunning(ch),
+			Mode:         mode,
+			Webhook:      webhookStatus,
+			LastError:    lastError,
+			LastActivity: lastActivity,
 		})
 	}
 	if s.config.Channels.Slack != nil {
+		ch := getChannel("slack")
+		lastError, lastActivity := telemetry(ch)
 		statuses = append(statuses, channelStatus{
-			Name:    "slack",
-			Enabled: s.config.Channels.Slack.Enabled,
-			Running: lookup("slack"),
+			Name:         "slack",
+			Enabled:      s.config.Channels.Slack.Enabled,
+			Running:      isRunning(ch),
+			LastError:    lastError,
+			LastActivity: lastActivity,
+		})
+	}
+	if s.config.Channels.Feishu != nil {
+		ch := getChannel("feishu")
+		lastError, lastActivity := telemetry(ch)
+		statuses = append(statuses, channelStatus{
+			Name:         "feishu",
+			Enabled:      s.config.Channels.Feishu.Enabled,
+			Running:      isRunning(ch),
+			LastError:    lastError,
+			LastActivity: lastActivity,
 		})
 	}
 	if s.config.Channels.Discord != nil {
+		ch := getChannel("discord")
+		lastError, lastActivity := telemetry(ch)
 		statuses = append(statuses, channelStatus{
-			Name:    "discord",
-			Enabled: s.config.Channels.Discord.Enabled,
-			Running: lookup("discord"),
+			Name:         "discord",
+			Enabled:      s.config.Channels.Discord.Enabled,
+			Running:      isRunning(ch),
+			LastError:    lastError,
+			LastActivity: lastActivity,
 		})
 	}
 
@@ -355,6 +387,12 @@ func telegramWebhookStatusFromConfig(cfg *config.TelegramConfig) *channels.Teleg
 	}
 }
 
+func formatStatusTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
 func (s *Server) agentStatus() *agentStatus {
 	if s.config == nil || s.config.Agents == nil {
 		return nil

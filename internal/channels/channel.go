@@ -1,6 +1,9 @@
 package channels
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Channel defines the minimal interface for channel lifecycle management.
 type Channel interface {
@@ -14,4 +17,10 @@ type Channel interface {
 // HandlerAware is implemented by channels that accept inbound handlers.
 type HandlerAware interface {
 	SetHandler(handler IncomingMessageHandler)
+}
+
+// TelemetryProvider exposes channel telemetry for status reporting.
+type TelemetryProvider interface {
+	LastError() time.Time
+	LastActivity() time.Time
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -44,6 +45,10 @@ type FeishuBot struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	telemetryMu  sync.RWMutex
+	lastActivity time.Time
+	lastError    time.Time
 }
 
 func NewFeishuBot(appID, appSecret, domain string, allowedUsers []string, defaultAgent string, allowedAgents []string) (*FeishuBot, error) {
@@ -84,6 +89,32 @@ func (b *FeishuBot) IsRunning() bool {
 	b.runningMu.RLock()
 	defer b.runningMu.RUnlock()
 	return b.running
+}
+
+// LastActivity reports the last time the bot saw a message or successfully sent one.
+func (b *FeishuBot) LastActivity() time.Time {
+	b.telemetryMu.RLock()
+	defer b.telemetryMu.RUnlock()
+	return b.lastActivity
+}
+
+// LastError reports the last time the bot encountered a channel error.
+func (b *FeishuBot) LastError() time.Time {
+	b.telemetryMu.RLock()
+	defer b.telemetryMu.RUnlock()
+	return b.lastError
+}
+
+func (b *FeishuBot) markActivity() {
+	b.telemetryMu.Lock()
+	b.lastActivity = time.Now().UTC()
+	b.telemetryMu.Unlock()
+}
+
+func (b *FeishuBot) markError() {
+	b.telemetryMu.Lock()
+	b.lastError = time.Now().UTC()
+	b.telemetryMu.Unlock()
 }
 
 func (b *FeishuBot) setRunning(running bool) {
@@ -170,14 +201,17 @@ func (b *FeishuBot) startLongConnection(ctx context.Context) error {
 
 func (b *FeishuBot) sendText(ctx context.Context, receiveIDType, receiveID, text string) error {
 	if b.apiClient == nil {
+		b.markError()
 		return errors.New("feishu api client not initialized")
 	}
 	if strings.TrimSpace(receiveID) == "" {
+		b.markError()
 		return errors.New("feishu receive_id is required")
 	}
 
 	payload, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
+		b.markError()
 		return fmt.Errorf("failed to marshal feishu content: %w", err)
 	}
 
@@ -192,17 +226,21 @@ func (b *FeishuBot) sendText(ctx context.Context, receiveIDType, receiveID, text
 
 	resp, err := b.apiClient.Im.V1.Message.Create(ctx, req)
 	if err != nil {
+		b.markError()
 		return err
 	}
 	if !resp.Success() {
+		b.markError()
 		return fmt.Errorf("feishu send failed: code=%d msg=%s", resp.Code, resp.Msg)
 	}
+	b.markActivity()
 	return nil
 }
 
 func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	msg, err := parseFeishuInbound(event)
 	if err != nil {
+		b.markError()
 		log.Printf("feishu parse error: %v", err)
 		return nil
 	}
@@ -212,6 +250,7 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	if msg.chatType != "p2p" {
 		return nil
 	}
+	b.markActivity()
 
 	if handled, cmdErr := b.handleCommand(ctx, msg); handled {
 		if cmdErr != nil {
@@ -246,6 +285,7 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	if b.handler != nil {
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent))
 		if err != nil {
+			b.markError()
 			log.Printf("feishu handler error: %v", err)
 			replyText = "❌ Something went wrong. Please try again."
 		}
@@ -304,7 +344,12 @@ func (b *FeishuBot) reply(ctx context.Context, msg *feishuInboundMessage, text s
 	if b.sendMessageFn == nil {
 		return errors.New("feishu sender not configured")
 	}
-	return b.sendMessageFn(ctx, msg.replyIDType, msg.replyID, TruncateFeishuReply(text))
+	if err := b.sendMessageFn(ctx, msg.replyIDType, msg.replyID, TruncateFeishuReply(text)); err != nil {
+		b.markError()
+		return err
+	}
+	b.markActivity()
+	return nil
 }
 
 func (b *FeishuBot) toProtocolMessage(msg *feishuInboundMessage, text, agent string) *protocol.Message {
