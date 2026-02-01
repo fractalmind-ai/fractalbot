@@ -337,14 +337,10 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 	case "/agents":
 		names := b.agentAllow.Names()
 		defaultName := strings.TrimSpace(b.defaultAgent)
-		if len(names) == 0 {
-			if defaultName != "" {
-				names = []string{defaultName}
-			}
-		} else if defaultName != "" {
+		if len(names) > 0 && defaultName != "" {
 			names = filterOutAgentName(names, defaultName)
 		}
-		if len(names) == 0 {
+		if len(names) == 0 && defaultName == "" {
 			return true, b.reply(ctx, msg, "⚠️ No agents configured")
 		}
 		var sb strings.Builder

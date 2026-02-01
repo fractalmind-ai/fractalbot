@@ -752,18 +752,17 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 
 	case "/agents":
 		names := b.agentAllowlist.Names()
-		if len(names) == 0 {
-			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-				names = []string{trimmed}
-			}
+		defaultName := strings.TrimSpace(b.defaultAgent)
+		if len(names) > 0 && defaultName != "" {
+			names = filterOutAgentName(names, defaultName)
 		}
-		if len(names) == 0 {
+		if len(names) == 0 && defaultName == "" {
 			return true, b.SendMessage(b.ctx, msg.Chat.ID, "⚠️ No agents configured")
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
-		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		if defaultName != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", defaultName))
 		}
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
