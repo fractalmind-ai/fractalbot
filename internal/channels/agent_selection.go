@@ -134,3 +134,17 @@ func (a AgentAllowlist) Names() []string {
 	sort.Strings(names)
 	return names
 }
+
+func filterOutAgentName(names []string, target string) []string {
+	if target == "" {
+		return names
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == target {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
+}

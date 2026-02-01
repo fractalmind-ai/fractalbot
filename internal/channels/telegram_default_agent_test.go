@@ -22,10 +22,13 @@ func TestTelegramDefaultAgentMissingGuidance(t *testing.T) {
 
 	bot.handleIncomingMessage(msg)
 
-	if !strings.Contains(payload.Text, "Default agent is not configured") {
-		t.Fatalf("expected default agent guidance, got %q", payload.Text)
+	if !strings.Contains(payload.Text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected config key hint, got %q", payload.Text)
 	}
 	if !strings.Contains(payload.Text, "/agent <name> <task>") {
 		t.Fatalf("expected /agent hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "/agents") {
+		t.Fatalf("expected /agents hint, got %q", payload.Text)
 	}
 }

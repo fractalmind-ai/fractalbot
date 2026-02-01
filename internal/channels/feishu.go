@@ -287,7 +287,9 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllow)
 		if err != nil {
 			reply := fmt.Sprintf("❌ %v", err)
-			if isAgentAllowlistError(err) {
+			if !selection.Specified && (isDefaultAgentMissingError(err) || isInvalidAgentNameError(err)) {
+				reply = "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task>.\nTip: use /agents to see allowed agents."
+			} else if isAgentAllowlistError(err) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
 			_ = b.reply(ctx, msg, reply)
@@ -336,18 +338,17 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 		return true, b.reply(ctx, msg, b.helpText())
 	case "/agents":
 		names := b.agentAllow.Names()
-		if len(names) == 0 {
-			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-				names = []string{trimmed}
-			}
+		defaultName := strings.TrimSpace(b.defaultAgent)
+		if len(names) > 0 && defaultName != "" {
+			names = filterOutAgentName(names, defaultName)
 		}
-		if len(names) == 0 {
+		if len(names) == 0 && defaultName == "" {
 			return true, b.reply(ctx, msg, "⚠️ No agents configured")
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
-		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		if defaultName != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", defaultName))
 		}
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
