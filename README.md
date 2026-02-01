@@ -75,6 +75,12 @@ FractalBot is a Go-based reimagining of [Clawdbot](https://github.com/clawdbot/c
 ### Installation
 
 ```bash
+# One-line install (builds and installs to ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/main/install.sh | bash
+
+# Optional: install as a systemd user service (Linux)
+curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/main/install.sh | bash -s -- --systemd-user
+
 # Clone the repository
 git clone git@github.com:fractalmind-ai/fractalbot.git
 cd fractalbot
