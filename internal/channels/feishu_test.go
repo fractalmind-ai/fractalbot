@@ -150,6 +150,9 @@ func TestFeishuAgentsCommand(t *testing.T) {
 	if !strings.Contains(sent.text, "coder-a") {
 		t.Fatalf("expected allowlisted agent, got %q", sent.text)
 	}
+	if strings.Count(sent.text, "qa-1") != 1 {
+		t.Fatalf("expected default agent listed once, got %q", sent.text)
+	}
 }
 
 func TestFeishuAgentAllowlistHint(t *testing.T) {

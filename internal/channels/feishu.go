@@ -336,18 +336,21 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 		return true, b.reply(ctx, msg, b.helpText())
 	case "/agents":
 		names := b.agentAllow.Names()
+		defaultName := strings.TrimSpace(b.defaultAgent)
 		if len(names) == 0 {
-			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-				names = []string{trimmed}
+			if defaultName != "" {
+				names = []string{defaultName}
 			}
+		} else if defaultName != "" {
+			names = filterOutAgentName(names, defaultName)
 		}
 		if len(names) == 0 {
 			return true, b.reply(ctx, msg, "⚠️ No agents configured")
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
-		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		if defaultName != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", defaultName))
 		}
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
