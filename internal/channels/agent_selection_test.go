@@ -1,6 +1,9 @@
 package channels
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseAgentSelection(t *testing.T) {
 	tests := []struct {
@@ -92,6 +95,8 @@ func TestResolveAgentSelection(t *testing.T) {
 	selection = AgentSelection{Task: "go"}
 	if _, err := ResolveAgentSelection(selection, "", NewAgentAllowlist(nil)); err == nil {
 		t.Fatalf("expected default agent error")
+	} else if !errors.Is(err, errDefaultAgentMissing) {
+		t.Fatalf("expected default agent missing error, got %v", err)
 	}
 
 	selection = AgentSelection{Agent: "-bad", Task: "go", Specified: true}

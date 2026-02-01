@@ -664,8 +664,8 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllowlist)
 		if err != nil {
 			reply := fmt.Sprintf("❌ %v", err)
-			if isDefaultAgentMissingError(err) && !selection.Specified && b.agentAllowlist.configured {
-				reply = "❌ Default agent is not configured.\nTip: use /agent <name> <task> or set agents.ohMyCode.defaultAgent."
+			if !selection.Specified && (isDefaultAgentMissingError(err) || isInvalidAgentNameError(err)) {
+				reply = "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task>.\nTip: use /agents to see allowed agents."
 			} else if isAgentAllowlistError(err) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
@@ -928,6 +928,13 @@ func isAgentAllowlistError(err error) bool {
 
 func isDefaultAgentMissingError(err error) bool {
 	return errors.Is(err, errDefaultAgentMissing)
+}
+
+func isInvalidAgentNameError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "invalid agent name")
 }
 
 func (b *TelegramBot) helpText() string {

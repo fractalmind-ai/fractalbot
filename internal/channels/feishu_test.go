@@ -202,6 +202,31 @@ func TestFeishuAgentAllowlistHint(t *testing.T) {
 	}
 }
 
+func TestFeishuDefaultAgentMissingGuidance(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("hello", "p2p", "ou_allowed", "u1", "chat1"))
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected config key hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agent <name> <task>") {
+		t.Fatalf("expected /agent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agents") {
+		t.Fatalf("expected /agents hint, got %q", sent.text)
+	}
+}
+
 func TestFeishuAgentCommandUsageHint(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "qa-1", []string{"qa-1"})
 	if err != nil {

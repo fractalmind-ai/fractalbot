@@ -287,7 +287,9 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllow)
 		if err != nil {
 			reply := fmt.Sprintf("❌ %v", err)
-			if isAgentAllowlistError(err) {
+			if !selection.Specified && (isDefaultAgentMissingError(err) || isInvalidAgentNameError(err)) {
+				reply = "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task>.\nTip: use /agents to see allowed agents."
+			} else if isAgentAllowlistError(err) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
 			_ = b.reply(ctx, msg, reply)
