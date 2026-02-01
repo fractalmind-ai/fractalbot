@@ -216,8 +216,11 @@ func TestFeishuAgentNotAllowedDefaultOnly(t *testing.T) {
 
 	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agent other test", "p2p", "ou_allowed", "u1", "chat1"))
 
-	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
-		t.Fatalf("expected defaultAgent hint, got %q", sent.text)
+	if !strings.Contains(sent.text, "Only the default agent is enabled") {
+		t.Fatalf("expected default-only hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", sent.text)
 	}
 	if !strings.Contains(sent.text, "/agents") {
 		t.Fatalf("expected /agents hint, got %q", sent.text)

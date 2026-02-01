@@ -110,8 +110,11 @@ func TestTelegramAgentNotAllowedDefaultOnly(t *testing.T) {
 
 	bot.handleIncomingMessage(msg)
 
-	if !strings.Contains(payload.Text, "agents.ohMyCode.defaultAgent") {
-		t.Fatalf("expected defaultAgent hint, got %q", payload.Text)
+	if !strings.Contains(payload.Text, "Only the default agent is enabled") {
+		t.Fatalf("expected default-only hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", payload.Text)
 	}
 	if !strings.Contains(payload.Text, "/agents") {
 		t.Fatalf("expected /agents hint, got %q", payload.Text)

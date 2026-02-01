@@ -155,7 +155,7 @@ func agentNotAllowedMessage(err error, defaultAgent string, allowlist AgentAllow
 		return fmt.Sprintf("%s\nTip: add to agents.ohMyCode.allowedAgents or use /agents.", message)
 	}
 	if strings.TrimSpace(defaultAgent) != "" {
-		return fmt.Sprintf("%s\nTip: set agents.ohMyCode.defaultAgent or use /agents.", message)
+		return fmt.Sprintf("%s\nOnly the default agent is enabled.\nTip: configure agents.ohMyCode.allowedAgents to allow others, or use /agents.", message)
 	}
 	return fmt.Sprintf("%s\nTip: configure agents.ohMyCode.defaultAgent or agents.ohMyCode.allowedAgents.", message)
 }
