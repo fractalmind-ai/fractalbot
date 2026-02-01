@@ -174,6 +174,65 @@ func TestFeishuAgentAllowlistHint(t *testing.T) {
 	}
 }
 
+func TestFeishuAgentCommandUsageHint(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agent   ", "p2p", "ou_allowed", "u1", "chat1"))
+
+	if !strings.Contains(sent.text, "usage: /agent <name> <task>") {
+		t.Fatalf("expected usage hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "Tip: use /agents") {
+		t.Fatalf("expected /agents tip, got %q", sent.text)
+	}
+}
+
+func TestFeishuAgentCommandRoutes(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "", []string{"coder-a"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	handler := &fakeFeishuHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agent coder-a do work", "p2p", "ou_allowed", "u1", "chat1"))
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if handler.last == nil {
+		t.Fatalf("expected message payload")
+	}
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	if data["agent"] != "coder-a" {
+		t.Fatalf("expected agent coder-a, got %v", data["agent"])
+	}
+	if data["text"] != "do work" {
+		t.Fatalf("expected task text, got %v", data["text"])
+	}
+	if sent.text != "ok" {
+		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+}
 func TestFeishuReplyTruncation(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_1"}, "", nil)
 	if err != nil {
