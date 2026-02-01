@@ -637,7 +637,9 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if handled, cmdErr := b.handleCommand(message); handled {
 		if cmdErr != nil {
 			reply := fmt.Sprintf("❌ %v", cmdErr)
-			if isAgentAllowlistError(cmdErr) {
+			if isAgentNotAllowedError(cmdErr) {
+				reply = agentNotAllowedMessage(cmdErr, b.defaultAgent, b.agentAllowlist)
+			} else if isAgentAllowlistError(cmdErr) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
 			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
@@ -648,7 +650,9 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	selection, err := ParseAgentSelection(message.Text)
 	if err != nil {
 		reply := fmt.Sprintf("❌ %v", err)
-		if isAgentAllowlistError(err) {
+		if isAgentNotAllowedError(err) {
+			reply = agentNotAllowedMessage(err, b.defaultAgent, b.agentAllowlist)
+		} else if isAgentAllowlistError(err) {
 			reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 		}
 		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
@@ -666,6 +670,8 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 			reply := fmt.Sprintf("❌ %v", err)
 			if !selection.Specified && (isDefaultAgentMissingError(err) || isInvalidAgentNameError(err)) {
 				reply = "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task>.\nTip: use /agents to see allowed agents."
+			} else if isAgentNotAllowedError(err) {
+				reply = agentNotAllowedMessage(err, b.defaultAgent, b.agentAllowlist)
 			} else if isAgentAllowlistError(err) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
@@ -935,6 +941,13 @@ func isInvalidAgentNameError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "invalid agent name")
+}
+
+func isAgentNotAllowedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "not allowed")
 }
 
 func (b *TelegramBot) helpText() string {

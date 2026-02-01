@@ -85,7 +85,38 @@ func TestTelegramAgentSelectionErrorIncludesHint(t *testing.T) {
 
 	bot.handleIncomingMessage(msg)
 
-	if !strings.Contains(payload.Text, "Tip: use /agents") {
+	if !strings.Contains(payload.Text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "/agents") {
+		t.Fatalf("expected /agents hint, got %q", payload.Text)
+	}
+}
+
+func TestTelegramAgentNotAllowedDefaultOnly(t *testing.T) {
+	bot, err := NewTelegramBot("token", nil, 123, "qa-1", nil)
+	if err != nil {
+		t.Fatalf("NewTelegramBot: %v", err)
+	}
+
+	var payload sendMessagePayload
+	bot.httpClient = captureHTTPClient(t, &payload)
+
+	msg := &TelegramMessage{
+		Text: "/agent hacker do stuff",
+		From: &TelegramUser{ID: 123},
+		Chat: &TelegramChat{ID: 99},
+	}
+
+	bot.handleIncomingMessage(msg)
+
+	if !strings.Contains(payload.Text, "Only the default agent is enabled") {
+		t.Fatalf("expected default-only hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "/agents") {
 		t.Fatalf("expected /agents hint, got %q", payload.Text)
 	}
 }
