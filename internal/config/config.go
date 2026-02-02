@@ -80,9 +80,10 @@ type FeishuConfig struct {
 
 // SlackConfig contains Slack channel settings.
 type SlackConfig struct {
-	Enabled  bool   `yaml:"enabled,omitempty"`
-	BotToken string `yaml:"botToken,omitempty"`
-	AppToken string `yaml:"appToken,omitempty"`
+	Enabled      bool     `yaml:"enabled,omitempty"`
+	BotToken     string   `yaml:"botToken,omitempty"`
+	AppToken     string   `yaml:"appToken,omitempty"`
+	AllowedUsers []string `yaml:"allowedUsers,omitempty"`
 }
 
 // DiscordConfig contains Discord channel settings.
