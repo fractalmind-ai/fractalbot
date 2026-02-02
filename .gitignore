@@ -8,6 +8,7 @@ fractalbot-*
 *.dylib
 !cmd/fractalbot/
 !cmd/fractalbot/**
+!internal/memory/ort/lib/**
 
 # Test binary, built with `go test -c`
 *.test
