@@ -4,7 +4,7 @@
 
 **Current Phase**: Phase 2 - Channel Integrations
 
-**Progress**: Core gateway complete. Telegram + Feishu/Lark channels are production-ready; Slack/Discord pending. Agent runtime still planned.
+**Progress**: Core gateway complete. Telegram + Feishu/Lark channels are production-ready; Slack/Discord DM-only skeletons landed. Agent runtime skeleton started.
 
 ---
 
@@ -41,6 +41,7 @@
 **Estimated**: Complete
 
 #### Slack Channel
+- [x] DM-only skeleton + allowlist + /whoami onboarding
 - [ ] Bot initialization and RTM connection
 - [ ] Event handling (message, mention, reaction)
 - [ ] Team/channel authorization
@@ -51,6 +52,7 @@
 **Estimated**: 2-3 days
 
 #### Discord Channel
+- [x] DM-only skeleton + allowlist + /whoami onboarding
 - [ ] Bot initialization and gateway connection
 - [ ] Event handling (message, interaction)
 - [ ] Guild/channel authorization
@@ -75,7 +77,7 @@
 **Estimated**: 5-7 days
 
 #### Tool Execution Engine
-- [ ] Tool registry and discovery
+- [x] Tool registry skeleton (default-deny allowlist)
 - [ ] Tool execution with sandboxing
 - [ ] File operations (read/write/edit)
 - [ ] System command execution
