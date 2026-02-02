@@ -153,6 +153,8 @@ type MemoryConfig struct {
 	ChunkOverlap int `yaml:"chunkOverlap,omitempty"`
 	// TopK controls the number of results returned.
 	TopK int `yaml:"topK,omitempty"`
+	// MaxTokens controls input token limit for embeddings.
+	MaxTokens int `yaml:"maxTokens,omitempty"`
 }
 
 // RuntimeConfig enables the in-process agent runtime.

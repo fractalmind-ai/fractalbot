@@ -141,3 +141,5 @@ agents:
     chunkOverlap: 80
     # Top-K search results
     topK: 5
+    # Max tokens per embedding (default: 512)
+    maxTokens: 512

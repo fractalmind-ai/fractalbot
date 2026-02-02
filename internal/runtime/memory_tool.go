@@ -21,6 +21,7 @@ const (
 	defaultMemoryChunkOverlap   = memory.DefaultChunkOverlap
 	defaultMemoryTopK           = memory.DefaultTopK
 	defaultMemoryIndexBatchSize = memory.DefaultBatchSize
+	defaultMemoryMaxTokens      = 512
 )
 
 // MemorySearchTool exposes semantic memory search for the runtime.
@@ -110,6 +111,9 @@ func (t *MemorySearchTool) ensureReady(ctx context.Context) error {
 		embedder, err := memory.NewOnnxEmbedder(memory.OnnxConfig{
 			ModelPath:     assets.ModelPath,
 			TokenizerPath: assets.TokenizerPath,
+			Tokenizer:     tokenizer,
+			MaxTokens:     resolveMaxTokens(t.cfg),
+			CacheDir:      cacheDir,
 		})
 		if err != nil {
 			t.initErr = err
@@ -173,6 +177,13 @@ func resolveTopK(cfg *config.MemoryConfig) int {
 		return defaultMemoryTopK
 	}
 	return cfg.TopK
+}
+
+func resolveMaxTokens(cfg *config.MemoryConfig) int {
+	if cfg == nil || cfg.MaxTokens <= 0 {
+		return defaultMemoryMaxTokens
+	}
+	return cfg.MaxTokens
 }
 
 func ensureParentDir(path string) error {
