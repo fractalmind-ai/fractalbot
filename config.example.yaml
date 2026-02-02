@@ -52,6 +52,7 @@ channels:
   # Slack channel configuration (optional)
   slack:
     enabled: false
+    # Socket Mode (no public ports). Requires Slack App-Level token (xapp-).
     botToken: "xoxb-your-bot-token"
     appToken: "xapp-your-app-token"
     # Allowed Slack user IDs (DM-only; empty means deny all)

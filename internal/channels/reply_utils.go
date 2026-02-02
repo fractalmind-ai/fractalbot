@@ -5,6 +5,7 @@ import "strings"
 const (
 	truncateSuffix      = "\n…(truncated)"
 	maxFeishuReplyChars = 2000
+	maxSlackReplyChars  = 3000
 )
 
 func truncateReply(text string, maxChars int) string {
@@ -18,4 +19,9 @@ func truncateReply(text string, maxChars int) string {
 // TruncateFeishuReply limits outbound Feishu/Lark responses to a conservative size.
 func TruncateFeishuReply(text string) string {
 	return truncateReply(text, maxFeishuReplyChars)
+}
+
+// TruncateSlackReply limits outbound Slack responses to a conservative size.
+func TruncateSlackReply(text string) string {
+	return truncateReply(text, maxSlackReplyChars)
 }

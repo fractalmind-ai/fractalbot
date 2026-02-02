@@ -9,6 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
+
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -22,6 +26,9 @@ type SlackBot struct {
 	agentAllow   AgentAllowlist
 
 	handler IncomingMessageHandler
+
+	apiClient    *slack.Client
+	socketClient *socketmode.Client
 
 	startFn       func(ctx context.Context) error
 	stopFn        func() error
@@ -104,10 +111,16 @@ func (b *SlackBot) setRunning(running bool) {
 func (b *SlackBot) Start(ctx context.Context) error {
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
-	if b.startFn != nil {
-		if err := b.startFn(b.ctx); err != nil {
-			return err
-		}
+	if b.startFn == nil {
+		b.initClients()
+	}
+
+	if b.startFn == nil {
+		return errors.New("slack start function not configured")
+	}
+
+	if err := b.startFn(b.ctx); err != nil {
+		return err
 	}
 
 	b.setRunning(true)
@@ -132,6 +145,77 @@ func (b *SlackBot) SendMessage(ctx context.Context, chatID int64, text string) e
 	_ = chatID
 	_ = text
 	return errors.New("slack SendMessage requires a string channel ID")
+}
+
+func (b *SlackBot) initClients() {
+	if b.sendMessageFn != nil && b.startFn != nil {
+		return
+	}
+	if b.botToken == "" || b.appToken == "" {
+		return
+	}
+	b.apiClient = slack.New(b.botToken, slack.OptionAppLevelToken(b.appToken))
+	b.socketClient = socketmode.New(b.apiClient)
+	b.sendMessageFn = b.sendText
+	b.startFn = b.startSocketMode
+}
+
+func (b *SlackBot) startSocketMode(ctx context.Context) error {
+	if b.socketClient == nil {
+		return errors.New("slack socket mode client not initialized")
+	}
+
+	go b.consumeSocketEvents(ctx)
+
+	go func() {
+		if err := b.socketClient.RunContext(ctx); err != nil {
+			log.Printf("slack socket mode error: %v", err)
+		}
+	}()
+	return nil
+}
+
+func (b *SlackBot) consumeSocketEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-b.socketClient.Events:
+			if !ok {
+				return
+			}
+			b.handleSocketEvent(ctx, event)
+		}
+	}
+}
+
+func (b *SlackBot) handleSocketEvent(ctx context.Context, event socketmode.Event) {
+	if event.Request != nil {
+		b.socketClient.Ack(*event.Request)
+	}
+
+	if event.Type != socketmode.EventTypeEventsAPI {
+		return
+	}
+	eventsAPIEvent, ok := event.Data.(slackevents.EventsAPIEvent)
+	if !ok {
+		return
+	}
+	b.handleEventsAPIEvent(ctx, eventsAPIEvent)
+}
+
+func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
+	if event.Type != slackevents.CallbackEvent {
+		return
+	}
+	switch ev := event.InnerEvent.Data.(type) {
+	case *slackevents.MessageEvent:
+		msg := slackMessageFromEvent(ev)
+		if msg == nil {
+			return
+		}
+		b.handleMessageEvent(ctx, msg)
+	}
 }
 
 func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMessage) {
@@ -303,11 +387,28 @@ func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text str
 	if b.sendMessageFn == nil {
 		return errors.New("slack sender not configured")
 	}
-	if err := b.sendMessageFn(ctx, msg.channelID, text); err != nil {
+	if err := b.sendMessageFn(ctx, msg.channelID, TruncateSlackReply(text)); err != nil {
 		b.markError()
 		return err
 	}
 	b.markActivity()
+	return nil
+}
+
+func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
+	if b.apiClient == nil {
+		b.markError()
+		return errors.New("slack api client not initialized")
+	}
+	if strings.TrimSpace(channelID) == "" {
+		b.markError()
+		return errors.New("slack channel ID is required")
+	}
+	_, _, err := b.apiClient.PostMessageContext(ctx, channelID, slack.MsgOptionText(text, false))
+	if err != nil {
+		b.markError()
+		return err
+	}
 	return nil
 }
 
@@ -331,6 +432,24 @@ type slackInboundMessage struct {
 	userID      string
 	channelID   string
 	channelType string
+}
+
+func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage {
+	if event == nil {
+		return nil
+	}
+	if event.SubType != "" {
+		return nil
+	}
+	if strings.TrimSpace(event.User) == "" || strings.TrimSpace(event.Channel) == "" {
+		return nil
+	}
+	return &slackInboundMessage{
+		text:        event.Text,
+		userID:      event.User,
+		channelID:   event.Channel,
+		channelType: event.ChannelType,
+	}
 }
 
 type SlackAllowlist struct {

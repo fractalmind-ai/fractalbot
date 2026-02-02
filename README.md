@@ -167,7 +167,7 @@ Additional lifecycle commands:
 - `/whoami` (show your Telegram IDs)
 - `/ping` (simple health check)
 
-Slack (skeleton, DM-only) requires allowlisting user IDs before messages are processed:
+Slack (DM-only) uses Socket Mode (no public ports) and requires allowlisting user IDs before messages are processed:
 
 ```yaml
 channels:

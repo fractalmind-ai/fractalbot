@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/slack-go/slack/slackevents"
+
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -98,6 +100,43 @@ func TestSlackUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSlackSocketModeDMEvent(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.handleEventsAPIEvent(context.Background(), slackevents.EventsAPIEvent{
+		Type: slackevents.CallbackEvent,
+		InnerEvent: slackevents.EventsAPIInnerEvent{
+			Data: &slackevents.MessageEvent{
+				Type:        "message",
+				User:        "U123",
+				Text:        "hello",
+				Channel:     "D456",
+				ChannelType: "im",
+			},
+		},
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if sent.text != "ok" {
+		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+}
+
 func TestSlackWhoamiAllowedWithoutAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
 	if err != nil {
@@ -123,6 +162,34 @@ func TestSlackWhoamiAllowedWithoutAllowlist(t *testing.T) {
 	}
 	if strings.Contains(sent.text, "Unauthorized") {
 		t.Fatalf("did not expect unauthorized for /whoami, got %q", sent.text)
+	}
+}
+
+func TestSlackReplyTruncation(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeSlackHandler{reply: strings.Repeat("a", maxSlackReplyChars+10)}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "…(truncated)") {
+		t.Fatalf("expected truncated reply, got %q", sent.text)
 	}
 }
 
