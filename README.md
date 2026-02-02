@@ -157,6 +157,18 @@ Additional lifecycle commands:
 - `/whoami` (show your Telegram IDs)
 - `/ping` (simple health check)
 
+Slack (skeleton, DM-only) requires allowlisting user IDs before messages are processed:
+
+```yaml
+channels:
+  slack:
+    enabled: true
+    botToken: "xoxb-your-bot-token"
+    appToken: "xapp-your-app-token"
+    allowedUsers:
+      - "U12345678"
+```
+
 ### Local Demo (Telegram + polling + oh-my-code)
 
 This is the fastest path to a local, end-to-end demo after the CLI entrypoint lands.

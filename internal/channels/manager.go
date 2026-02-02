@@ -200,6 +200,40 @@ func (m *Manager) registerConfiguredChannels() error {
 		}
 	}
 
+	if m.cfg.Slack != nil && m.cfg.Slack.Enabled {
+		if m.Get("slack") != nil {
+			return nil
+		}
+		if strings.TrimSpace(m.cfg.Slack.BotToken) == "" || strings.TrimSpace(m.cfg.Slack.AppToken) == "" {
+			return errors.New("channels.slack.botToken and channels.slack.appToken are required when slack is enabled")
+		}
+
+		var defaultAgent string
+		var allowedAgents []string
+		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
+			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
+			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
+		}
+		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
+			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+		}
+
+		bot, err := NewSlackBot(
+			m.cfg.Slack.BotToken,
+			m.cfg.Slack.AppToken,
+			m.cfg.Slack.AllowedUsers,
+			defaultAgent,
+			allowedAgents,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to init slack bot: %w", err)
+		}
+
+		if err := m.Register(bot); err != nil {
+			return fmt.Errorf("failed to register slack bot: %w", err)
+		}
+	}
+
 	return nil
 }
 

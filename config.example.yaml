@@ -54,6 +54,9 @@ channels:
     enabled: false
     botToken: "xoxb-your-bot-token"
     appToken: "xapp-your-app-token"
+    # Allowed Slack user IDs (DM-only; empty means deny all)
+    allowedUsers:
+      - "U12345678"
 
   # Feishu/Lark channel configuration (optional)
   feishu:
