@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bwmarrin/discordgo"
+
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -154,5 +156,51 @@ func TestDiscordIgnoreNonDM(t *testing.T) {
 	}
 	if sent.text != "" {
 		t.Fatalf("expected no reply for non-DM, got %q", sent.text)
+	}
+}
+
+func TestDiscordMessageFromEventFiltersGuild(t *testing.T) {
+	msg := discordMessageFromEvent(&discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "m1",
+			ChannelID: "c1",
+			GuildID:   "g1",
+			Content:   "hi",
+			Author:    &discordgo.User{ID: "u1"},
+		},
+	})
+	if msg == nil {
+		t.Fatalf("expected message for non-bot event")
+	}
+	if msg.channelType != "guild" {
+		t.Fatalf("expected guild channel type, got %q", msg.channelType)
+	}
+}
+
+func TestDiscordReplyTruncation(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeDiscordHandler{reply: strings.Repeat("a", maxDiscordReplyChars+10)}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "hello",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "…(truncated)") {
+		t.Fatalf("expected truncated reply, got %q", sent.text)
 	}
 }
