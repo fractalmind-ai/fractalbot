@@ -190,6 +190,8 @@ channels:
       - "123456789012345678"
 ```
 
+Tip: `/whoami` works in Slack/Discord DMs even before allowlisting, so users can self-identify.
+
 ### Local Demo (Telegram + polling + oh-my-code)
 
 This is the fastest path to a local, end-to-end demo after the CLI entrypoint lands.
