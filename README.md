@@ -145,6 +145,16 @@ agents:
     allowedAgents:
       - "qa-1"
       - "coder-a"
+
+  # Optional: in-process runtime (Phase 3 skeleton)
+  runtime:
+    enabled: false
+    # Allowed tool names (empty = deny all)
+    allowedTools:
+      - "echo"
+      - "version"
+    # Optional: cap runtime replies
+    maxReplyChars: 2000
 ```
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.

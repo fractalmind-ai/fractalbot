@@ -14,6 +14,7 @@ import (
 
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
+	agentruntime "github.com/fractalmind-ai/fractalbot/internal/runtime"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -36,6 +37,7 @@ type Manager struct {
 	ChannelManager *channels.Manager
 	mu             sync.RWMutex
 	agents         map[string]protocol.AgentInfo
+	runtime        agentruntime.AgentRuntime
 }
 
 // NewManager creates a new agent manager.
@@ -48,13 +50,24 @@ func NewManager(cfg *config.AgentsConfig) *Manager {
 
 // Start initializes agent runtime.
 func (m *Manager) Start(ctx context.Context) error {
-	_ = ctx
+	if m.runtime == nil {
+		rt, err := agentruntime.NewRuntime(m.runtimeConfig())
+		if err != nil {
+			return err
+		}
+		m.runtime = rt
+	}
+	if m.runtime != nil {
+		return m.runtime.Start(ctx)
+	}
 	return nil
 }
 
 // Stop halts agent runtime.
 func (m *Manager) Stop(ctx context.Context) error {
-	_ = ctx
+	if m.runtime != nil {
+		return m.runtime.Stop(ctx)
+	}
 	return nil
 }
 
@@ -92,6 +105,24 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		return "", nil
 	}
 
+	if m.runtime != nil {
+		agentName, _ := data["agent"].(string)
+		task := agentruntime.Task{
+			Agent:    strings.TrimSpace(agentName),
+			Text:     text,
+			Channel:  channel,
+			Metadata: runtimeMetadata(data),
+		}
+		out, err := m.runtime.HandleTask(ctx, task)
+		if err != nil {
+			return "", err
+		}
+		if channel == "telegram" {
+			return channels.TruncateTelegramReply(out), nil
+		}
+		return out, nil
+	}
+
 	if m.isOhMyCodeEnabled() {
 		agentName, _ := data["agent"].(string)
 		out, err := m.assignOhMyCode(ctx, text, agentName)
@@ -105,6 +136,24 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil
+}
+
+func (m *Manager) runtimeConfig() *config.RuntimeConfig {
+	if m.config == nil {
+		return nil
+	}
+	return m.config.Runtime
+}
+
+func runtimeMetadata(data map[string]interface{}) map[string]string {
+	metadata := make(map[string]string)
+	keys := []string{"chat_id", "user_id", "open_id", "channel_id", "chatType", "message"}
+	for _, key := range keys {
+		if value, ok := data[key]; ok {
+			metadata[key] = fmt.Sprint(value)
+		}
+	}
+	return metadata
 }
 
 func (m *Manager) isOhMyCodeEnabled() bool {
