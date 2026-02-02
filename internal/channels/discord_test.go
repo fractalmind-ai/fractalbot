@@ -98,6 +98,34 @@ func TestDiscordUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDiscordWhoamiAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/whoami",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "user_id: 999") {
+		t.Fatalf("expected whoami reply, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /whoami, got %q", sent.text)
+	}
+}
+
 func TestDiscordIgnoreNonDM(t *testing.T) {
 	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
 	if err != nil {

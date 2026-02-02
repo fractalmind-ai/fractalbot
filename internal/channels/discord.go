@@ -141,6 +141,15 @@ func (b *DiscordBot) handleMessageEvent(ctx context.Context, msg *discordInbound
 
 	b.markActivity()
 
+	if isDiscordSafeCommand(msg.text) {
+		if handled, cmdErr := b.handleCommand(ctx, msg); handled {
+			if cmdErr != nil {
+				_ = b.reply(ctx, msg, fmt.Sprintf("❌ %v", cmdErr))
+			}
+			return
+		}
+	}
+
 	if !b.allowlist.Allowed(msg.userID) {
 		_ = b.reply(ctx, msg, "❌ Unauthorized. Ask an admin to add your Discord user ID to channels.discord.allowedUsers.\nTip: use /whoami to get your user ID.")
 		return
@@ -268,6 +277,23 @@ func (b *DiscordBot) helpText() string {
 		"  /agent <name> <task...>",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func isDiscordSafeCommand(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "/") {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "/help", "/start", "/whoami":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *DiscordBot) reply(ctx context.Context, msg *discordInboundMessage, text string) error {
