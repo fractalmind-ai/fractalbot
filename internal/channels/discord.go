@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bwmarrin/discordgo"
+
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -21,6 +23,8 @@ type DiscordBot struct {
 	agentAllow   AgentAllowlist
 
 	handler IncomingMessageHandler
+
+	session *discordgo.Session
 
 	startFn       func(ctx context.Context) error
 	stopFn        func() error
@@ -101,10 +105,18 @@ func (b *DiscordBot) setRunning(running bool) {
 func (b *DiscordBot) Start(ctx context.Context) error {
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
-	if b.startFn != nil {
-		if err := b.startFn(b.ctx); err != nil {
+	if b.startFn == nil {
+		if err := b.initClients(); err != nil {
 			return err
 		}
+	}
+
+	if b.startFn == nil {
+		return errors.New("discord start function not configured")
+	}
+
+	if err := b.startFn(b.ctx); err != nil {
+		return err
 	}
 
 	b.setRunning(true)
@@ -129,6 +141,57 @@ func (b *DiscordBot) SendMessage(ctx context.Context, chatID int64, text string)
 	_ = chatID
 	_ = text
 	return errors.New("discord SendMessage requires a string channel ID")
+}
+
+func (b *DiscordBot) initClients() error {
+	if b.sendMessageFn != nil && b.startFn != nil {
+		return nil
+	}
+	if strings.TrimSpace(b.token) == "" {
+		return errors.New("discord token is required")
+	}
+
+	session, err := discordgo.New("Bot " + b.token)
+	if err != nil {
+		return err
+	}
+	session.Identify.Intents = discordgo.IntentsDirectMessages | discordgo.IntentsMessageContent
+
+	session.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		msg := discordMessageFromEvent(m)
+		if msg == nil {
+			return
+		}
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		b.handleMessageEvent(ctx, msg)
+	})
+
+	b.session = session
+	b.sendMessageFn = b.sendText
+	b.startFn = b.startGateway
+	b.stopFn = b.stopGateway
+	return nil
+}
+
+func (b *DiscordBot) startGateway(ctx context.Context) error {
+	if b.session == nil {
+		return errors.New("discord session not initialized")
+	}
+	go func() {
+		<-ctx.Done()
+		_ = b.session.Close()
+	}()
+	return b.session.Open()
+}
+
+func (b *DiscordBot) stopGateway() error {
+	if b.session != nil {
+		return b.session.Close()
+	}
+	return nil
 }
 
 func (b *DiscordBot) handleMessageEvent(ctx context.Context, msg *discordInboundMessage) {
@@ -300,11 +363,29 @@ func (b *DiscordBot) reply(ctx context.Context, msg *discordInboundMessage, text
 	if b.sendMessageFn == nil {
 		return errors.New("discord sender not configured")
 	}
-	if err := b.sendMessageFn(ctx, msg.channelID, text); err != nil {
+	if err := b.sendMessageFn(ctx, msg.channelID, TruncateDiscordReply(text)); err != nil {
 		b.markError()
 		return err
 	}
 	b.markActivity()
+	return nil
+}
+
+func (b *DiscordBot) sendText(ctx context.Context, channelID, text string) error {
+	if b.session == nil {
+		b.markError()
+		return errors.New("discord session not initialized")
+	}
+	if strings.TrimSpace(channelID) == "" {
+		b.markError()
+		return errors.New("discord channel ID is required")
+	}
+	_, err := b.session.ChannelMessageSend(channelID, text)
+	if err != nil {
+		b.markError()
+		return err
+	}
+	_ = ctx
 	return nil
 }
 
@@ -328,6 +409,28 @@ type discordInboundMessage struct {
 	userID      string
 	channelID   string
 	channelType string
+}
+
+func discordMessageFromEvent(event *discordgo.MessageCreate) *discordInboundMessage {
+	if event == nil || event.Author == nil || event.Message == nil {
+		return nil
+	}
+	if event.Author.Bot {
+		return nil
+	}
+	channelType := "dm"
+	if strings.TrimSpace(event.GuildID) != "" {
+		channelType = "guild"
+	}
+	if strings.TrimSpace(event.ChannelID) == "" || strings.TrimSpace(event.Author.ID) == "" {
+		return nil
+	}
+	return &discordInboundMessage{
+		text:        event.Content,
+		userID:      event.Author.ID,
+		channelID:   event.ChannelID,
+		channelType: channelType,
+	}
 }
 
 type DiscordAllowlist struct {
