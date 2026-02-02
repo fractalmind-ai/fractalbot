@@ -98,6 +98,34 @@ func TestSlackUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSlackWhoamiAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/whoami",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "user_id: U999") {
+		t.Fatalf("expected whoami reply, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /whoami, got %q", sent.text)
+	}
+}
+
 func TestSlackIgnoreNonDM(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
 	if err != nil {
