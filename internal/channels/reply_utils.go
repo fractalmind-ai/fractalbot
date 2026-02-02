@@ -22,6 +22,11 @@ func TruncateFeishuReply(text string) string {
 	return truncateReply(text, maxFeishuReplyChars)
 }
 
+// TruncateDiscordReply limits outbound Discord responses to a conservative size.
+func TruncateDiscordReply(text string) string {
+	return truncateReply(text, maxDiscordReplyChars)
+}
+
 // TruncateSlackReply limits outbound Slack responses to a conservative size.
 func TruncateSlackReply(text string) string {
 	return truncateReply(text, maxSlackReplyChars)
