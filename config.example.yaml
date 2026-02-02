@@ -110,3 +110,13 @@ agents:
     # - /doctor (admin only)
     # - /whoami (show your Telegram IDs)
     # - /ping (simple health check)
+
+  # Optional: in-process runtime (Phase 3 skeleton)
+  runtime:
+    enabled: false
+    # Allowed tool names (empty = deny all)
+    allowedTools:
+      - "echo"
+      - "version"
+    # Optional: cap runtime replies
+    maxReplyChars: 2000

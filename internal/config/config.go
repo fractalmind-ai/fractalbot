@@ -123,6 +123,14 @@ type AgentsConfig struct {
 	Workspace     string          `yaml:"workspace"`
 	MaxConcurrent int             `yaml:"maxConcurrent"`
 	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
+	Runtime       *RuntimeConfig  `yaml:"runtime,omitempty"`
+}
+
+// RuntimeConfig enables the in-process agent runtime.
+type RuntimeConfig struct {
+	Enabled       bool     `yaml:"enabled,omitempty"`
+	AllowedTools  []string `yaml:"allowedTools,omitempty"`
+	MaxReplyChars int      `yaml:"maxReplyChars,omitempty"`
 }
 
 // LoadConfig loads configuration from file.
