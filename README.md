@@ -179,7 +179,7 @@ channels:
       - "U12345678"
 ```
 
-Discord (skeleton, DM-only) requires allowlisting user IDs before messages are processed:
+Discord (DM-only) uses the gateway websocket (no public ports) and requires allowlisting user IDs before messages are processed:
 
 ```yaml
 channels:

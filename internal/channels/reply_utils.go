@@ -3,8 +3,9 @@ package channels
 import "strings"
 
 const (
-	truncateSuffix      = "\n…(truncated)"
-	maxFeishuReplyChars = 2000
+	truncateSuffix       = "\n…(truncated)"
+	maxDiscordReplyChars = 1800
+	maxFeishuReplyChars  = 2000
 )
 
 func truncateReply(text string, maxChars int) string {
@@ -18,4 +19,9 @@ func truncateReply(text string, maxChars int) string {
 // TruncateFeishuReply limits outbound Feishu/Lark responses to a conservative size.
 func TruncateFeishuReply(text string) string {
 	return truncateReply(text, maxFeishuReplyChars)
+}
+
+// TruncateDiscordReply limits outbound Discord responses to a conservative size.
+func TruncateDiscordReply(text string) string {
+	return truncateReply(text, maxDiscordReplyChars)
 }

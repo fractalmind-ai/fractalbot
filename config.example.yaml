@@ -74,6 +74,7 @@ channels:
   # Discord channel configuration (optional)
   discord:
     enabled: false
+    # Uses the Discord gateway websocket (no public ports).
     # Get from Discord Developer Portal
     token: "your-bot-token"
     # Allowed Discord user IDs (DM-only; empty means deny all)
