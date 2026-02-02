@@ -76,6 +76,9 @@ channels:
     enabled: false
     # Get from Discord Developer Portal
     token: "your-bot-token"
+    # Allowed Discord user IDs (DM-only; empty means deny all)
+    allowedUsers:
+      - "123456789012345678"
 
 agents:
   # Workspace directory for agent sessions

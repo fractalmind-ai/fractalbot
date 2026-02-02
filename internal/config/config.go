@@ -88,8 +88,9 @@ type SlackConfig struct {
 
 // DiscordConfig contains Discord channel settings.
 type DiscordConfig struct {
-	Enabled bool   `yaml:"enabled,omitempty"`
-	Token   string `yaml:"token,omitempty"`
+	Enabled      bool     `yaml:"enabled,omitempty"`
+	Token        string   `yaml:"token,omitempty"`
+	AllowedUsers []string `yaml:"allowedUsers,omitempty"`
 }
 
 // OhMyCodeConfig contains integration settings for the oh-my-code workspace.
