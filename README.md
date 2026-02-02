@@ -169,6 +169,17 @@ channels:
       - "U12345678"
 ```
 
+Discord (skeleton, DM-only) requires allowlisting user IDs before messages are processed:
+
+```yaml
+channels:
+  discord:
+    enabled: true
+    token: "your-bot-token"
+    allowedUsers:
+      - "123456789012345678"
+```
+
 ### Local Demo (Telegram + polling + oh-my-code)
 
 This is the fastest path to a local, end-to-end demo after the CLI entrypoint lands.

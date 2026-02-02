@@ -234,6 +234,39 @@ func (m *Manager) registerConfiguredChannels() error {
 		}
 	}
 
+	if m.cfg.Discord != nil && m.cfg.Discord.Enabled {
+		if m.Get("discord") != nil {
+			return nil
+		}
+		if strings.TrimSpace(m.cfg.Discord.Token) == "" {
+			return errors.New("channels.discord.token is required when discord is enabled")
+		}
+
+		var defaultAgent string
+		var allowedAgents []string
+		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
+			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
+			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
+		}
+		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
+			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+		}
+
+		bot, err := NewDiscordBot(
+			m.cfg.Discord.Token,
+			m.cfg.Discord.AllowedUsers,
+			defaultAgent,
+			allowedAgents,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to init discord bot: %w", err)
+		}
+
+		if err := m.Register(bot); err != nil {
+			return fmt.Errorf("failed to register discord bot: %w", err)
+		}
+	}
+
 	return nil
 }
 
