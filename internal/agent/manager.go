@@ -51,7 +51,7 @@ func NewManager(cfg *config.AgentsConfig) *Manager {
 // Start initializes agent runtime.
 func (m *Manager) Start(ctx context.Context) error {
 	if m.runtime == nil {
-		rt, err := agentruntime.NewRuntime(m.runtimeConfig())
+		rt, err := agentruntime.NewRuntime(m.runtimeConfig(), m.memoryConfig())
 		if err != nil {
 			return err
 		}
@@ -143,6 +143,13 @@ func (m *Manager) runtimeConfig() *config.RuntimeConfig {
 		return nil
 	}
 	return m.config.Runtime
+}
+
+func (m *Manager) memoryConfig() *config.MemoryConfig {
+	if m.config == nil {
+		return nil
+	}
+	return m.config.Memory
 }
 
 func runtimeMetadata(data map[string]interface{}) map[string]string {

@@ -123,7 +123,36 @@ type AgentsConfig struct {
 	Workspace     string          `yaml:"workspace"`
 	MaxConcurrent int             `yaml:"maxConcurrent"`
 	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
+	Memory        *MemoryConfig   `yaml:"memory,omitempty"`
 	Runtime       *RuntimeConfig  `yaml:"runtime,omitempty"`
+}
+
+// MemoryConfig controls semantic memory indexing and search.
+type MemoryConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// SourceRoot is the workspace root for MEMORY.md and memory/**/*.md.
+	SourceRoot string `yaml:"sourceRoot,omitempty"`
+	// CacheDir overrides the default cache dir for models/indexes.
+	CacheDir string `yaml:"cacheDir,omitempty"`
+
+	// ModelID selects the embedding model (default: multilingual-e5-small).
+	ModelID string `yaml:"modelId,omitempty"`
+	// ModelURL overrides the ONNX model download URL.
+	ModelURL string `yaml:"modelUrl,omitempty"`
+	// ModelSHA256 is the expected SHA256 of the ONNX model file.
+	ModelSHA256 string `yaml:"modelSha256,omitempty"`
+	// TokenizerURL overrides the tokenizer.json download URL.
+	TokenizerURL string `yaml:"tokenizerUrl,omitempty"`
+	// TokenizerSHA256 is the expected SHA256 of tokenizer.json.
+	TokenizerSHA256 string `yaml:"tokenizerSha256,omitempty"`
+
+	// ChunkTokens controls approximate tokens per chunk.
+	ChunkTokens int `yaml:"chunkTokens,omitempty"`
+	// ChunkOverlap controls overlap tokens between chunks.
+	ChunkOverlap int `yaml:"chunkOverlap,omitempty"`
+	// TopK controls the number of results returned.
+	TopK int `yaml:"topK,omitempty"`
 }
 
 // RuntimeConfig enables the in-process agent runtime.
