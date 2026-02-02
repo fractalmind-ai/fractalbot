@@ -2,9 +2,9 @@
 
 ## 🎯 Project Status
 
-**Current Phase**: Initial Implementation (MVP)
+**Current Phase**: Phase 2 - Channel Integrations
 
-**Progress**: Core gateway and protocol implemented. Channel integrations and agent runtime need development.
+**Progress**: Core gateway complete. Telegram + Feishu/Lark channels are production-ready; Slack/Discord pending. Agent runtime still planned.
 
 ---
 
@@ -25,14 +25,20 @@
 ### Phase 2: Channel Integrations 🚧 (IN PROGRESS)
 
 #### Telegram Channel
-- [ ] Bot initialization and webhook setup
-- [ ] Message handling and routing
-- [ ] User authorization and validation
-- [ ] Command parsing and execution
-- [ ] Message sending to Telegram
+- [x] Bot initialization (polling/webhook)
+- [x] Message handling and routing
+- [x] User authorization and validation
+- [x] Command parsing and execution
+- [x] Message sending to Telegram
+
+#### Feishu/Lark Channel
+- [x] Long-connection events (websocket)
+- [x] Message handling + routing
+- [x] User authorization and validation
+- [x] Command parsing (/help, /whoami, /agents)
 
 **Priority**: High
-**Estimated**: 2-3 days
+**Estimated**: Complete
 
 #### Slack Channel
 - [ ] Bot initialization and RTM connection
@@ -203,4 +209,4 @@ Want to contribute? Check out:
 
 ---
 
-*Last updated: 2025-01-27*
+*Last updated: 2026-02-02*
