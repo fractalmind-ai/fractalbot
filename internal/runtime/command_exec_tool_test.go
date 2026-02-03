@@ -1,0 +1,96 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"testing"
+	"time"
+)
+
+const execHelperEnv = "FRACTALBOT_CMD_EXEC_HELPER"
+const execHelperSleepEnv = "FRACTALBOT_CMD_EXEC_HELPER_SLEEP"
+
+func TestCommandExecHelper(t *testing.T) {
+	if os.Getenv(execHelperEnv) != "1" {
+		return
+	}
+	if os.Getenv(execHelperSleepEnv) == "1" {
+		time.Sleep(2 * time.Second)
+		return
+	}
+	_, _ = os.Stdout.WriteString("helper-ok")
+	os.Exit(0)
+}
+
+func TestCommandExecToolRejectsEmptyRoots(t *testing.T) {
+	tool := NewCommandExecTool(PathSandbox{})
+	args := mustJSONArgs(commandExecArgs{Command: []string{"echo", "hi"}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		t.Fatal("expected error for empty roots")
+	}
+}
+
+func TestCommandExecToolRejectsOutsideRootCwd(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	args := mustJSONArgs(commandExecArgs{
+		Command: []string{"echo", "hi"},
+		Cwd:     outside,
+	})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		t.Fatal("expected error for outside root")
+	}
+}
+
+func TestCommandExecToolRunsCommand(t *testing.T) {
+	root := t.TempDir()
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	args := mustJSONArgs(commandExecArgs{
+		Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"},
+		Cwd:     root,
+	})
+	if err := os.Setenv(execHelperEnv, "1"); err != nil {
+		t.Fatalf("set env: %v", err)
+	}
+	defer os.Unsetenv(execHelperEnv)
+
+	output, err := tool.Execute(context.Background(), ToolRequest{Args: args})
+	if err != nil {
+		t.Fatalf("expected command to succeed: %v", err)
+	}
+	if output != "helper-ok" {
+		t.Fatalf("unexpected output: %q", output)
+	}
+}
+
+func TestCommandExecToolTimeout(t *testing.T) {
+	root := t.TempDir()
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	args := mustJSONArgs(commandExecArgs{
+		Command:   []string{os.Args[0], "-test.run=TestCommandExecHelper"},
+		Cwd:       root,
+		TimeoutMs: 10,
+	})
+	if err := os.Setenv(execHelperEnv, "1"); err != nil {
+		t.Fatalf("set env: %v", err)
+	}
+	if err := os.Setenv(execHelperSleepEnv, "1"); err != nil {
+		t.Fatalf("set env: %v", err)
+	}
+	defer os.Unsetenv(execHelperEnv)
+	defer os.Unsetenv(execHelperSleepEnv)
+
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+func mustJSONArgs(args commandExecArgs) string {
+	data, err := json.Marshal(args)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
