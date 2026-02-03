@@ -1,8 +1,9 @@
+//go:build cgo
+
 package memory
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -11,23 +12,6 @@ import (
 	"github.com/fractalmind-ai/fractalbot/internal/memory/ort"
 	ortapi "github.com/yalue/onnxruntime_go"
 )
-
-const (
-	defaultMaxTokens = 512
-)
-
-// OnnxConfig contains settings for the ONNX embedder.
-type OnnxConfig struct {
-	ModelPath     string
-	TokenizerPath string
-	Tokenizer     Tokenizer
-	MaxTokens     int
-	LibraryPath   string
-	CacheDir      string
-}
-
-// ErrOnnxUnavailable indicates the ONNX embedder is not yet configured.
-var ErrOnnxUnavailable = errors.New("onnx embedder is not configured")
 
 var (
 	ortInitOnce sync.Once
