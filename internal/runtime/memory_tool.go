@@ -97,7 +97,11 @@ func (t *MemorySearchTool) ensureReady(ctx context.Context) error {
 			Counter:       memory.TokenizerCounter{Tokenizer: tokenizer},
 		}
 
-		indexPath := memory.IndexPath(cacheDir, spec.ID)
+		indexPath, err := memory.IndexPath(cacheDir, spec.ID)
+		if err != nil {
+			t.initErr = err
+			return
+		}
 		if err := ensureParentDir(indexPath); err != nil {
 			t.initErr = err
 			return

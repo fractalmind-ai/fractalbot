@@ -32,7 +32,10 @@ func EnsureModelAssets(ctx context.Context, cacheDir string, spec ModelSpec) (Mo
 		return ModelAssets{}, fmt.Errorf("tokenizer URL and SHA256 are required")
 	}
 
-	dir := ModelDir(cacheDir, spec.ID)
+	dir, err := ModelDir(cacheDir, spec.ID)
+	if err != nil {
+		return ModelAssets{}, err
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return ModelAssets{}, fmt.Errorf("failed to create model dir: %w", err)
 	}

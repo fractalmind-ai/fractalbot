@@ -30,13 +30,46 @@ func ResolveCacheDir(cacheDir string) (string, error) {
 }
 
 // ModelDir returns the model directory for the given model ID.
-func ModelDir(cacheDir, modelID string) string {
-	return filepath.Join(cacheDir, defaultModelDirName, modelID)
+func ModelDir(cacheDir, modelID string) (string, error) {
+	if err := ValidateModelID(modelID); err != nil {
+		return "", err
+	}
+	return filepath.Join(cacheDir, defaultModelDirName, modelID), nil
 }
 
 // IndexPath returns the index path for a model ID.
-func IndexPath(cacheDir, modelID string) string {
-	return filepath.Join(cacheDir, defaultIndexDirName, modelID, "index.db")
+func IndexPath(cacheDir, modelID string) (string, error) {
+	if err := ValidateModelID(modelID); err != nil {
+		return "", err
+	}
+	return filepath.Join(cacheDir, defaultIndexDirName, modelID, "index.db"), nil
+}
+
+// ValidateModelID enforces safe model identifiers for cache paths.
+func ValidateModelID(modelID string) error {
+	trimmed := strings.TrimSpace(modelID)
+	if trimmed == "" {
+		return fmt.Errorf("model ID is required")
+	}
+	if filepath.IsAbs(trimmed) {
+		return fmt.Errorf("model ID must be relative")
+	}
+	if strings.Contains(trimmed, "..") {
+		return fmt.Errorf("model ID must not contain '..'")
+	}
+	if strings.ContainsAny(trimmed, `/\\`) {
+		return fmt.Errorf("model ID must not contain path separators")
+	}
+	for _, ch := range trimmed {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			continue
+		}
+		if ch == '-' || ch == '_' || ch == '.' {
+			continue
+		}
+		return fmt.Errorf("model ID contains invalid character %q", ch)
+	}
+	return nil
 }
 
 func expandUser(path string) (string, error) {
