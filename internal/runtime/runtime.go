@@ -51,7 +51,7 @@ type BasicRuntime struct {
 }
 
 // NewRuntime creates a runtime when enabled in config.
-func NewRuntime(cfg *config.RuntimeConfig) (AgentRuntime, error) {
+func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (AgentRuntime, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
 	}
@@ -62,6 +62,15 @@ func NewRuntime(cfg *config.RuntimeConfig) (AgentRuntime, error) {
 	}
 	if err := registry.Register(NewVersionTool()); err != nil {
 		return nil, err
+	}
+	if memoryCfg != nil && memoryCfg.Enabled {
+		tool, err := NewMemorySearchTool(memoryCfg)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
 	}
 
 	maxChars := defaultMaxReplyChars

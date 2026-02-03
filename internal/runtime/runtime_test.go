@@ -12,7 +12,7 @@ func TestRuntimeUnknownToolDenied(t *testing.T) {
 	rt, err := NewRuntime(&config.RuntimeConfig{
 		Enabled:      true,
 		AllowedTools: []string{"echo"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRuntimeAllowlistedToolAllowed(t *testing.T) {
 	rt, err := NewRuntime(&config.RuntimeConfig{
 		Enabled:      true,
 		AllowedTools: []string{"echo"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestRuntimeToolOutputTruncation(t *testing.T) {
 		Enabled:       true,
 		AllowedTools:  []string{"echo"},
 		MaxReplyChars: 12,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
 	}

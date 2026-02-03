@@ -122,3 +122,24 @@ agents:
       - "version"
     # Optional: cap runtime replies
     maxReplyChars: 2000
+
+  # Optional: local semantic memory search (Issue #81 WIP)
+  memory:
+    enabled: false
+    # Root directory containing MEMORY.md and memory/**/*.md
+    sourceRoot: "."
+    # Optional override for cache dir (default: ~/.cache/fractalbot)
+    cacheDir: ""
+    # Optional: override model URLs/SHA (default: multilingual-e5-small)
+    # modelId: "multilingual-e5-small"
+    # modelUrl: ""
+    # modelSha256: ""
+    # tokenizerUrl: ""
+    # tokenizerSha256: ""
+    # Chunking controls
+    chunkTokens: 400
+    chunkOverlap: 80
+    # Top-K search results
+    topK: 5
+    # Max tokens per embedding (default: 512)
+    maxTokens: 512
