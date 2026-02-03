@@ -1,6 +1,9 @@
 package memory
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestValidateModelID(t *testing.T) {
 	valid := []string{
@@ -16,7 +19,9 @@ func TestValidateModelID(t *testing.T) {
 
 	invalid := []string{
 		"",
+		"..",
 		"../model",
+		"a/../b",
 		"model/../x",
 		"foo/bar",
 		"foo\\bar",
@@ -34,5 +39,13 @@ func TestValidateModelID(t *testing.T) {
 func TestIndexPathRejectsInvalidModelID(t *testing.T) {
 	if _, err := IndexPath("/tmp/cache", "../oops"); err == nil {
 		t.Fatal("expected error for invalid model ID")
+	}
+}
+
+func TestEnsureUnderRootRejectsOutside(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Clean(filepath.Join(root, "..", "outside"))
+	if err := ensureUnderRoot(root, outside); err == nil {
+		t.Fatal("expected error for outside path")
 	}
 }
