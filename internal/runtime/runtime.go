@@ -64,7 +64,8 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 		return nil, err
 	}
 	if memoryCfg != nil && memoryCfg.Enabled {
-		tool, err := NewMemorySearchTool(memoryCfg)
+		sandbox := PathSandbox{Roots: cfg.SandboxRoots}
+		tool, err := NewMemorySearchTool(memoryCfg, sandbox)
 		if err != nil {
 			return nil, err
 		}

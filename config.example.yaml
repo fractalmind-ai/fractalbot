@@ -122,6 +122,9 @@ agents:
       - "version"
     # Optional: cap runtime replies
     maxReplyChars: 2000
+    # Tool file sandbox roots (empty = deny all file access)
+    sandboxRoots:
+      - "/home/you/fractalbot"
 
   # Optional: local semantic memory search (Issue #81 WIP)
   memory:
