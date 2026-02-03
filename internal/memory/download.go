@@ -7,10 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
+)
+
+const (
+	defaultMaxModelBytes     int64 = 1024 * 1024 * 1024
+	defaultMaxTokenizerBytes int64 = 64 * 1024 * 1024
 )
 
 // ModelAssets holds resolved local paths for model artifacts.
@@ -44,10 +51,10 @@ func EnsureModelAssets(ctx context.Context, cacheDir string, spec ModelSpec) (Mo
 	tokenizerPath := filepath.Join(dir, DefaultTokenizerFileName)
 
 	client := &http.Client{Timeout: 5 * time.Minute}
-	if err := ensureFileWithSHA(ctx, client, modelPath, spec.ModelURL, spec.ModelSHA256); err != nil {
+	if err := ensureFileWithSHA(ctx, client, modelPath, spec.ModelURL, spec.ModelSHA256, defaultMaxModelBytes); err != nil {
 		return ModelAssets{}, err
 	}
-	if err := ensureFileWithSHA(ctx, client, tokenizerPath, spec.TokenizerURL, spec.TokenizerSHA256); err != nil {
+	if err := ensureFileWithSHA(ctx, client, tokenizerPath, spec.TokenizerURL, spec.TokenizerSHA256, defaultMaxTokenizerBytes); err != nil {
 		return ModelAssets{}, err
 	}
 
@@ -58,56 +65,88 @@ func EnsureModelAssets(ctx context.Context, cacheDir string, spec ModelSpec) (Mo
 	}, nil
 }
 
-func ensureFileWithSHA(ctx context.Context, client *http.Client, path, url, expectedSHA string) error {
+func ensureFileWithSHA(ctx context.Context, client *http.Client, path, rawURL, expectedSHA string, maxBytes int64) error {
 	if ok, err := fileMatchesSHA256(path, expectedSHA); err != nil {
 		return err
 	} else if ok {
 		return nil
 	}
 
-	tmp := path + ".tmp"
-	if err := downloadToFile(ctx, client, url, tmp); err != nil {
-		return fmt.Errorf("failed to download %s: %w", url, err)
+	if maxBytes <= 0 {
+		return fmt.Errorf("max download size must be positive")
 	}
 
-	ok, err := fileMatchesSHA256(tmp, expectedSHA)
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tmpFile, err := os.CreateTemp(dir, "."+base+".tmp-*")
 	if err != nil {
-		_ = os.Remove(tmp)
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := downloadToFile(ctx, client, rawURL, tmpFile, maxBytes); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("failed to sync download: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close download: %w", err)
+	}
+
+	ok, err := fileMatchesSHA256(tmpPath, expectedSHA)
+	if err != nil {
 		return err
 	}
 	if !ok {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("checksum mismatch for %s", filepath.Base(path))
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("failed to finalize download: %w", err)
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(path)
+		if err := os.Rename(tmpPath, path); err != nil {
+			return fmt.Errorf("failed to finalize download: %w", err)
+		}
 	}
+	cleanup = false
 	return nil
 }
 
-func downloadToFile(ctx context.Context, client *http.Client, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func downloadToFile(ctx context.Context, client *http.Client, rawURL string, out *os.File, maxBytes int64) error {
+	label := safeURLLabel(rawURL)
+	if maxBytes <= 0 {
+		return fmt.Errorf("max download size must be positive for %s", label)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid download URL for %s", label)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("download failed for %s", label)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, label)
+	}
+	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
+		return fmt.Errorf("download exceeds max size for %s", label)
 	}
 
-	out, err := os.Create(path)
+	limited := io.LimitReader(resp.Body, maxBytes+1)
+	written, err := io.Copy(out, limited)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write download for %s", label)
 	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		return err
+	if written > maxBytes {
+		return fmt.Errorf("download exceeds max size for %s", label)
 	}
 	return nil
 }
@@ -136,4 +175,16 @@ func fileMatchesSHA256(path, expected string) (bool, error) {
 	}
 	sum := hex.EncodeToString(hash.Sum(nil))
 	return strings.EqualFold(sum, strings.TrimSpace(expected)), nil
+}
+
+func safeURLLabel(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return filepath.Base(rawURL)
+	}
+	base := path.Base(parsed.Path)
+	if base == "." || base == "/" || base == "" {
+		return parsed.Host
+	}
+	return parsed.Host + "/" + base
 }
