@@ -18,4 +18,3 @@ type OnnxConfig struct {
 
 // ErrOnnxUnavailable indicates ONNX runtime support is not available in this build.
 var ErrOnnxUnavailable = errors.New("onnx embedder is not configured")
-
