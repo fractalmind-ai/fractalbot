@@ -76,6 +76,9 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewFileDeleteTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
+	if err := registry.Register(NewFileListTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
+		return nil, err
+	}
 	if err := registry.Register(NewCommandExecTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
