@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
@@ -64,7 +63,7 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewVersionTool()); err != nil {
 		return nil, err
 	}
-	if err := registry.Register(NewFileReadTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
+	if err := registry.Register(NewFileWriteTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
 	if memoryCfg != nil && memoryCfg.Enabled {
@@ -176,17 +175,14 @@ func parseToolInvocation(text string) (string, string, bool) {
 }
 
 func splitToolArgs(rest string) (string, string) {
-	trimmed := strings.TrimSpace(rest)
-	if trimmed == "" {
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
 		return "", ""
 	}
-	for idx, ch := range trimmed {
-		if unicode.IsSpace(ch) {
-			name := strings.ToLower(strings.TrimSpace(trimmed[:idx]))
-			args := strings.TrimLeftFunc(trimmed[idx:], unicode.IsSpace)
-			return name, args
-		}
+	name := strings.ToLower(strings.TrimSpace(fields[0]))
+	args := ""
+	if len(fields) > 1 {
+		args = strings.Join(fields[1:], " ")
 	}
-	name := strings.ToLower(strings.TrimSpace(trimmed))
-	return name, ""
+	return name, strings.TrimSpace(args)
 }
