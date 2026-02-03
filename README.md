@@ -157,6 +157,8 @@ agents:
     maxReplyChars: 2000
 ```
 
+Phase 3 memory uses a native ONNX Runtime (ORT) library; see `docs/ort-distribution.md` for the distribution strategy and security notes.
+
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)
