@@ -60,6 +60,7 @@ func parseWriteArgs(args string) (string, string, error) {
 	return path, content, nil
 }
 
+// writeFileAtomic writes data to a temp file and renames it into place.
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
