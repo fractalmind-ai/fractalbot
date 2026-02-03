@@ -70,6 +70,9 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewFileWriteTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
+	if err := registry.Register(NewFileEditTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
+		return nil, err
+	}
 	if memoryCfg != nil && memoryCfg.Enabled {
 		sandbox := PathSandbox{Roots: cfg.SandboxRoots}
 		tool, err := NewMemorySearchTool(memoryCfg, sandbox)
