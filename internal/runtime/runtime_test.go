@@ -71,3 +71,16 @@ func TestRuntimeToolOutputTruncation(t *testing.T) {
 		t.Fatalf("expected truncated suffix, got %q", reply)
 	}
 }
+
+func TestParseToolInvocationPreservesArgs(t *testing.T) {
+	name, args, ok := parseToolInvocation("tool echo line1\nline2")
+	if !ok {
+		t.Fatal("expected tool invocation")
+	}
+	if name != "echo" {
+		t.Fatalf("expected name echo, got %s", name)
+	}
+	if args != "line1\nline2" {
+		t.Fatalf("unexpected args: %q", args)
+	}
+}
