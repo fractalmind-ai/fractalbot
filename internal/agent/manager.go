@@ -186,6 +186,16 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 			agentName = defaultOhMyCodeDefaultAgent
 		}
 	}
+	name, err := m.validateOhMyCodeAgent(agentName)
+	if err != nil {
+		return "", err
+	}
+
+	validatedName, err := m.validateOhMyCodeAgent(agentName)
+	if err != nil {
+		return "", err
+	}
+	agentName = validatedName
 
 	timeout := defaultOhMyCodeAssignTimeout
 	if m.config.OhMyCode.AssignTimeoutSeconds > 0 {
@@ -199,7 +209,7 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 		defer cancel()
 	}
 
-	assignOut, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", agentName)
+	assignOut, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", name)
 	if err != nil {
 		return "", err
 	}
@@ -211,7 +221,7 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 	monitorCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeMonitorTimeout)
 	defer cancel()
 
-	monitorOut, monitorErr := runOhMyCodeAgentManager(monitorCtx, workspace, script, "", "monitor", agentName, "--lines", strconv.Itoa(defaultOhMyCodeMonitorLines))
+	monitorOut, monitorErr := runOhMyCodeAgentManager(monitorCtx, workspace, script, "", "monitor", name, "--lines", strconv.Itoa(defaultOhMyCodeMonitorLines))
 	if monitorErr != nil {
 		return assignOut, nil
 	}
@@ -332,9 +342,16 @@ func (m *Manager) validateOhMyCodeAgent(agentName string) (string, error) {
 	}
 	allowlist := channels.NewAgentAllowlist(m.config.OhMyCode.AllowedAgents)
 	if err := allowlist.Validate(name, m.config.OhMyCode.DefaultAgent); err != nil {
-		return "", err
+		return "", m.agentAllowedError(err)
 	}
 	return name, nil
+}
+
+func (m *Manager) agentAllowedError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s (Tip: run /agents or configure agents.ohMyCode.allowedAgents)", err)
 }
 
 func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin string, args ...string) (string, error) {
