@@ -37,6 +37,19 @@ func TestPathSandboxRejectsAbsoluteOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestPathSandboxAllowsMissingNestedPath(t *testing.T) {
+	root := t.TempDir()
+	sandbox := PathSandbox{Roots: []string{root}}
+	target := filepath.Join(root, "subdir", "nested", "new.txt")
+	safe, err := sandbox.ValidatePath(target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if safe != target {
+		t.Fatalf("expected %s, got %s", target, safe)
+	}
+}
+
 func TestPathSandboxRejectsWindowsAbsolute(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows absolute paths are handled by platform-specific logic")

@@ -67,22 +67,33 @@ func validateUnderRoot(root, candidate string) (string, error) {
 }
 
 func resolveCandidatePath(candidate string) (string, error) {
-	if _, err := os.Stat(candidate); err == nil {
-		resolved, err := filepath.EvalSymlinks(candidate)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve path: %w", err)
+	current := candidate
+	var suffix []string
+	for {
+		info, err := os.Stat(current)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", fmt.Errorf("failed to resolve path: %w", err)
+			}
+			if info.IsDir() {
+				return filepath.Join(append([]string{resolved}, suffix...)...), nil
+			}
+			if len(suffix) > 0 {
+				return "", fmt.Errorf("failed to resolve parent path")
+			}
+			return resolved, nil
 		}
-		return resolved, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to access path: %w", err)
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to access path: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("failed to resolve parent path")
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
 	}
-
-	parent := filepath.Dir(candidate)
-	parentReal, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve parent path: %w", err)
-	}
-	return filepath.Join(parentReal, filepath.Base(candidate)), nil
 }
 
 func ensureUnderRoot(root, target string) error {
