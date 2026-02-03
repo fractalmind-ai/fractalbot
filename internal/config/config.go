@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/fractalmind-ai/fractalbot/internal/memory"
 	"gopkg.in/yaml.v3"
 )
 
@@ -175,6 +177,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
+	if err := validateConfig(&config); err != nil {
+		return nil, err
+	}
 
 	return &config, nil
 }
@@ -210,4 +215,18 @@ func DefaultConfig() *Config {
 			MaxConcurrent: 4,
 		},
 	}
+}
+
+func validateConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.Memory == nil {
+		return nil
+	}
+	modelID := strings.TrimSpace(cfg.Agents.Memory.ModelID)
+	if modelID == "" {
+		return nil
+	}
+	if err := memory.ValidateModelID(modelID); err != nil {
+		return fmt.Errorf("agents.memory.modelId: %w", err)
+	}
+	return nil
 }

@@ -34,7 +34,11 @@ func ModelDir(cacheDir, modelID string) (string, error) {
 	if err := ValidateModelID(modelID); err != nil {
 		return "", err
 	}
-	return filepath.Join(cacheDir, defaultModelDirName, modelID), nil
+	target := filepath.Join(cacheDir, defaultModelDirName, modelID)
+	if err := ensureUnderRoot(cacheDir, target); err != nil {
+		return "", err
+	}
+	return target, nil
 }
 
 // IndexPath returns the index path for a model ID.
@@ -42,7 +46,11 @@ func IndexPath(cacheDir, modelID string) (string, error) {
 	if err := ValidateModelID(modelID); err != nil {
 		return "", err
 	}
-	return filepath.Join(cacheDir, defaultIndexDirName, modelID, "index.db"), nil
+	target := filepath.Join(cacheDir, defaultIndexDirName, modelID, "index.db")
+	if err := ensureUnderRoot(cacheDir, target); err != nil {
+		return "", err
+	}
+	return target, nil
 }
 
 // ValidateModelID enforces safe model identifiers for cache paths.
@@ -68,6 +76,25 @@ func ValidateModelID(modelID string) error {
 			continue
 		}
 		return fmt.Errorf("model ID contains invalid character %q", ch)
+	}
+	return nil
+}
+
+func ensureUnderRoot(root, target string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache root: %w", err)
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absTarget)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache relative path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("cache path escapes root")
 	}
 	return nil
 }
