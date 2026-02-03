@@ -24,6 +24,23 @@ func TestFileWriteToolWritesFile(t *testing.T) {
 	}
 }
 
+func TestFileWriteToolWritesNestedFile(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "dir", "nested", "note.txt")
+	tool := NewFileWriteTool(PathSandbox{Roots: []string{root}})
+	_, err := tool.Execute(context.Background(), ToolRequest{Args: target + "\nhello"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("unexpected content: %q", string(data))
+	}
+}
+
 func TestFileWriteToolRejectsOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(t.TempDir(), "note.txt")
