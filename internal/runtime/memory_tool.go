@@ -27,6 +27,7 @@ const (
 // MemorySearchTool exposes semantic memory search for the runtime.
 type MemorySearchTool struct {
 	cfg     *config.MemoryConfig
+	sandbox PathSandbox
 	once    sync.Once
 	search  *memory.Searcher
 	indexer *memory.Indexer
@@ -35,11 +36,11 @@ type MemorySearchTool struct {
 }
 
 // NewMemorySearchTool creates a new memory search tool.
-func NewMemorySearchTool(cfg *config.MemoryConfig) (Tool, error) {
+func NewMemorySearchTool(cfg *config.MemoryConfig, sandbox PathSandbox) (Tool, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("memory config is required")
 	}
-	return &MemorySearchTool{cfg: cfg}, nil
+	return &MemorySearchTool{cfg: cfg, sandbox: sandbox}, nil
 }
 
 // Name returns the tool name.
@@ -129,13 +130,19 @@ func (t *MemorySearchTool) ensureReady(ctx context.Context) error {
 		if sourceRoot == "" {
 			sourceRoot = "."
 		}
+		safeRoot, err := t.sandbox.ValidatePath(sourceRoot)
+		if err != nil {
+			t.initErr = err
+			_ = store.Close()
+			return
+		}
 
 		indexer := &memory.Indexer{
 			Embedder:  memory.PrefixedEmbedder{Prefix: defaultMemoryPassagePrefix, Base: embedder},
 			Chunker:   chunker,
 			BatchSize: defaultMemoryIndexBatchSize,
 		}
-		if _, err := indexer.Index(ctx, sourceRoot, store); err != nil {
+		if _, err := indexer.Index(ctx, safeRoot, store); err != nil {
 			t.initErr = err
 			_ = store.Close()
 			return

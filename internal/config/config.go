@@ -164,6 +164,8 @@ type RuntimeConfig struct {
 	Enabled       bool     `yaml:"enabled,omitempty"`
 	AllowedTools  []string `yaml:"allowedTools,omitempty"`
 	MaxReplyChars int      `yaml:"maxReplyChars,omitempty"`
+	// SandboxRoots restricts tool file access to these roots. Empty means deny all.
+	SandboxRoots []string `yaml:"sandboxRoots,omitempty"`
 }
 
 // LoadConfig loads configuration from file.
