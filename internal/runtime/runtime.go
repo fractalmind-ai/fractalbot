@@ -149,7 +149,7 @@ func (r *BasicRuntime) HandleTask(ctx context.Context, task Task) (string, error
 	name, args, ok := parseToolInvocation(text)
 	if ok {
 		if name == "" {
-			return r.truncate("❌ tool name is required"), nil
+			return r.truncate("usage: tool <name> <args...> (see tools.list)"), nil
 		}
 		out, err := r.registry.Execute(ctx, name, ToolRequest{Args: args, Task: task})
 		if err != nil {
@@ -190,6 +190,9 @@ func (r *BasicRuntime) truncate(text string) string {
 func parseToolInvocation(text string) (string, string, bool) {
 	trimmed := strings.TrimSpace(text)
 	lower := strings.ToLower(trimmed)
+	if lower == "tool" || lower == "/tool" {
+		return "", "", true
+	}
 	if strings.HasPrefix(lower, "tool:") {
 		rest := strings.TrimSpace(trimmed[len("tool:"):])
 		name, args := splitToolArgs(rest)

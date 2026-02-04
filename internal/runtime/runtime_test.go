@@ -72,6 +72,29 @@ func TestRuntimeToolOutputTruncation(t *testing.T) {
 	}
 }
 
+func TestRuntimeToolUsageHint(t *testing.T) {
+	rt, err := NewRuntime(&config.RuntimeConfig{
+		Enabled:      true,
+		AllowedTools: []string{"echo", "tools.list"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	for _, input := range []string{"tool", "/tool"} {
+		reply, err := rt.HandleTask(context.Background(), Task{
+			Agent:   "qa-1",
+			Text:    input,
+			Channel: "telegram",
+		})
+		if err != nil {
+			t.Fatalf("HandleTask: %v", err)
+		}
+		if !strings.Contains(reply, "tools.list") {
+			t.Fatalf("expected usage hint with tools.list, got %q", reply)
+		}
+	}
+}
+
 func TestParseToolInvocationPreservesArgs(t *testing.T) {
 	name, args, ok := parseToolInvocation("tool echo line1\nline2")
 	if !ok {
