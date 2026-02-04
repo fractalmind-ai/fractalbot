@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,28 @@ func TestFileWriteToolRejectsMissingContent(t *testing.T) {
 	tool := NewFileWriteTool(PathSandbox{Roots: []string{root}})
 	if _, err := tool.Execute(context.Background(), ToolRequest{Args: target}); err == nil {
 		t.Fatal("expected error for missing content")
+	}
+}
+
+func TestFileWriteToolRejectsDirectoryTarget(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tool := NewFileWriteTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: dir + "\nhello"}); err == nil {
+		t.Fatal("expected error for directory target")
+	}
+}
+
+func TestFileWriteToolRejectsLargeContent(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "note.txt")
+	content := strings.Repeat("a", fileWriteMaxBytes+1)
+	tool := NewFileWriteTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: target + "\n" + content}); err == nil {
+		t.Fatal("expected error for large content")
 	}
 }
 
