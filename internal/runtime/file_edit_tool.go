@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const fileEditMaxBytes = 256 * 1024
+
 // FileEditTool applies a deterministic in-place edit within sandbox roots.
 type FileEditTool struct {
 	sandbox PathSandbox
@@ -35,6 +37,16 @@ func (t FileEditTool) Execute(ctx context.Context, req ToolRequest) (string, err
 		return "", err
 	}
 
+	info, err := os.Stat(safePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to access file")
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory")
+	}
+	if info.Size() > fileEditMaxBytes {
+		return "", fmt.Errorf("file is too large")
+	}
 	data, err := os.ReadFile(safePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file")
