@@ -308,7 +308,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 			}
 		}
 		if len(names) == 0 {
-			return true, b.reply(ctx, msg, "⚠️ No agents configured")
+			return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")

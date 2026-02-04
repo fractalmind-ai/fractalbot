@@ -763,7 +763,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 			names = filterOutAgentName(names, defaultName)
 		}
 		if len(names) == 0 && defaultName == "" {
-			return true, b.SendMessage(b.ctx, msg.Chat.ID, "⚠️ No agents configured")
+			return true, b.SendMessage(b.ctx, msg.Chat.ID, noAgentsConfiguredMessage)
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")

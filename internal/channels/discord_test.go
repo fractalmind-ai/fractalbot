@@ -128,6 +128,34 @@ func TestDiscordWhoamiAllowedWithoutAllowlist(t *testing.T) {
 	}
 }
 
+func TestDiscordAgentsEmptyConfigHint(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/agents",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected defaultAgent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", sent.text)
+	}
+}
+
 func TestDiscordIgnoreNonDM(t *testing.T) {
 	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
 	if err != nil {

@@ -332,7 +332,7 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 			}
 		}
 		if len(names) == 0 {
-			return true, b.reply(ctx, msg, "⚠️ No agents configured")
+			return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
