@@ -968,6 +968,10 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("  /stopagent <name> - admin only\n")
 	sb.WriteString("  /doctor - admin only\n")
 	sb.WriteString("\n")
+	sb.WriteString("Runtime tools (if enabled):\n")
+	sb.WriteString("  /tool <name> <args...>\n")
+	sb.WriteString("  /tool@BotName <name> <args...>\n")
+	sb.WriteString("\n")
 	sb.WriteString("Agent routing:\n")
 	sb.WriteString("  /agent <name> <task...>\n")
 	if b.defaultAgent != "" {
