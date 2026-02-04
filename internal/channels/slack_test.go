@@ -193,6 +193,37 @@ func TestSlackAgentsEmptyConfigHint(t *testing.T) {
 	}
 }
 
+func TestSlackAgentsDedupesDefault(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "qa-1", []string{"qa-1", "coder-a"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/agents",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "Default agent: qa-1") {
+		t.Fatalf("expected default agent line, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "coder-a") {
+		t.Fatalf("expected allowlisted agent, got %q", sent.text)
+	}
+	if strings.Count(sent.text, "qa-1") != 1 {
+		t.Fatalf("expected default agent listed once, got %q", sent.text)
+	}
+}
+
 func TestSlackReplyTruncation(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
 	if err != nil {

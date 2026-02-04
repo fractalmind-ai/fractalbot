@@ -156,6 +156,37 @@ func TestDiscordAgentsEmptyConfigHint(t *testing.T) {
 	}
 }
 
+func TestDiscordAgentsDedupesDefault(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "qa-1", []string{"qa-1", "coder-a"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/agents",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "Default agent: qa-1") {
+		t.Fatalf("expected default agent line, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "coder-a") {
+		t.Fatalf("expected allowlisted agent, got %q", sent.text)
+	}
+	if strings.Count(sent.text, "qa-1") != 1 {
+		t.Fatalf("expected default agent listed once, got %q", sent.text)
+	}
+}
+
 func TestDiscordIgnoreNonDM(t *testing.T) {
 	bot, err := NewDiscordBot("token", []string{"123"}, "", nil)
 	if err != nil {

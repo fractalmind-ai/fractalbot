@@ -302,18 +302,22 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 		return true, b.reply(ctx, msg, b.helpText())
 	case "/agents":
 		names := b.agentAllow.Names()
-		if len(names) == 0 {
-			if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-				names = []string{trimmed}
-			}
+		defaultName := strings.TrimSpace(b.defaultAgent)
+		if b.agentAllow.configured && defaultName != "" {
+			names = filterOutAgentName(names, defaultName)
 		}
 		if len(names) == 0 {
-			return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
+			if defaultName == "" {
+				return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
+			}
+			if !b.agentAllow.configured {
+				names = []string{defaultName}
+			}
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
-		if trimmed := strings.TrimSpace(b.defaultAgent); trimmed != "" {
-			sb.WriteString(fmt.Sprintf("Default agent: %s\n", trimmed))
+		if defaultName != "" {
+			sb.WriteString(fmt.Sprintf("Default agent: %s\n", defaultName))
 		}
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
