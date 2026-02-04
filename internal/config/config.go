@@ -166,6 +166,13 @@ type RuntimeConfig struct {
 	MaxReplyChars int      `yaml:"maxReplyChars,omitempty"`
 	// SandboxRoots restricts tool file access to these roots. Empty means deny all.
 	SandboxRoots []string `yaml:"sandboxRoots,omitempty"`
+	// CommandExec controls command.exec allowlist behavior.
+	CommandExec *CommandExecConfig `yaml:"commandExec,omitempty"`
+}
+
+// CommandExecConfig configures command.exec allowlist.
+type CommandExecConfig struct {
+	Allowlist []string `yaml:"allowlist,omitempty"`
 }
 
 // LoadConfig loads configuration from file.

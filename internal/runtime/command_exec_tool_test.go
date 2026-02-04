@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -24,17 +25,35 @@ func TestCommandExecHelper(t *testing.T) {
 }
 
 func TestCommandExecToolRejectsEmptyRoots(t *testing.T) {
-	tool := NewCommandExecTool(PathSandbox{})
+	tool := NewCommandExecTool(PathSandbox{}, []string{"echo"})
 	args := mustJSONArgs(commandExecArgs{Command: []string{"echo", "hi"}})
 	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
 		t.Fatal("expected error for empty roots")
 	}
 }
 
+func TestCommandExecToolRejectsEmptyAllowlist(t *testing.T) {
+	root := t.TempDir()
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}}, nil)
+	args := mustJSONArgs(commandExecArgs{Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		t.Fatal("expected error for empty allowlist")
+	}
+}
+
+func TestCommandExecToolRejectsNotAllowedCommand(t *testing.T) {
+	root := t.TempDir()
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}}, []string{"not-allowed"})
+	args := mustJSONArgs(commandExecArgs{Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		t.Fatal("expected error for not-allowed command")
+	}
+}
+
 func TestCommandExecToolRejectsOutsideRootCwd(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}}, []string{"echo"})
 	args := mustJSONArgs(commandExecArgs{
 		Command: []string{"echo", "hi"},
 		Cwd:     outside,
@@ -46,7 +65,7 @@ func TestCommandExecToolRejectsOutsideRootCwd(t *testing.T) {
 
 func TestCommandExecToolRunsCommand(t *testing.T) {
 	root := t.TempDir()
-	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}}, []string{filepath.Base(os.Args[0])})
 	args := mustJSONArgs(commandExecArgs{
 		Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"},
 		Cwd:     root,
@@ -67,7 +86,7 @@ func TestCommandExecToolRunsCommand(t *testing.T) {
 
 func TestCommandExecToolTimeout(t *testing.T) {
 	root := t.TempDir()
-	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}})
+	tool := NewCommandExecTool(PathSandbox{Roots: []string{root}}, []string{filepath.Base(os.Args[0])})
 	args := mustJSONArgs(commandExecArgs{
 		Command:   []string{os.Args[0], "-test.run=TestCommandExecHelper"},
 		Cwd:       root,

@@ -125,6 +125,10 @@ agents:
     # Tool file sandbox roots (empty = deny all file access)
     sandboxRoots:
       - "/home/you/fractalbot"
+    # command.exec allowlist (base command names only; empty = deny all)
+    commandExec:
+      allowlist:
+        - "go"
 
   # Optional: local semantic memory search (Issue #81 WIP)
   memory:

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,12 +19,16 @@ const (
 
 // CommandExecTool executes commands in a sandboxed working directory.
 type CommandExecTool struct {
-	sandbox PathSandbox
+	sandbox   PathSandbox
+	allowlist map[string]struct{}
 }
 
 // NewCommandExecTool creates a new command.exec tool.
-func NewCommandExecTool(sandbox PathSandbox) Tool {
-	return CommandExecTool{sandbox: sandbox}
+func NewCommandExecTool(sandbox PathSandbox, allowlist []string) Tool {
+	return CommandExecTool{
+		sandbox:   sandbox,
+		allowlist: normalizeCommandAllowlist(allowlist),
+	}
 }
 
 // Name returns the tool name.
@@ -39,6 +44,12 @@ func (t CommandExecTool) Execute(ctx context.Context, req ToolRequest) (string, 
 	}
 	if len(parsed.Command) == 0 || strings.TrimSpace(parsed.Command[0]) == "" {
 		return "", fmt.Errorf("command is required")
+	}
+	if len(t.allowlist) == 0 {
+		return "", fmt.Errorf("command allowlist is not configured")
+	}
+	if !t.isAllowed(parsed.Command[0]) {
+		return "", fmt.Errorf("command is not allowed")
 	}
 	if len(t.sandbox.Roots) == 0 {
 		return "", fmt.Errorf("sandbox roots are not configured")
@@ -90,6 +101,35 @@ func (t CommandExecTool) Execute(ctx context.Context, req ToolRequest) (string, 
 		output = strings.TrimSpace(output) + truncateSuffix
 	}
 	return output, nil
+}
+
+func normalizeCommandAllowlist(allowlist []string) map[string]struct{} {
+	normalized := make(map[string]struct{})
+	for _, entry := range allowlist {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		base := filepath.Base(trimmed)
+		if base == "." || base == string(filepath.Separator) || base == "" {
+			continue
+		}
+		normalized[base] = struct{}{}
+	}
+	return normalized
+}
+
+func (t CommandExecTool) isAllowed(command string) bool {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return false
+	}
+	base := filepath.Base(trimmed)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return false
+	}
+	_, ok := t.allowlist[base]
+	return ok
 }
 
 type commandExecArgs struct {
