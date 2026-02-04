@@ -200,6 +200,12 @@ func parseToolInvocation(text string) (string, string, bool) {
 		name, args := splitToolArgs(rest)
 		return name, args, true
 	}
+	if strings.HasPrefix(lower, "/tool@") {
+		rest := strings.TrimSpace(trimmed[len("/tool@"):])
+		rest = stripToolMention(rest)
+		name, args := splitToolArgs(rest)
+		return name, args, true
+	}
 	if strings.HasPrefix(lower, "tool ") {
 		rest := strings.TrimSpace(trimmed[len("tool "):])
 		name, args := splitToolArgs(rest)
@@ -227,4 +233,20 @@ func splitToolArgs(rest string) (string, string) {
 	}
 	name := strings.ToLower(strings.TrimSpace(trimmed))
 	return name, ""
+}
+
+func stripToolMention(rest string) string {
+	trimmed := strings.TrimSpace(rest)
+	if trimmed == "" {
+		return ""
+	}
+	for idx, ch := range trimmed {
+		if ch == ':' {
+			return strings.TrimSpace(trimmed[idx+1:])
+		}
+		if unicode.IsSpace(ch) {
+			return strings.TrimSpace(trimmed[idx+1:])
+		}
+	}
+	return ""
 }
