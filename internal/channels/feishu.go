@@ -340,6 +340,8 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 	switch command {
 	case "/help", "/start":
 		return true, b.reply(ctx, msg, b.helpText())
+	case "/status":
+		return true, b.reply(ctx, msg, b.statusText())
 	case "/agents":
 		names := b.agentAllow.Names()
 		defaultName := strings.TrimSpace(b.defaultAgent)
@@ -372,6 +374,7 @@ func (b *FeishuBot) helpText() string {
 		"",
 		"Commands:",
 		"  /help - show this help",
+		"  /status - bot status",
 		"  /agents - list allowed agents",
 		"  /whoami - show your Feishu IDs",
 		"",
@@ -379,6 +382,31 @@ func (b *FeishuBot) helpText() string {
 		"  /agent <name> <task...>",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (b *FeishuBot) statusText() string {
+	lastActivity := "never"
+	if ts := b.LastActivity(); !ts.IsZero() {
+		lastActivity = ts.UTC().Format(time.RFC3339)
+	}
+	lastError := "none"
+	if ts := b.LastError(); !ts.IsZero() {
+		lastError = ts.UTC().Format(time.RFC3339)
+	}
+	defaultAgent := strings.TrimSpace(b.defaultAgent)
+	if defaultAgent == "" {
+		defaultAgent = "(none)"
+	}
+	allowlistConfigured := b.agentAllow.configured
+	return strings.Join([]string{
+		"Bot Status",
+		"bot: feishu",
+		fmt.Sprintf("running: %t", b.IsRunning()),
+		fmt.Sprintf("last_activity: %s", lastActivity),
+		fmt.Sprintf("last_error: %s", lastError),
+		fmt.Sprintf("default_agent: %s", defaultAgent),
+		fmt.Sprintf("allowed_agents_configured: %t", allowlistConfigured),
+	}, "\n")
 }
 
 func (b *FeishuBot) reply(ctx context.Context, msg *feishuInboundMessage, text string) error {
