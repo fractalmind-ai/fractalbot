@@ -64,6 +64,9 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewVersionTool()); err != nil {
 		return nil, err
 	}
+	if err := registry.Register(NewToolsListTool(cfg.AllowedTools)); err != nil {
+		return nil, err
+	}
 	if err := registry.Register(NewFileReadTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
@@ -192,8 +195,18 @@ func parseToolInvocation(text string) (string, string, bool) {
 		name, args := splitToolArgs(rest)
 		return name, args, true
 	}
+	if strings.HasPrefix(lower, "/tool:") {
+		rest := strings.TrimSpace(trimmed[len("/tool:"):])
+		name, args := splitToolArgs(rest)
+		return name, args, true
+	}
 	if strings.HasPrefix(lower, "tool ") {
 		rest := strings.TrimSpace(trimmed[len("tool "):])
+		name, args := splitToolArgs(rest)
+		return name, args, true
+	}
+	if strings.HasPrefix(lower, "/tool ") {
+		rest := strings.TrimSpace(trimmed[len("/tool "):])
 		name, args := splitToolArgs(rest)
 		return name, args, true
 	}

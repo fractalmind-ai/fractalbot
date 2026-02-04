@@ -84,3 +84,16 @@ func TestParseToolInvocationPreservesArgs(t *testing.T) {
 		t.Fatalf("unexpected args: %q", args)
 	}
 }
+
+func TestParseToolInvocationSlashTool(t *testing.T) {
+	name, args, ok := parseToolInvocation("/tool echo line1\nline2")
+	if !ok {
+		t.Fatal("expected tool invocation")
+	}
+	if name != "echo" {
+		t.Fatalf("expected name echo, got %s", name)
+	}
+	if args != "line1\nline2" {
+		t.Fatalf("unexpected args: %q", args)
+	}
+}
