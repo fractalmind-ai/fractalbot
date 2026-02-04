@@ -68,6 +68,36 @@ func TestTelegramAgentsAllowlistUnset(t *testing.T) {
 	}
 }
 
+func TestTelegramAgentsEmptyConfigHint(t *testing.T) {
+	bot, err := NewTelegramBot("token", nil, 123, "", nil)
+	if err != nil {
+		t.Fatalf("NewTelegramBot: %v", err)
+	}
+
+	var payload sendMessagePayload
+	bot.httpClient = captureHTTPClient(t, &payload)
+
+	msg := &TelegramMessage{
+		Text: "/agents",
+		From: &TelegramUser{ID: 123},
+		Chat: &TelegramChat{ID: 99},
+	}
+
+	handled, err := bot.handleCommand(msg)
+	if !handled {
+		t.Fatalf("expected handled")
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(payload.Text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected defaultAgent hint, got %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", payload.Text)
+	}
+}
+
 func TestTelegramAgentSelectionErrorIncludesHint(t *testing.T) {
 	bot, err := NewTelegramBot("token", nil, 123, "qa-1", []string{"qa-1"})
 	if err != nil {

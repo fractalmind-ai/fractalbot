@@ -180,6 +180,28 @@ func TestFeishuAgentsAllowlistUnset(t *testing.T) {
 	}
 }
 
+func TestFeishuAgentsEmptyConfigHint(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agents", "p2p", "ou_me", "u_me", "chat1"))
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected defaultAgent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "agents.ohMyCode.allowedAgents") {
+		t.Fatalf("expected allowedAgents hint, got %q", sent.text)
+	}
+}
+
 func TestFeishuAgentAllowlistHint(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "coder-a", []string{"coder-a"})
 	if err != nil {

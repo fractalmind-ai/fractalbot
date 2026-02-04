@@ -347,7 +347,7 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 			names = filterOutAgentName(names, defaultName)
 		}
 		if len(names) == 0 && defaultName == "" {
-			return true, b.reply(ctx, msg, "⚠️ No agents configured")
+			return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
