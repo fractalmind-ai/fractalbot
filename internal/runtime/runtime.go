@@ -82,7 +82,11 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewFileTailTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
-	if err := registry.Register(NewCommandExecTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
+	commandAllowlist := []string{}
+	if cfg.CommandExec != nil {
+		commandAllowlist = cfg.CommandExec.Allowlist
+	}
+	if err := registry.Register(NewCommandExecTool(PathSandbox{Roots: cfg.SandboxRoots}, commandAllowlist)); err != nil {
 		return nil, err
 	}
 	if err := registry.Register(NewBrowserCanvasTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
