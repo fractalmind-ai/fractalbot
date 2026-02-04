@@ -310,3 +310,31 @@ func TestSlackStatusDoesNotLeakTokens(t *testing.T) {
 		t.Fatalf("expected status to omit tokens, got %q", sent.text)
 	}
 }
+
+func TestSlackStatusAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/status",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "Bot Status") {
+		t.Fatalf("expected status header, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /status, got %q", sent.text)
+	}
+}
