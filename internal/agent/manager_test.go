@@ -60,3 +60,16 @@ func TestValidateOhMyCodeAgentInvalidName(t *testing.T) {
 		t.Fatalf("expected invalid name error, got %v", err)
 	}
 }
+
+func TestBuildOhMyCodeTaskPrompt(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello world")
+	if !strings.HasPrefix(out, "User message:\n") {
+		t.Fatalf("expected user message prefix, got %q", out)
+	}
+	if strings.Contains(out, "Telegram") {
+		t.Fatalf("did not expect channel-specific wording, got %q", out)
+	}
+	if !strings.Contains(out, "hello world") {
+		t.Fatalf("expected message content, got %q", out)
+	}
+}
