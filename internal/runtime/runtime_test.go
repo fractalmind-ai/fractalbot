@@ -146,3 +146,29 @@ func TestParseToolInvocationSlashToolMentionColon(t *testing.T) {
 		t.Fatalf("unexpected args: %q", args)
 	}
 }
+
+func TestParseToolInvocationSlashToolsAlias(t *testing.T) {
+	name, args, ok := parseToolInvocation("/tools")
+	if !ok {
+		t.Fatal("expected tool invocation")
+	}
+	if name != "tools.list" {
+		t.Fatalf("expected name tools.list, got %s", name)
+	}
+	if args != "" {
+		t.Fatalf("expected empty args, got %q", args)
+	}
+}
+
+func TestParseToolInvocationSlashToolsMention(t *testing.T) {
+	name, args, ok := parseToolInvocation("/tools@bot:")
+	if !ok {
+		t.Fatal("expected tool invocation")
+	}
+	if name != "tools.list" {
+		t.Fatalf("expected name tools.list, got %s", name)
+	}
+	if args != "" {
+		t.Fatalf("expected empty args, got %q", args)
+	}
+}
