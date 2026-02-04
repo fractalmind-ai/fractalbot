@@ -71,10 +71,10 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 	}
 	tool, ok := r.tools[trimmed]
 	if !ok {
-		return "", fmt.Errorf("unknown tool %q", trimmed)
+		return "", fmt.Errorf("unknown tool %q (see tools.list)", trimmed)
 	}
 	if !r.isAllowed(trimmed) {
-		return "", fmt.Errorf("tool %q is not allowed", trimmed)
+		return "", fmt.Errorf("tool %q is not allowed (see tools.list)", trimmed)
 	}
 	return tool.Execute(ctx, req)
 }
