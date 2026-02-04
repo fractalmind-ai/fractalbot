@@ -3,11 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/fractalmind-ai/fractalbot/internal/memory"
 	"gopkg.in/yaml.v3"
 )
+
+var agentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]*$`)
 
 // Config represents the main configuration.
 type Config struct {
@@ -227,6 +230,16 @@ func DefaultConfig() *Config {
 }
 
 func validateConfig(cfg *Config) error {
+	if err := validateMemoryConfig(cfg); err != nil {
+		return err
+	}
+	if err := validateOhMyCodeConfig(cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateMemoryConfig(cfg *Config) error {
 	if cfg == nil || cfg.Agents == nil || cfg.Agents.Memory == nil {
 		return nil
 	}
@@ -236,6 +249,48 @@ func validateConfig(cfg *Config) error {
 	}
 	if err := memory.ValidateModelID(modelID); err != nil {
 		return fmt.Errorf("agents.memory.modelId: %w", err)
+	}
+	return nil
+}
+
+func validateOhMyCodeConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.OhMyCode == nil {
+		return nil
+	}
+	ohMyCode := cfg.Agents.OhMyCode
+	defaultAgent := strings.TrimSpace(ohMyCode.DefaultAgent)
+	if defaultAgent != "" {
+		if err := validateAgentName(defaultAgent); err != nil {
+			return fmt.Errorf("agents.ohMyCode.defaultAgent: %w", err)
+		}
+	}
+
+	allowed := make(map[string]struct{})
+	for idx, name := range ohMyCode.AllowedAgents {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			return fmt.Errorf("agents.ohMyCode.allowedAgents[%d]: agent name is required", idx)
+		}
+		if err := validateAgentName(trimmed); err != nil {
+			return fmt.Errorf("agents.ohMyCode.allowedAgents[%d]: %w", idx, err)
+		}
+		allowed[trimmed] = struct{}{}
+	}
+
+	if len(allowed) > 0 {
+		if defaultAgent == "" {
+			return fmt.Errorf("agents.ohMyCode.defaultAgent: required when agents.ohMyCode.allowedAgents is configured")
+		}
+		if _, ok := allowed[defaultAgent]; !ok {
+			return fmt.Errorf("agents.ohMyCode.defaultAgent: must be in agents.ohMyCode.allowedAgents")
+		}
+	}
+	return nil
+}
+
+func validateAgentName(name string) error {
+	if !agentNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid agent name %q", name)
 	}
 	return nil
 }
