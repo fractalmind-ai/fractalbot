@@ -118,3 +118,88 @@ func TestLoadConfigAcceptsValidOhMyCodeAgents(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadConfigRejectsOhMyCodeEnabledWithoutWorkspace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing workspace")
+	}
+	if !strings.Contains(err.Error(), "agents.ohMyCode.workspace") {
+		t.Fatalf("expected error to mention agents.ohMyCode.workspace, got %v", err)
+	}
+}
+
+func TestLoadConfigAcceptsOhMyCodeEnabledWithWorkspaceAndDefaultScript(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n    workspace: \"/tmp\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsOhMyCodeAbsoluteScriptOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n    workspace: \"" + root + "\"\n    agentManagerScript: \"/tmp/outside.py\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for script outside workspace")
+	}
+	if !strings.Contains(err.Error(), "agents.ohMyCode.agentManagerScript") {
+		t.Fatalf("expected error to mention agents.ohMyCode.agentManagerScript, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsOhMyCodeRelativeScriptEscape(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n    workspace: \"" + root + "\"\n    agentManagerScript: \"../outside.py\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for script escaping workspace")
+	}
+	if !strings.Contains(err.Error(), "agents.ohMyCode.agentManagerScript") {
+		t.Fatalf("expected error to mention agents.ohMyCode.agentManagerScript, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsOhMyCodeRelativeWorkspaceWithAbsoluteScript(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n    workspace: \"./workspace\"\n    agentManagerScript: \"/tmp/outside.py\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for absolute script with relative workspace")
+	}
+	if !strings.Contains(err.Error(), "agents.ohMyCode.agentManagerScript") {
+		t.Fatalf("expected error to mention agents.ohMyCode.agentManagerScript, got %v", err)
+	}
+}
+
+func TestLoadConfigAcceptsOhMyCodeAbsoluteWorkspaceWithRelativeScript(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n    workspace: \"" + root + "\"\n    agentManagerScript: \".claude/skills/agent-manager/scripts/main.py\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
