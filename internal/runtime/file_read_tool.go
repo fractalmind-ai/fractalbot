@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const fileReadMaxBytes = 256 * 1024
+
 // FileReadTool reads files from within the sandbox roots.
 type FileReadTool struct {
 	sandbox PathSandbox
@@ -32,6 +34,16 @@ func (t FileReadTool) Execute(ctx context.Context, req ToolRequest) (string, err
 	safePath, err := t.sandbox.ValidatePath(path)
 	if err != nil {
 		return "", err
+	}
+	info, err := os.Stat(safePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to access file")
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory")
+	}
+	if info.Size() > fileReadMaxBytes {
+		return "", fmt.Errorf("file is too large")
 	}
 	data, err := os.ReadFile(safePath)
 	if err != nil {

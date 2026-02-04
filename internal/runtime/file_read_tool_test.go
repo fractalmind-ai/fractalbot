@@ -34,3 +34,24 @@ func TestFileReadToolRejectsOutsideRoot(t *testing.T) {
 		t.Fatal("expected error for outside root")
 	}
 }
+
+func TestFileReadToolRejectsDirectory(t *testing.T) {
+	root := t.TempDir()
+	tool := NewFileReadTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: root}); err == nil {
+		t.Fatal("expected error for directory path")
+	}
+}
+
+func TestFileReadToolRejectsLargeFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.bin")
+	data := make([]byte, fileReadMaxBytes+1)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	tool := NewFileReadTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: path}); err == nil {
+		t.Fatal("expected error for large file")
+	}
+}
