@@ -186,16 +186,11 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 			agentName = defaultOhMyCodeDefaultAgent
 		}
 	}
-	name, err := m.validateOhMyCodeAgent(agentName)
-	if err != nil {
-		return "", err
-	}
-
 	validatedName, err := m.validateOhMyCodeAgent(agentName)
 	if err != nil {
 		return "", err
 	}
-	agentName = validatedName
+	name := validatedName
 
 	timeout := defaultOhMyCodeAssignTimeout
 	if m.config.OhMyCode.AssignTimeoutSeconds > 0 {
@@ -389,7 +384,7 @@ func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin strin
 }
 
 func buildOhMyCodeTaskPrompt(userText string) string {
-	return fmt.Sprintf("Telegram user message:\n%s\n", strings.TrimSpace(userText))
+	return fmt.Sprintf("User message:\n%s\n", strings.TrimSpace(userText))
 }
 
 func extractMonitorSnapshot(monitorOutput string) string {
