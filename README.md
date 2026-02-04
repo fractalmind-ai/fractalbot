@@ -157,6 +157,26 @@ agents:
     maxReplyChars: 2000
 ```
 
+### Agent Runtime (Phase 3) Mental Model
+
+- `agents.ohMyCode` routes tasks to an external agent-manager (oh-my-code). It powers `/agent`, `/agents`, and lifecycle commands.
+- `agents.runtime` is the in-process tool runtime. It only executes allowlisted tools and never shells out unless `command.exec` is explicitly allowed.
+
+Tool invocation prefixes (case-insensitive tool names; args preserve newlines):
+- `tool <name> <args...>`
+- `tool:<name> <args...>`
+- `/tool <name> <args...>`
+- `/tool@bot <name> <args...>` (Telegram-style mention)
+
+Security model:
+- `agents.runtime.allowedTools` must include the tool name (including `tools.list` if you want to use it).
+- `agents.runtime.sandboxRoots` must be non-empty for file and command tools; empty means deny all.
+
+Example chat commands (copy/paste):
+- `tool echo hello\nworld`
+- `/tool@fractalbot tools.list`
+- `tool file.read ./workspace/MEMORY.md`
+
 Phase 3 memory uses a native ONNX Runtime (ORT) library; see `docs/ort-distribution.md` for the distribution strategy and security notes.
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
