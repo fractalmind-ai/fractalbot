@@ -63,6 +63,30 @@ func TestFileEditToolRejectsOldTextMissing(t *testing.T) {
 	}
 }
 
+func TestFileEditToolRejectsDirectory(t *testing.T) {
+	root := t.TempDir()
+	payload := `{"oldText":"hello","newText":"hi"}`
+	tool := NewFileEditTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: root + "\n" + payload}); err == nil {
+		t.Fatal("expected error for directory path")
+	}
+}
+
+func TestFileEditToolRejectsLargeFile(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "large.txt")
+	data := make([]byte, fileEditMaxBytes+1)
+	copy(data, []byte("hello"))
+	if err := os.WriteFile(target, data, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	payload := `{"oldText":"hello","newText":"hi"}`
+	tool := NewFileEditTool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: target + "\n" + payload}); err == nil {
+		t.Fatal("expected error for large file")
+	}
+}
+
 func TestFileEditToolRejectsEmptyRoots(t *testing.T) {
 	payload := `{"oldText":"hello","newText":"hi"}`
 	tool := NewFileEditTool(PathSandbox{})
