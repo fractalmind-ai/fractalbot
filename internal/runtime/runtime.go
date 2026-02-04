@@ -64,7 +64,7 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewVersionTool()); err != nil {
 		return nil, err
 	}
-	if err := registry.Register(NewToolsListTool(cfg.AllowedTools)); err != nil {
+	if err := registry.Register(NewToolsListTool(registry)); err != nil {
 		return nil, err
 	}
 	if err := registry.Register(NewFileReadTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
