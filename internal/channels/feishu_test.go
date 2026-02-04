@@ -127,6 +127,31 @@ func TestFeishuWhoamiCommand(t *testing.T) {
 	}
 }
 
+func TestFeishuStatusDoesNotLeakSecret(t *testing.T) {
+	bot, err := NewFeishuBot("app", "feishu-secret", "feishu", nil, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/status", "p2p", "ou_me", "u_me", "chat1"))
+
+	if !strings.Contains(sent.text, "Bot Status") {
+		t.Fatalf("expected status header, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "bot: feishu") {
+		t.Fatalf("expected bot name line, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "feishu-secret") {
+		t.Fatalf("expected status to omit secret, got %q", sent.text)
+	}
+}
+
 func TestFeishuAgentsCommand(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "qa-1", []string{"qa-1", "coder-a"})
 	if err != nil {
