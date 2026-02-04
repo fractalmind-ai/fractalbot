@@ -193,6 +193,12 @@ func parseToolInvocation(text string) (string, string, bool) {
 	if lower == "tool" || lower == "/tool" {
 		return "", "", true
 	}
+	if lower == "/tools" {
+		return "tools.list", "", true
+	}
+	if strings.HasPrefix(lower, "/tools@") {
+		return "tools.list", "", true
+	}
 	if strings.HasPrefix(lower, "tool:") {
 		rest := strings.TrimSpace(trimmed[len("tool:"):])
 		name, args := splitToolArgs(rest)
