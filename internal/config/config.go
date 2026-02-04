@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -285,6 +286,43 @@ func validateOhMyCodeConfig(cfg *Config) error {
 			return fmt.Errorf("agents.ohMyCode.defaultAgent: must be in agents.ohMyCode.allowedAgents")
 		}
 	}
+
+	if !ohMyCode.Enabled {
+		return nil
+	}
+
+	workspace := strings.TrimSpace(ohMyCode.Workspace)
+	if workspace == "" {
+		return fmt.Errorf("agents.ohMyCode.workspace: required when agents.ohMyCode.enabled is true")
+	}
+
+	script := strings.TrimSpace(ohMyCode.AgentManagerScript)
+	if script == "" {
+		return nil
+	}
+	if !filepath.IsAbs(workspace) {
+		if filepath.IsAbs(script) {
+			return fmt.Errorf("agents.ohMyCode.agentManagerScript: must be relative when agents.ohMyCode.workspace is relative")
+		}
+		if rel := filepath.Clean(script); rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("agents.ohMyCode.agentManagerScript: must not escape agents.ohMyCode.workspace")
+		}
+		return nil
+	}
+
+	resolvedScript := script
+	if !filepath.IsAbs(resolvedScript) {
+		resolvedScript = filepath.Join(workspace, resolvedScript)
+	}
+	rel, err := filepath.Rel(workspace, resolvedScript)
+	if err != nil {
+		return fmt.Errorf("agents.ohMyCode.agentManagerScript: must be within agents.ohMyCode.workspace")
+	}
+	rel = filepath.Clean(rel)
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("agents.ohMyCode.agentManagerScript: must be within agents.ohMyCode.workspace")
+	}
+
 	return nil
 }
 
