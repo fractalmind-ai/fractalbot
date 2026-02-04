@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -84,6 +85,21 @@ func (r *ToolRegistry) isAllowed(name string) bool {
 	}
 	_, ok := r.allowed[name]
 	return ok
+}
+
+// ListAllowedTools returns sorted tool names that are both registered and allowed.
+func (r *ToolRegistry) ListAllowedTools() []string {
+	if r == nil || !r.configured {
+		return nil
+	}
+	out := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		if r.isAllowed(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NewEchoTool returns a simple echo tool.

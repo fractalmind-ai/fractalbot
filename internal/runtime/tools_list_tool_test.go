@@ -6,7 +6,17 @@ import (
 )
 
 func TestToolsListToolOutputsSortedAllowlist(t *testing.T) {
-	tool := NewToolsListTool([]string{"version", "echo", "tools.list", "echo"})
+	registry := NewToolRegistry([]string{"version", "echo", "tools.list", "echo", "ghost"})
+	if err := registry.Register(NewVersionTool()); err != nil {
+		t.Fatalf("register version: %v", err)
+	}
+	if err := registry.Register(NewEchoTool()); err != nil {
+		t.Fatalf("register echo: %v", err)
+	}
+	if err := registry.Register(NewToolsListTool(registry)); err != nil {
+		t.Fatalf("register tools.list: %v", err)
+	}
+	tool := NewToolsListTool(registry)
 	out, err := tool.Execute(context.Background(), ToolRequest{})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
