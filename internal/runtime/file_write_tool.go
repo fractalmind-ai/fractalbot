@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const fileWriteMaxBytes = 256 * 1024
+
 // FileWriteTool writes files within sandbox roots using atomic writes.
 type FileWriteTool struct {
 	sandbox PathSandbox
@@ -30,9 +32,19 @@ func (t FileWriteTool) Execute(ctx context.Context, req ToolRequest) (string, er
 	if err != nil {
 		return "", err
 	}
+	if len(content) > fileWriteMaxBytes {
+		return "", fmt.Errorf("content is too large")
+	}
 	safePath, err := t.sandbox.ValidatePath(path)
 	if err != nil {
 		return "", err
+	}
+	if info, err := os.Stat(safePath); err == nil {
+		if info.IsDir() {
+			return "", fmt.Errorf("path is a directory")
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to access file")
 	}
 	if err := writeFileAtomic(safePath, []byte(content)); err != nil {
 		return "", fmt.Errorf("failed to write file")
