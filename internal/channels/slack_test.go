@@ -366,3 +366,62 @@ func TestSlackAgentsAllowedWithoutAllowlist(t *testing.T) {
 		t.Fatalf("expected agents output or config hint, got %q", sent.text)
 	}
 }
+
+func TestSlackStatusWithMentionBypassesAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/status@bot",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "Bot Status") {
+		t.Fatalf("expected status header, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /status@bot, got %q", sent.text)
+	}
+}
+
+func TestSlackAgentWithMentionRoutes(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/agent@bot qa-1 hello",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if handler.last == nil {
+		t.Fatalf("expected protocol message")
+	}
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	if data["text"] != "hello" {
+		t.Fatalf("expected task text, got %v", data["text"])
+	}
+}

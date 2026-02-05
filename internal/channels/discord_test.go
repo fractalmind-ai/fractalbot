@@ -320,6 +320,65 @@ func TestDiscordStatusAllowedWithoutAllowlist(t *testing.T) {
 	}
 }
 
+func TestDiscordStatusWithMentionBypassesAllowlist(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/status@bot",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "Bot Status") {
+		t.Fatalf("expected status header, got %q", sent.text)
+	}
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /status@bot, got %q", sent.text)
+	}
+}
+
+func TestDiscordAgentWithMentionRoutes(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/agent@bot qa-1 hello",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if handler.last == nil {
+		t.Fatalf("expected protocol message")
+	}
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	if data["text"] != "hello" {
+		t.Fatalf("expected task text, got %v", data["text"])
+	}
+}
+
 func TestDiscordAgentsAllowedWithoutAllowlist(t *testing.T) {
 	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
