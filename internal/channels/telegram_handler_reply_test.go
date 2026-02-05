@@ -70,6 +70,56 @@ func TestTelegramHandlerErrorSanitized(t *testing.T) {
 	}
 }
 
+func TestTelegramToolsCommandRoutedToHandler(t *testing.T) {
+	bot, err := NewTelegramBot("token", []int64{123}, 0, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewTelegramBot: %v", err)
+	}
+
+	var payload sendMessagePayload
+	bot.httpClient = captureHTTPClient(t, &payload)
+
+	const sentinel = "tools routed"
+	bot.SetHandler(&fakeReplyHandler{reply: sentinel})
+
+	msg := &TelegramMessage{
+		Text: "/tools",
+		From: &TelegramUser{ID: 123},
+		Chat: &TelegramChat{ID: 55},
+	}
+
+	bot.handleIncomingMessage(msg)
+
+	if payload.Text != sentinel {
+		t.Fatalf("expected handler reply %q, got %q", sentinel, payload.Text)
+	}
+}
+
+func TestTelegramToolCommandRoutedToHandler(t *testing.T) {
+	bot, err := NewTelegramBot("token", []int64{123}, 0, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewTelegramBot: %v", err)
+	}
+
+	var payload sendMessagePayload
+	bot.httpClient = captureHTTPClient(t, &payload)
+
+	const sentinel = "tool routed"
+	bot.SetHandler(&fakeReplyHandler{reply: sentinel})
+
+	msg := &TelegramMessage{
+		Text: "/tool: echo hi",
+		From: &TelegramUser{ID: 123},
+		Chat: &TelegramChat{ID: 55},
+	}
+
+	bot.handleIncomingMessage(msg)
+
+	if payload.Text != sentinel {
+		t.Fatalf("expected handler reply %q, got %q", sentinel, payload.Text)
+	}
+}
+
 type errSentinel string
 
 func (e errSentinel) Error() string {

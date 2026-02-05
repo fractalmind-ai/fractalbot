@@ -718,7 +718,8 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
-	if command == "/agent" {
+	command = strings.ToLower(command)
+	if command == "/agent" || isRuntimeToolCommand(command) {
 		return false, nil
 	}
 
@@ -921,6 +922,13 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 func (b *TelegramBot) sanitizeLifecycleError(command string, err error) error {
 	log.Printf("Telegram command %s failed: %v", command, err)
 	return errors.New("agent-manager error; please check server logs")
+}
+
+func isRuntimeToolCommand(command string) bool {
+	return command == "/tool" ||
+		command == "/tools" ||
+		strings.HasPrefix(command, "/tool:") ||
+		strings.HasPrefix(command, "/tools:")
 }
 
 func isAgentAllowlistError(err error) bool {
