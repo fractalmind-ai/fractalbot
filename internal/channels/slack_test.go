@@ -429,6 +429,90 @@ func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "⚠️ runtime tools are disabled"}
+	bot.SetHandler(handler)
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/tools",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /tools, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "runtime tools are disabled") {
+		t.Fatalf("expected tools response, got %q", sent.text)
+	}
+}
+
+func TestSlackToolCommandUnauthorized(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/tool: echo hi",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
+func TestSlackToolCommandAllowedRoutes(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "hi"}
+	bot.SetHandler(handler)
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/tool: echo hi",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if sent.text != "hi" {
+		t.Fatalf("expected reply hi, got %q", sent.text)
+	}
+}
+
 func TestSlackStatusWithMentionBypassesAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
