@@ -26,3 +26,18 @@ func TestToolsListToolOutputsSortedAllowlist(t *testing.T) {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
+
+func TestToolsListToolNoToolsEnabledMessage(t *testing.T) {
+	registry := NewToolRegistry(nil)
+	if err := registry.Register(NewToolsListTool(registry)); err != nil {
+		t.Fatalf("register tools.list: %v", err)
+	}
+	tool := NewToolsListTool(registry)
+	out, err := tool.Execute(context.Background(), ToolRequest{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if out != noRuntimeToolsMessage {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}

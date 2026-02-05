@@ -80,6 +80,12 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 }
 
 func (r *ToolRegistry) isAllowed(name string) bool {
+	if r == nil {
+		return false
+	}
+	if name == "tools.list" {
+		return true
+	}
 	if !r.configured {
 		return false
 	}
@@ -89,7 +95,7 @@ func (r *ToolRegistry) isAllowed(name string) bool {
 
 // ListAllowedTools returns sorted tool names that are both registered and allowed.
 func (r *ToolRegistry) ListAllowedTools() []string {
-	if r == nil || !r.configured {
+	if r == nil {
 		return nil
 	}
 	out := make([]string, 0, len(r.tools))

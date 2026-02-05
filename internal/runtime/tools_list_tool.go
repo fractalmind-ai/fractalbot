@@ -10,6 +10,8 @@ type ToolsListTool struct {
 	registry *ToolRegistry
 }
 
+const noRuntimeToolsMessage = "no runtime tools are enabled (set agents.runtime.allowedTools)"
+
 // NewToolsListTool creates a new tools.list tool.
 func NewToolsListTool(registry *ToolRegistry) Tool {
 	return ToolsListTool{registry: registry}
@@ -28,8 +30,15 @@ func (t ToolsListTool) Execute(ctx context.Context, req ToolRequest) (string, er
 		return "", nil
 	}
 	tools := t.registry.ListAllowedTools()
-	if len(tools) == 0 {
-		return "", nil
+	hasTool := false
+	for _, name := range tools {
+		if name != "tools.list" {
+			hasTool = true
+			break
+		}
+	}
+	if !hasTool {
+		return noRuntimeToolsMessage, nil
 	}
 	return strings.Join(tools, "\n"), nil
 }
