@@ -120,6 +120,35 @@ func TestTelegramToolCommandRoutedToHandler(t *testing.T) {
 	}
 }
 
+func TestTelegramToolsBypassAgentSelection(t *testing.T) {
+	bot, err := NewTelegramBot("token", []int64{123}, 0, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewTelegramBot: %v", err)
+	}
+
+	var payload sendMessagePayload
+	bot.httpClient = captureHTTPClient(t, &payload)
+
+	const sentinel = "runtime ok"
+	bot.SetHandler(&fakeReplyHandler{reply: sentinel})
+
+	tests := []string{"/tools", "/tool: echo hi"}
+	for _, text := range tests {
+		payload.Text = ""
+		msg := &TelegramMessage{
+			Text: text,
+			From: &TelegramUser{ID: 123},
+			Chat: &TelegramChat{ID: 55},
+		}
+
+		bot.handleIncomingMessage(msg)
+
+		if payload.Text != sentinel {
+			t.Fatalf("expected handler reply %q for %q, got %q", sentinel, text, payload.Text)
+		}
+	}
+}
+
 type errSentinel string
 
 func (e errSentinel) Error() string {
