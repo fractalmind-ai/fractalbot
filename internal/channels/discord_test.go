@@ -320,6 +320,68 @@ func TestDiscordStatusAllowedWithoutAllowlist(t *testing.T) {
 	}
 }
 
+func TestDiscordIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	tests := []string{"/agent", "/agent qa-1", "/agent@bot", "/agent@bot qa-1"}
+	for _, input := range tests {
+		var sent discordSendCapture
+		bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+			_ = ctx
+			sent = discordSendCapture{channelID: channelID, text: text}
+			return nil
+		}
+
+		bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+			text:        input,
+			userID:      "999",
+			channelID:   "D123",
+			channelType: "dm",
+		})
+
+		if !strings.Contains(sent.text, "usage: /agent <name> <task...>") {
+			t.Fatalf("expected usage hint for %q, got %q", input, sent.text)
+		}
+		if strings.Contains(sent.text, "Unauthorized") {
+			t.Fatalf("did not expect unauthorized for %q, got %q", input, sent.text)
+		}
+	}
+}
+
+func TestDiscordAgentWithTaskStillUnauthorized(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeDiscordHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/agent qa-1 hello",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if handler.called {
+		t.Fatalf("expected handler not called for unauthorized user")
+	}
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
 func TestDiscordStatusWithMentionBypassesAllowlist(t *testing.T) {
 	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
 	if err != nil {

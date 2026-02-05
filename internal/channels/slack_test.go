@@ -367,6 +367,68 @@ func TestSlackAgentsAllowedWithoutAllowlist(t *testing.T) {
 	}
 }
 
+func TestSlackIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	tests := []string{"/agent", "/agent qa-1", "/agent@bot", "/agent@bot qa-1"}
+	for _, input := range tests {
+		var sent slackSendCapture
+		bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+			_ = ctx
+			sent = slackSendCapture{channelID: channelID, text: text}
+			return nil
+		}
+
+		bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+			text:        input,
+			userID:      "U999",
+			channelID:   "D456",
+			channelType: "im",
+		})
+
+		if !strings.Contains(sent.text, "usage: /agent <name> <task...>") {
+			t.Fatalf("expected usage hint for %q, got %q", input, sent.text)
+		}
+		if strings.Contains(sent.text, "Unauthorized") {
+			t.Fatalf("did not expect unauthorized for %q, got %q", input, sent.text)
+		}
+	}
+}
+
+func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/agent qa-1 hello",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if handler.called {
+		t.Fatalf("expected handler not called for unauthorized user")
+	}
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
 func TestSlackStatusWithMentionBypassesAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
