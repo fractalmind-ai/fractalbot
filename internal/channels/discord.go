@@ -304,12 +304,27 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 	if command == "/agent" {
 		return false, nil
 	}
+	if command != "/tools" && (command == "/tool" || strings.HasPrefix(command, "/tool:")) {
+		return false, nil
+	}
 
 	switch command {
 	case "/help", "/start":
 		return true, b.reply(ctx, msg, b.helpText())
 	case "/status":
 		return true, b.reply(ctx, msg, b.statusText())
+	case "/tools":
+		if b.handler == nil {
+			return true, errors.New("runtime handler is not available")
+		}
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", ""))
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(replyText) == "" {
+			return true, nil
+		}
+		return true, b.reply(ctx, msg, replyText)
 	case "/agents":
 		names := b.agentAllow.Names()
 		defaultName := strings.TrimSpace(b.defaultAgent)
@@ -395,7 +410,7 @@ func isDiscordSafeCommand(text string) bool {
 		command = command[:idx]
 	}
 	switch command {
-	case "/help", "/start", "/whoami", "/status", "/agents":
+	case "/help", "/start", "/whoami", "/status", "/agents", "/tools":
 		return true
 	default:
 		return false

@@ -382,6 +382,90 @@ func TestDiscordAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDiscordToolsAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordHandler{reply: "⚠️ runtime tools are disabled"}
+	bot.SetHandler(handler)
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/tools",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /tools, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "runtime tools are disabled") {
+		t.Fatalf("expected tools response, got %q", sent.text)
+	}
+}
+
+func TestDiscordToolCommandUnauthorized(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/tool: echo hi",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
+func TestDiscordToolCommandAllowedRoutes(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordHandler{reply: "hi"}
+	bot.SetHandler(handler)
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/tool: echo hi",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if sent.text != "hi" {
+		t.Fatalf("expected reply hi, got %q", sent.text)
+	}
+}
+
 func TestDiscordStatusWithMentionBypassesAllowlist(t *testing.T) {
 	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
 	if err != nil {

@@ -29,6 +29,8 @@ const (
 
 	defaultOhMyCodeLifecycleTimeout = 20 * time.Second
 	maxOhMyCodeMonitorLines         = 200
+
+	runtimeToolsDisabledMessage = "⚠️ runtime tools are disabled"
 )
 
 // Manager is a minimal stub for agent lifecycle management.
@@ -105,6 +107,13 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		return "", nil
 	}
 
+	if m.runtime == nil && isRuntimeToolInvocation(text) {
+		if channel == "telegram" {
+			return channels.TruncateTelegramReply(runtimeToolsDisabledMessage), nil
+		}
+		return runtimeToolsDisabledMessage, nil
+	}
+
 	if m.runtime != nil {
 		agentName, _ := data["agent"].(string)
 		task := agentruntime.Task{
@@ -161,6 +170,39 @@ func runtimeMetadata(data map[string]interface{}) map[string]string {
 		}
 	}
 	return metadata
+}
+
+func isRuntimeToolInvocation(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if hasToolPrefix(lower, "/tools") {
+		return true
+	}
+	if hasToolPrefix(lower, "/tool") {
+		return true
+	}
+	if hasToolPrefix(lower, "tool") {
+		return true
+	}
+	return false
+}
+
+func hasToolPrefix(text, prefix string) bool {
+	if !strings.HasPrefix(text, prefix) {
+		return false
+	}
+	if len(text) == len(prefix) {
+		return true
+	}
+	switch text[len(prefix)] {
+	case ' ', ':', '@':
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) isOhMyCodeEnabled() bool {
