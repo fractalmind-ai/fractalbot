@@ -100,5 +100,11 @@ func TestHandleIncomingToolDisabledWhenRuntimeOff(t *testing.T) {
 		if !strings.Contains(out, "runtime tools are disabled") {
 			t.Fatalf("expected disabled message for %q, got %q", input, out)
 		}
+		if !strings.Contains(out, "agents.runtime.enabled") {
+			t.Fatalf("expected enabled config hint for %q, got %q", input, out)
+		}
+		if !strings.Contains(out, "agents.runtime.allowedTools") {
+			t.Fatalf("expected allowedTools config hint for %q, got %q", input, out)
+		}
 	}
 }
