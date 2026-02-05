@@ -319,3 +319,31 @@ func TestDiscordStatusAllowedWithoutAllowlist(t *testing.T) {
 		t.Fatalf("did not expect unauthorized for /status, got %q", sent.text)
 	}
 }
+
+func TestDiscordAgentsAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/agents",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /agents, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "Allowed agents:") && !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected agents output or config hint, got %q", sent.text)
+	}
+}

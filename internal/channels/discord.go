@@ -383,7 +383,7 @@ func isDiscordSafeCommand(text string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "/help", "/start", "/whoami", "/status":
+	case "/help", "/start", "/whoami", "/status", "/agents":
 		return true
 	default:
 		return false
