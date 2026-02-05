@@ -10,7 +10,7 @@ type ToolsListTool struct {
 	registry *ToolRegistry
 }
 
-const noRuntimeToolsMessage = "no runtime tools are enabled (set agents.runtime.allowedTools)"
+const noRuntimeToolsMessage = "no runtime tools are enabled (set runtime.allowedTools)"
 
 // NewToolsListTool creates a new tools.list tool.
 func NewToolsListTool(registry *ToolRegistry) Tool {
