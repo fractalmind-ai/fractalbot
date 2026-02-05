@@ -30,7 +30,7 @@ const (
 	defaultOhMyCodeLifecycleTimeout = 20 * time.Second
 	maxOhMyCodeMonitorLines         = 200
 
-	runtimeToolsDisabledMessage = "⚠️ runtime tools are disabled"
+	runtimeToolsDisabledMessage = "⚠️ runtime tools are disabled. Set agents.runtime.enabled and agents.runtime.allowedTools."
 )
 
 // Manager is a minimal stub for agent lifecycle management.
