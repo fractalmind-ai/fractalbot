@@ -317,6 +317,9 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 	}
 
 	command := fields[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
 	if command == "/agent" {
 		return false, nil
 	}
@@ -406,7 +409,11 @@ func isSlackSafeCommand(text string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	switch fields[0] {
+	command := fields[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
+	switch command {
 	case "/help", "/start", "/whoami", "/status", "/agents":
 		return true
 	default:
