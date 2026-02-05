@@ -213,6 +213,11 @@ func (b *DiscordBot) handleMessageEvent(ctx context.Context, msg *discordInbound
 		}
 	}
 
+	if isIncompleteDiscordAgentCommand(msg.text) {
+		_ = b.reply(ctx, msg, "❌ usage: /agent <name> <task...>\nTip: use /agents to see allowed agents.")
+		return
+	}
+
 	if !b.allowlist.Allowed(msg.userID) {
 		_ = b.reply(ctx, msg, "❌ Unauthorized. Ask an admin to add your Discord user ID to channels.discord.allowedUsers.\nTip: use /whoami to get your user ID.")
 		return
@@ -395,6 +400,25 @@ func isDiscordSafeCommand(text string) bool {
 	default:
 		return false
 	}
+}
+
+func isIncompleteDiscordAgentCommand(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "/agent") {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return false
+	}
+	command := fields[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
+	if command != "/agent" {
+		return false
+	}
+	return len(fields) < 3
 }
 
 func (b *DiscordBot) reply(ctx context.Context, msg *discordInboundMessage, text string) error {
