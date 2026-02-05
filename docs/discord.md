@@ -12,8 +12,6 @@ FractalBot uses Discord Gateway events for DM-only message handling. This doc co
 In **Bot → Privileged Gateway Intents**:
 - Enable **Message Content Intent** (required to read DM text).
 
-In the bot configuration, ensure **Direct Messages** intent is enabled (required to receive DM events).
-
 ## 3) Invite (Optional)
 
 DMs require the user to share a server with the bot or be friends. If you need to add the bot to a server,
@@ -27,7 +25,7 @@ use the OAuth2 URL Generator:
 channels:
   discord:
     enabled: true
-    botToken: "your-bot-token"
+    token: "your-bot-token"
     allowedUsers:
       - "123456789012345678" # your Discord user ID
 ```
