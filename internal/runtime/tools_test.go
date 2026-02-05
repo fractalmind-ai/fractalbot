@@ -33,3 +33,14 @@ func TestToolRegistryDisallowedToolSuggestsList(t *testing.T) {
 		t.Fatalf("expected tools.list hint, got %q", err.Error())
 	}
 }
+
+func TestToolRegistryAllowsToolsListWithoutAllowlist(t *testing.T) {
+	registry := NewToolRegistry(nil)
+	if err := registry.Register(NewToolsListTool(registry)); err != nil {
+		t.Fatalf("register tools.list: %v", err)
+	}
+	_, err := registry.Execute(context.Background(), "tools.list", ToolRequest{})
+	if err != nil {
+		t.Fatalf("expected tools.list to be allowed, got %v", err)
+	}
+}
