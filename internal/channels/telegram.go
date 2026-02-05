@@ -664,7 +664,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	}
 
 	enforceSelection := selection.Specified || b.defaultAgent != "" || b.agentAllowlist.configured
-	if enforceSelection {
+	if enforceSelection && !isTelegramToolInvocation(selection.Task) {
 		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllowlist)
 		if err != nil {
 			reply := fmt.Sprintf("❌ %v", err)
@@ -992,6 +992,30 @@ func (b *TelegramBot) helpText() string {
 		}
 	}
 	return strings.TrimSpace(sb.String())
+}
+
+func isTelegramToolInvocation(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return hasTelegramToolPrefix(lower, "/tools") || hasTelegramToolPrefix(lower, "/tool")
+}
+
+func hasTelegramToolPrefix(text, prefix string) bool {
+	if !strings.HasPrefix(text, prefix) {
+		return false
+	}
+	if len(text) == len(prefix) {
+		return true
+	}
+	switch text[len(prefix)] {
+	case ' ', ':', '@':
+		return true
+	default:
+		return false
+	}
 }
 
 func splitCommand(text string) []string {
