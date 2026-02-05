@@ -338,3 +338,31 @@ func TestSlackStatusAllowedWithoutAllowlist(t *testing.T) {
 		t.Fatalf("did not expect unauthorized for /status, got %q", sent.text)
 	}
 }
+
+func TestSlackAgentsAllowedWithoutAllowlist(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/agents",
+		userID:      "U999",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("did not expect unauthorized for /agents, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "Allowed agents:") && !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected agents output or config hint, got %q", sent.text)
+	}
+}
