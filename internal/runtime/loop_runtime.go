@@ -12,25 +12,35 @@ import (
 
 const defaultLoopMaxSteps = 8
 
-// StepKind describes the next action in the runtime loop.
-type StepKind string
+// ToolCall represents a planned tool invocation.
+type ToolCall struct {
+	Name string
+	Args string
+}
 
-const (
-	StepKindTool  StepKind = "tool"
-	StepKindReply StepKind = "reply"
-)
+// ToolCallResult captures tool execution output.
+type ToolCallResult struct {
+	Name   string
+	Output string
+	Err    string
+}
 
-// Step represents a single loop step.
-type Step struct {
-	Kind     StepKind
-	ToolName string
-	ToolArgs string
+// PlannerRequest is the input to a planner step.
+type PlannerRequest struct {
+	Task           Task
+	Step           int
+	LastToolResult *ToolCallResult
+}
+
+// PlannerResponse is the output from a planner step.
+type PlannerResponse struct {
+	ToolCall *ToolCall
 	Reply    string
 }
 
-// Planner decides the next step based on current task and events.
+// Planner decides the next tool call or reply.
 type Planner interface {
-	NextStep(ctx context.Context, task Task, events []Event) (Step, error)
+	NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error)
 }
 
 // LoopRuntime runs a PI-style loop with a step budget.
@@ -89,30 +99,43 @@ func (r *LoopRuntime) HandleTask(ctx context.Context, task Task) (string, error)
 
 	r.emitEvent(Event{Time: time.Now().UTC(), Kind: "task_received", Agent: task.Agent, Channel: task.Channel})
 
+	var lastResult *ToolCallResult
 	for stepIndex := 0; stepIndex < r.maxSteps; stepIndex++ {
-		step, err := r.planner.NextStep(ctx, task, r.eventsSnapshot())
+		resp, err := r.planner.NextStep(ctx, PlannerRequest{
+			Task:           task,
+			Step:           stepIndex + 1,
+			LastToolResult: lastResult,
+		})
 		if err != nil {
 			return "", err
 		}
-		switch step.Kind {
-		case StepKindTool:
-			name := strings.TrimSpace(step.ToolName)
+		if resp.ToolCall != nil && strings.TrimSpace(resp.Reply) != "" {
+			return "", errors.New("planner returned both tool call and reply")
+		}
+		if resp.ToolCall != nil {
+			name := strings.TrimSpace(resp.ToolCall.Name)
 			if name == "" {
 				return r.truncate("❌ tool name is required"), nil
 			}
-			out, err := r.registry.Execute(ctx, name, ToolRequest{Args: step.ToolArgs, Task: task})
+			result := ToolCallResult{Name: name}
+			out, err := r.registry.Execute(ctx, name, ToolRequest{Args: resp.ToolCall.Args, Task: task})
 			if err != nil {
 				log.Printf("runtime tool error: tool=%s err=%v", name, err)
-				return r.truncate(fmt.Sprintf("❌ %v", err)), nil
+				result.Err = err.Error()
+				r.emitEvent(Event{Time: time.Now().UTC(), Kind: "tool_error", Agent: task.Agent, Tool: name, Channel: task.Channel, Message: result.Err})
+			} else {
+				result.Output = out
+				r.emitEvent(Event{Time: time.Now().UTC(), Kind: "tool_result", Agent: task.Agent, Tool: name, Channel: task.Channel, Message: out})
 			}
-			r.emitEvent(Event{Time: time.Now().UTC(), Kind: "tool_result", Agent: task.Agent, Tool: name, Channel: task.Channel, Message: out})
-		case StepKindReply:
-			reply := strings.TrimSpace(step.Reply)
-			r.emitEvent(Event{Time: time.Now().UTC(), Kind: "step_reply", Agent: task.Agent, Channel: task.Channel, Message: reply})
-			return r.truncate(reply), nil
-		default:
-			return "", fmt.Errorf("unknown step kind %q", step.Kind)
+			lastResult = &result
+			continue
 		}
+		reply := strings.TrimSpace(resp.Reply)
+		if reply == "" {
+			return r.truncate("❌ planner returned no action"), nil
+		}
+		r.emitEvent(Event{Time: time.Now().UTC(), Kind: "step_reply", Agent: task.Agent, Channel: task.Channel, Message: reply})
+		return r.truncate(reply), nil
 	}
 
 	return r.truncate(fmt.Sprintf("❌ step budget exceeded (%d)", r.maxSteps)), nil

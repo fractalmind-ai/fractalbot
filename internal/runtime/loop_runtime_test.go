@@ -8,15 +8,12 @@ import (
 
 type toolThenReplyPlanner struct{}
 
-func (p *toolThenReplyPlanner) NextStep(ctx context.Context, task Task, events []Event) (Step, error) {
+func (p *toolThenReplyPlanner) NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error) {
 	_ = ctx
-	_ = task
-	for _, event := range events {
-		if event.Kind == "tool_result" {
-			return Step{Kind: StepKindReply, Reply: "done: " + event.Message}, nil
-		}
+	if req.LastToolResult == nil {
+		return PlannerResponse{ToolCall: &ToolCall{Name: "echo", Args: "hello"}}, nil
 	}
-	return Step{Kind: StepKindTool, ToolName: "echo", ToolArgs: "hello"}, nil
+	return PlannerResponse{Reply: "done: " + req.LastToolResult.Output}, nil
 }
 
 type repeatToolPlanner struct {
@@ -24,11 +21,30 @@ type repeatToolPlanner struct {
 	toolArgs string
 }
 
-func (p *repeatToolPlanner) NextStep(ctx context.Context, task Task, events []Event) (Step, error) {
+func (p *repeatToolPlanner) NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error) {
 	_ = ctx
-	_ = task
-	_ = events
-	return Step{Kind: StepKindTool, ToolName: p.toolName, ToolArgs: p.toolArgs}, nil
+	_ = req
+	return PlannerResponse{ToolCall: &ToolCall{Name: p.toolName, Args: p.toolArgs}}, nil
+}
+
+type directReplyPlanner struct {
+	reply string
+}
+
+func (p *directReplyPlanner) NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error) {
+	_ = ctx
+	_ = req
+	return PlannerResponse{Reply: p.reply}, nil
+}
+
+type toolErrorPlanner struct{}
+
+func (p *toolErrorPlanner) NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error) {
+	_ = ctx
+	if req.LastToolResult != nil {
+		return PlannerResponse{Reply: req.LastToolResult.Err}, nil
+	}
+	return PlannerResponse{ToolCall: &ToolCall{Name: "echo", Args: "hi"}}, nil
 }
 
 func TestLoopRuntimeToolThenReply(t *testing.T) {
@@ -65,13 +81,30 @@ func TestLoopRuntimeStepBudgetExceeded(t *testing.T) {
 	}
 }
 
+func TestLoopRuntimeDirectReply(t *testing.T) {
+	registry := NewToolRegistry([]string{"echo"})
+	if err := registry.Register(NewEchoTool()); err != nil {
+		t.Fatalf("register echo: %v", err)
+	}
+	planner := &directReplyPlanner{reply: "ok"}
+	rt := NewLoopRuntime(registry, planner, 2, 0)
+
+	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
+	if err != nil {
+		t.Fatalf("HandleTask: %v", err)
+	}
+	if reply != "ok" {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+}
+
 func TestLoopRuntimeDisallowedTool(t *testing.T) {
 	registry := NewToolRegistry(nil)
 	if err := registry.Register(NewEchoTool()); err != nil {
 		t.Fatalf("register echo: %v", err)
 	}
-	planner := &repeatToolPlanner{toolName: "echo", toolArgs: "hi"}
-	rt := NewLoopRuntime(registry, planner, 1, 0)
+	planner := &toolErrorPlanner{}
+	rt := NewLoopRuntime(registry, planner, 2, 0)
 
 	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
 	if err != nil {
