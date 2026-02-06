@@ -124,11 +124,29 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if cfg.MaxReplyChars > 0 {
 		maxChars = cfg.MaxReplyChars
 	}
-
-	return &BasicRuntime{
-		registry:      registry,
-		maxReplyChars: maxChars,
-	}, nil
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode == "" {
+		mode = "basic"
+	}
+	switch mode {
+	case "basic":
+		return &BasicRuntime{
+			registry:      registry,
+			maxReplyChars: maxChars,
+		}, nil
+	case "loop":
+		var builder *ContextBuilder
+		if memoryCfg != nil && memoryCfg.Enabled {
+			b, err := NewContextBuilder(memoryCfg, PathSandbox{Roots: cfg.SandboxRoots})
+			if err != nil {
+				return nil, err
+			}
+			builder = b
+		}
+		return NewLoopRuntime(registry, &ToolCommandPlanner{}, builder, 0, maxChars), nil
+	default:
+		return nil, fmt.Errorf("unsupported runtime mode %q", mode)
+	}
 }
 
 // Start is a no-op for the basic runtime.

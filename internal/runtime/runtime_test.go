@@ -50,6 +50,42 @@ func TestRuntimeAllowlistedToolAllowed(t *testing.T) {
 	}
 }
 
+func TestRuntimeLoopModeSelectsLoopRuntime(t *testing.T) {
+	rt, err := NewRuntime(&config.RuntimeConfig{
+		Enabled:      true,
+		Mode:         "loop",
+		AllowedTools: []string{"echo"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if _, ok := rt.(*LoopRuntime); !ok {
+		t.Fatalf("expected LoopRuntime, got %T", rt)
+	}
+}
+
+func TestRuntimeLoopModeToolInvocation(t *testing.T) {
+	rt, err := NewRuntime(&config.RuntimeConfig{
+		Enabled:      true,
+		Mode:         "loop",
+		AllowedTools: []string{"echo"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	reply, err := rt.HandleTask(context.Background(), Task{
+		Agent:   "qa-1",
+		Text:    "tool echo hi",
+		Channel: "telegram",
+	})
+	if err != nil {
+		t.Fatalf("HandleTask: %v", err)
+	}
+	if reply != "hi" {
+		t.Fatalf("expected echo reply, got %q", reply)
+	}
+}
+
 func TestRuntimeToolOutputTruncation(t *testing.T) {
 	rt, err := NewRuntime(&config.RuntimeConfig{
 		Enabled:       true,

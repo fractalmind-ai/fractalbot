@@ -119,6 +119,32 @@ func TestLoadConfigAcceptsValidOhMyCodeAgents(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsInvalidRuntimeMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  runtime:\n    mode: \"weird\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid runtime mode")
+	}
+	if !strings.Contains(err.Error(), "agents.runtime.mode") {
+		t.Fatalf("expected error to mention agents.runtime.mode, got %v", err)
+	}
+}
+
+func TestLoadConfigAcceptsLoopRuntimeMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  runtime:\n    mode: \"loop\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfigRejectsOhMyCodeEnabledWithoutWorkspace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := []byte("agents:\n  ohMyCode:\n    enabled: true\n")
