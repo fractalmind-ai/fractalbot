@@ -200,6 +200,37 @@ func TestSlackAgentsEmptyConfigHint(t *testing.T) {
 	}
 }
 
+func TestSlackDefaultAgentMissingGuidance(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected config key hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agent <name> <task>") {
+		t.Fatalf("expected /agent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agents") {
+		t.Fatalf("expected /agents hint, got %q", sent.text)
+	}
+}
+
 func TestSlackAgentsDedupesDefault(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "qa-1", []string{"qa-1", "coder-a"})
 	if err != nil {
