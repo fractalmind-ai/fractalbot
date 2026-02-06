@@ -142,6 +142,7 @@ func (m *Manager) registerConfiguredChannels() error {
 		if err != nil {
 			return fmt.Errorf("failed to init telegram bot: %w", err)
 		}
+		bot.setAllowedChats(m.cfg.Telegram.AllowedChats)
 
 		bot.ConfigureMode(m.cfg.Telegram.Mode)
 		bot.ConfigurePolling(
