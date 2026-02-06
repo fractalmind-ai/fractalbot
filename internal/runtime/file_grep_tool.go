@@ -67,6 +67,9 @@ func (t FileGrepTool) Execute(ctx context.Context, req ToolRequest) (string, err
 		}
 	}
 
+	if len(state.lines) == 0 && !state.truncated {
+		return "no matches found", nil
+	}
 	if state.truncated {
 		state.lines = append(state.lines, fileGrepTruncateNotice)
 	}
