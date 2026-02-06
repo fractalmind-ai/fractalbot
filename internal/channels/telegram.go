@@ -629,6 +629,11 @@ func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if !b.userManager.Authorize(message.From.ID) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
+		if isTelegramWhoamiCommand(message.Text) {
+			reply := formatTelegramWhoamiReply(message, b.adminID)
+			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
+			return
+		}
 		username := strings.TrimSpace(message.From.UserName)
 		if username != "" {
 			username = "@" + username
@@ -751,20 +756,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, "pong")
 
 	case "/whoami":
-		username := strings.TrimSpace(msg.From.UserName)
-		if username != "" {
-			username = "@" + username
-		} else {
-			username = "(none)"
-		}
-		isAdmin := b.adminID != 0 && msg.From.ID == b.adminID
-		reply := fmt.Sprintf(
-			"User ID: %d\nUsername: %s\nChat ID: %d\nIs admin: %t",
-			msg.From.ID,
-			username,
-			msg.Chat.ID,
-			isAdmin,
-		)
+		reply := formatTelegramWhoamiReply(msg, b.adminID)
 		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(reply))
 
 	case "/agents":
@@ -1006,6 +998,23 @@ func (b *TelegramBot) helpText() string {
 	return strings.TrimSpace(sb.String())
 }
 
+func formatTelegramWhoamiReply(msg *TelegramMessage, adminID int64) string {
+	username := strings.TrimSpace(msg.From.UserName)
+	if username != "" {
+		username = "@" + username
+	} else {
+		username = "(none)"
+	}
+	isAdmin := adminID != 0 && msg.From.ID == adminID
+	return fmt.Sprintf(
+		"User ID: %d\nUsername: %s\nChat ID: %d\nIs admin: %t",
+		msg.From.ID,
+		username,
+		msg.Chat.ID,
+		isAdmin,
+	)
+}
+
 func isTelegramToolInvocation(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -1013,6 +1022,22 @@ func isTelegramToolInvocation(text string) bool {
 	}
 	lower := strings.ToLower(trimmed)
 	return hasTelegramToolPrefix(lower, "/tools") || hasTelegramToolPrefix(lower, "/tool")
+}
+
+func isTelegramWhoamiCommand(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "/") {
+		return false
+	}
+	parts := splitCommand(trimmed)
+	if len(parts) == 0 {
+		return false
+	}
+	command := parts[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
+	return strings.ToLower(command) == "/whoami"
 }
 
 func hasTelegramToolPrefix(text, prefix string) bool {
