@@ -41,6 +41,7 @@ type TelegramConfig struct {
 	Enabled      bool    `yaml:"enabled"`
 	BotToken     string  `yaml:"botToken,omitempty"`
 	AllowedUsers []int64 `yaml:"allowedUsers,omitempty"`
+	AllowedChats []int64 `yaml:"allowedChats,omitempty"`
 	AdminID      int64   `yaml:"adminID,omitempty"`
 
 	// Mode controls how FractalBot receives Telegram updates.

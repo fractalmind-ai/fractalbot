@@ -38,6 +38,9 @@ type TelegramBot struct {
 	handler     IncomingMessageHandler
 	userManager *UserManager
 
+	allowedChats           map[int64]struct{}
+	allowedChatsConfigured bool
+
 	adminID int64
 
 	mode string
@@ -630,6 +633,11 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if message.Chat != nil && strings.TrimSpace(message.Chat.Type) != "" && message.Chat.Type != "private" {
 		return
 	}
+	if b.allowedChatsConfigured {
+		if _, ok := b.allowedChats[message.Chat.ID]; !ok {
+			return
+		}
+	}
 	if !b.userManager.Authorize(message.From.ID) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
 		if isTelegramWhoamiCommand(message.Text) {
@@ -1016,6 +1024,26 @@ func formatTelegramWhoamiReply(msg *TelegramMessage, adminID int64) string {
 		msg.Chat.ID,
 		isAdmin,
 	)
+}
+
+func (b *TelegramBot) setAllowedChats(chatIDs []int64) {
+	if b == nil {
+		return
+	}
+	allowed := make(map[int64]struct{})
+	for _, id := range chatIDs {
+		if id == 0 {
+			continue
+		}
+		allowed[id] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		b.allowedChats = nil
+		b.allowedChatsConfigured = false
+		return
+	}
+	b.allowedChats = allowed
+	b.allowedChatsConfigured = true
 }
 
 func isTelegramToolInvocation(text string) bool {
