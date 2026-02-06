@@ -111,6 +111,13 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 		if err := registry.Register(getTool); err != nil {
 			return nil, err
 		}
+		listTool, err := NewMemoryListTool(memoryCfg, sandbox)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(listTool); err != nil {
+			return nil, err
+		}
 	}
 
 	maxChars := defaultMaxReplyChars
