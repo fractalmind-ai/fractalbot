@@ -627,6 +627,9 @@ func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 }
 
 func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
+	if message.Chat != nil && strings.TrimSpace(message.Chat.Type) != "" && message.Chat.Type != "private" {
+		return
+	}
 	if !b.userManager.Authorize(message.From.ID) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
 		if isTelegramWhoamiCommand(message.Text) {
@@ -1096,7 +1099,8 @@ type TelegramUser struct {
 
 // TelegramChat represents a Telegram chat.
 type TelegramChat struct {
-	ID int64 `json:"id"`
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
 }
 
 func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent string) *protocol.Message {
@@ -1108,6 +1112,7 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent
 			"text":     text,
 			"agent":    agent,
 			"chat_id":  msg.Chat.ID,
+			"chatType": msg.Chat.Type,
 			"user_id":  msg.From.ID,
 			"username": msg.From.UserName,
 		},
