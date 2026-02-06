@@ -333,7 +333,7 @@ func (b *FeishuBot) handleCommand(ctx context.Context, msg *feishuInboundMessage
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
-	if command == "/agent" {
+	if command == "/agent" || command == "/to" {
 		return false, nil
 	}
 
@@ -509,7 +509,7 @@ func derefString(value *string) string {
 
 func isIncompleteFeishuAgentCommand(text string) bool {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || !strings.HasPrefix(trimmed, "/agent") {
+	if trimmed == "" || (!strings.HasPrefix(trimmed, "/agent") && !strings.HasPrefix(trimmed, "/to")) {
 		return false
 	}
 	fields := strings.Fields(trimmed)
@@ -520,7 +520,7 @@ func isIncompleteFeishuAgentCommand(text string) bool {
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
-	if command != "/agent" {
+	if command != "/agent" && command != "/to" {
 		return false
 	}
 	return len(fields) < 3

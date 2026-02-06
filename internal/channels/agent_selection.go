@@ -40,7 +40,7 @@ func NewAgentAllowlist(names []string) AgentAllowlist {
 }
 
 // ParseAgentSelection extracts a target agent and task from chat text.
-// Supported syntax: /agent <name> <task...>
+// Supported syntax: /agent <name> <task...> or /to <name> <task...>
 func ParseAgentSelection(text string) (AgentSelection, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -53,12 +53,12 @@ func ParseAgentSelection(text string) (AgentSelection, error) {
 	}
 
 	first := fields[0]
-	if strings.HasPrefix(first, "/agent") {
+	if strings.HasPrefix(first, "/agent") || strings.HasPrefix(first, "/to") {
 		command := first
 		if idx := strings.IndexByte(command, '@'); idx != -1 {
 			command = command[:idx]
 		}
-		if command != "/agent" {
+		if command != "/agent" && command != "/to" {
 			return AgentSelection{Task: trimmed}, nil
 		}
 		if len(fields) < 3 {

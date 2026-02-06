@@ -311,13 +311,16 @@ func TestFeishuAgentCommandUsageHint(t *testing.T) {
 		return nil
 	}
 
-	bot.handleMessageEvent(context.Background(), buildFeishuEvent("/agent   ", "p2p", "ou_allowed", "u1", "chat1"))
+	for _, input := range []string{"/agent   ", "/to   "} {
+		sent = feishuSendCapture{}
+		bot.handleMessageEvent(context.Background(), buildFeishuEvent(input, "p2p", "ou_allowed", "u1", "chat1"))
 
-	if !strings.Contains(sent.text, "usage: /agent <name> <task>") {
-		t.Fatalf("expected usage hint, got %q", sent.text)
-	}
-	if !strings.Contains(sent.text, "Tip: use /agents") {
-		t.Fatalf("expected /agents tip, got %q", sent.text)
+		if !strings.Contains(sent.text, "usage: /agent <name> <task>") {
+			t.Fatalf("expected usage hint for %q, got %q", input, sent.text)
+		}
+		if !strings.Contains(sent.text, "Tip: use /agents") {
+			t.Fatalf("expected /agents tip for %q, got %q", input, sent.text)
+		}
 	}
 }
 
