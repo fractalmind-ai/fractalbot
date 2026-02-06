@@ -243,7 +243,7 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 	}
 
 	if !b.allowlist.Allowed(msg.userID) {
-		_ = b.reply(ctx, msg, "❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nTip: use /whoami to get your user ID.")
+		_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID))
 		return
 	}
 

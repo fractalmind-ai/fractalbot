@@ -98,6 +98,12 @@ func TestSlackUnauthorized(t *testing.T) {
 	if !strings.Contains(sent.text, "Unauthorized") {
 		t.Fatalf("expected unauthorized reply, got %q", sent.text)
 	}
+	if !strings.Contains(sent.text, "U999") {
+		t.Fatalf("expected user ID in reply, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "channels.slack.allowedUsers") {
+		t.Fatalf("expected allowedUsers hint in reply, got %q", sent.text)
+	}
 }
 
 func TestSlackSocketModeDMEvent(t *testing.T) {
