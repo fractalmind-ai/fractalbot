@@ -167,6 +167,7 @@ type MemoryConfig struct {
 // RuntimeConfig enables the in-process agent runtime.
 type RuntimeConfig struct {
 	Enabled       bool     `yaml:"enabled,omitempty"`
+	Mode          string   `yaml:"mode,omitempty"`
 	AllowedTools  []string `yaml:"allowedTools,omitempty"`
 	MaxReplyChars int      `yaml:"maxReplyChars,omitempty"`
 	// SandboxRoots restricts tool file access to these roots. Empty means deny all.
@@ -235,6 +236,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateMemoryConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateRuntimeConfig(cfg); err != nil {
+		return err
+	}
 	if err := validateOhMyCodeConfig(cfg); err != nil {
 		return err
 	}
@@ -253,6 +257,22 @@ func validateMemoryConfig(cfg *Config) error {
 		return fmt.Errorf("agents.memory.modelId: %w", err)
 	}
 	return nil
+}
+
+func validateRuntimeConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.Runtime == nil {
+		return nil
+	}
+	mode := strings.TrimSpace(cfg.Agents.Runtime.Mode)
+	if mode == "" {
+		return nil
+	}
+	switch mode {
+	case "basic", "loop":
+		return nil
+	default:
+		return fmt.Errorf("agents.runtime.mode: must be \"basic\" or \"loop\"")
+	}
 }
 
 func validateOhMyCodeConfig(cfg *Config) error {
