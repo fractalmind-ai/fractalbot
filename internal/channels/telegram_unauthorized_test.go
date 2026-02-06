@@ -40,10 +40,10 @@ func TestTelegramUnauthorizedHint(t *testing.T) {
 	if handler.called {
 		t.Fatalf("expected handler not called for unauthorized user")
 	}
-	if !strings.Contains(payload.Text, "/whoami") {
-		t.Fatalf("expected /whoami hint in reply: %q", payload.Text)
-	}
 	if !strings.Contains(payload.Text, "allowedUsers") {
 		t.Fatalf("expected allowedUsers hint in reply: %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "999") {
+		t.Fatalf("expected user ID in reply: %q", payload.Text)
 	}
 }

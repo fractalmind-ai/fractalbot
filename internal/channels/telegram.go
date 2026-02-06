@@ -629,7 +629,17 @@ func (b *TelegramBot) handleUpdate(update telegramUpdate) {
 func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 	if !b.userManager.Authorize(message.From.ID) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
-		hint := "❌ Unauthorized. Ask an admin to add your Telegram user ID in channels.telegram.allowedUsers.\nTip: use /whoami to get your user ID."
+		username := strings.TrimSpace(message.From.UserName)
+		if username != "" {
+			username = "@" + username
+		} else {
+			username = "(none)"
+		}
+		hint := fmt.Sprintf(
+			"❌ Unauthorized. Ask an admin to add your Telegram user ID in channels.telegram.allowedUsers.\nUser ID: %d\nUsername: %s",
+			message.From.ID,
+			username,
+		)
 		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(hint))
 		return
 	}
