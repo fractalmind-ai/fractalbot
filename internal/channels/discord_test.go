@@ -403,6 +403,37 @@ func TestDiscordAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDiscordDefaultAgentMissingGuidance(t *testing.T) {
+	bot, err := NewDiscordBot("token", []string{"123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "hello",
+		userID:      "123",
+		channelID:   "D456",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
+		t.Fatalf("expected config key hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agent <name> <task>") {
+		t.Fatalf("expected /agent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/agents") {
+		t.Fatalf("expected /agents hint, got %q", sent.text)
+	}
+}
+
 func TestDiscordHelpIncludesToAlias(t *testing.T) {
 	bot, err := NewDiscordBot("token", nil, "", nil)
 	if err != nil {

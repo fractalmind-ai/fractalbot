@@ -286,7 +286,7 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 		if err != nil {
 			reply := fmt.Sprintf("❌ %v", err)
 			if isDefaultAgentMissingError(err) && !selection.Specified && b.agentAllow.configured {
-				reply = "❌ Default agent is not configured.\nTip: use /agent <name> <task> or set agents.ohMyCode.defaultAgent."
+				reply = "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task>.\nTip: use /agents to see allowed agents."
 			} else if isAgentNotAllowedError(err) {
 				reply = agentNotAllowedMessage(err, b.defaultAgent, b.agentAllow)
 			} else if isAgentAllowlistError(err) {
