@@ -62,7 +62,7 @@ func ParseAgentSelection(text string) (AgentSelection, error) {
 			return AgentSelection{Task: trimmed}, nil
 		}
 		if len(fields) < 3 {
-			return AgentSelection{}, fmt.Errorf("usage: /agent <name> <task>")
+			return AgentSelection{}, fmt.Errorf("usage: %s <name> <task>", command)
 		}
 		return AgentSelection{
 			Agent:     fields[1],
@@ -94,6 +94,25 @@ func ResolveAgentSelection(selection AgentSelection, defaultAgent string, allowl
 
 	selection.Agent = agent
 	return selection, nil
+}
+
+func agentCommandName(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return ""
+	}
+	command := fields[0]
+	if idx := strings.IndexByte(command, '@'); idx != -1 {
+		command = command[:idx]
+	}
+	if command != "/agent" && command != "/to" {
+		return ""
+	}
+	return command
 }
 
 // ValidateAgentName enforces allowed agent naming.

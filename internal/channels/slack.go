@@ -238,7 +238,11 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 	}
 
 	if isIncompleteSlackAgentCommand(msg.text) {
-		_ = b.reply(ctx, msg, "❌ usage: /agent <name> <task...>\nTip: use /agents to see allowed agents.")
+		command := agentCommandName(msg.text)
+		if command == "" {
+			command = "/agent"
+		}
+		_ = b.reply(ctx, msg, fmt.Sprintf("❌ usage: %s <name> <task...>\nTip: use /agents to see allowed agents.", command))
 		return
 	}
 
