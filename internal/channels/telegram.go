@@ -745,7 +745,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		command = command[:idx]
 	}
 	command = strings.ToLower(command)
-	if command == "/agent" || isRuntimeToolCommand(command) {
+	if command == "/agent" || command == "/to" || isRuntimeToolCommand(command) {
 		return false, nil
 	}
 

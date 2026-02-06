@@ -29,6 +29,20 @@ func TestParseAgentSelection(t *testing.T) {
 			specified:   true,
 		},
 		{
+			name:        "to command",
+			input:       "/to coder-a do the thing",
+			expectAgent: "coder-a",
+			expectTask:  "do the thing",
+			specified:   true,
+		},
+		{
+			name:        "to command with bot",
+			input:       "/to@bot coder_b run",
+			expectAgent: "coder_b",
+			expectTask:  "run",
+			specified:   true,
+		},
+		{
 			name:       "plain text",
 			input:      "hello world",
 			expectTask: "hello world",
@@ -37,6 +51,11 @@ func TestParseAgentSelection(t *testing.T) {
 		{
 			name:      "missing task",
 			input:     "/agent coder",
+			expectErr: true,
+		},
+		{
+			name:      "missing task to",
+			input:     "/to coder",
 			expectErr: true,
 		},
 	}

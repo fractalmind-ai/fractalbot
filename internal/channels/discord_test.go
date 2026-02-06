@@ -332,7 +332,16 @@ func TestDiscordIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
 		t.Fatalf("NewDiscordBot: %v", err)
 	}
 
-	tests := []string{"/agent", "/agent qa-1", "/agent@bot", "/agent@bot qa-1"}
+	tests := []string{
+		"/agent",
+		"/agent qa-1",
+		"/agent@bot",
+		"/agent@bot qa-1",
+		"/to",
+		"/to qa-1",
+		"/to@bot",
+		"/to@bot qa-1",
+	}
 	for _, input := range tests {
 		var sent discordSendCapture
 		bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {

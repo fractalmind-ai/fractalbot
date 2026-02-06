@@ -301,7 +301,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
-	if command == "/agent" {
+	if command == "/agent" || command == "/to" {
 		return false, nil
 	}
 	if command != "/tools" && (command == "/tool" || strings.HasPrefix(command, "/tool:")) {
@@ -419,7 +419,7 @@ func isDiscordSafeCommand(text string) bool {
 
 func isIncompleteDiscordAgentCommand(text string) bool {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || !strings.HasPrefix(trimmed, "/agent") {
+	if trimmed == "" || (!strings.HasPrefix(trimmed, "/agent") && !strings.HasPrefix(trimmed, "/to")) {
 		return false
 	}
 	fields := strings.Fields(trimmed)
@@ -430,7 +430,7 @@ func isIncompleteDiscordAgentCommand(text string) bool {
 	if idx := strings.IndexByte(command, '@'); idx != -1 {
 		command = command[:idx]
 	}
-	if command != "/agent" {
+	if command != "/agent" && command != "/to" {
 		return false
 	}
 	return len(fields) < 3
