@@ -977,6 +977,8 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("  /doctor - admin only\n")
 	sb.WriteString("\n")
 	sb.WriteString("Runtime tools (if enabled):\n")
+	sb.WriteString("  /tools - list enabled tools (same as /tool tools.list)\n")
+	sb.WriteString("  /tools@BotName - same\n")
 	sb.WriteString("  /tool <name> <args...> (try: /tool tools.list)\n")
 	sb.WriteString("  /tool@BotName <name> <args...>\n")
 	sb.WriteString("\n")
