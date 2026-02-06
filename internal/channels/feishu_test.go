@@ -100,6 +100,12 @@ func TestFeishuAllowlist(t *testing.T) {
 	if !strings.Contains(sent.text, "Unauthorized") {
 		t.Fatalf("expected unauthorized reply, got %q", sent.text)
 	}
+	if !strings.Contains(sent.text, "ou_blocked") {
+		t.Fatalf("expected open_id in reply, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "u2") {
+		t.Fatalf("expected user_id in reply, got %q", sent.text)
+	}
 }
 
 func TestFeishuWhoamiCommand(t *testing.T) {

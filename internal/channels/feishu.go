@@ -260,7 +260,7 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	}
 
 	if !b.allowlist.Allowed(msg.openID, msg.userID) {
-		_ = b.reply(ctx, msg, "❌ Unauthorized. Ask an admin to add your Feishu open_id or user_id to channels.feishu.allowedUsers.\nTip: use /whoami to get your IDs.")
+		_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. open_id: %s, user_id: %s. Ask an admin to add your IDs to channels.feishu.allowedUsers.\nTip: use /whoami to get your IDs.", msg.openID, msg.userID))
 		return nil
 	}
 
