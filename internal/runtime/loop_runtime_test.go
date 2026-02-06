@@ -2,8 +2,12 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
 
 type toolThenReplyPlanner struct{}
@@ -53,7 +57,7 @@ func TestLoopRuntimeToolThenReply(t *testing.T) {
 		t.Fatalf("register echo: %v", err)
 	}
 	planner := &toolThenReplyPlanner{}
-	rt := NewLoopRuntime(registry, planner, 4, 0)
+	rt := NewLoopRuntime(registry, planner, nil, 4, 0)
 
 	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
 	if err != nil {
@@ -70,7 +74,7 @@ func TestLoopRuntimeStepBudgetExceeded(t *testing.T) {
 		t.Fatalf("register echo: %v", err)
 	}
 	planner := &repeatToolPlanner{toolName: "echo", toolArgs: "hi"}
-	rt := NewLoopRuntime(registry, planner, 2, 0)
+	rt := NewLoopRuntime(registry, planner, nil, 2, 0)
 
 	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
 	if err != nil {
@@ -87,7 +91,7 @@ func TestLoopRuntimeDirectReply(t *testing.T) {
 		t.Fatalf("register echo: %v", err)
 	}
 	planner := &directReplyPlanner{reply: "ok"}
-	rt := NewLoopRuntime(registry, planner, 2, 0)
+	rt := NewLoopRuntime(registry, planner, nil, 2, 0)
 
 	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
 	if err != nil {
@@ -104,7 +108,7 @@ func TestLoopRuntimeDisallowedTool(t *testing.T) {
 		t.Fatalf("register echo: %v", err)
 	}
 	planner := &toolErrorPlanner{}
-	rt := NewLoopRuntime(registry, planner, 2, 0)
+	rt := NewLoopRuntime(registry, planner, nil, 2, 0)
 
 	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
 	if err != nil {
@@ -112,5 +116,33 @@ func TestLoopRuntimeDisallowedTool(t *testing.T) {
 	}
 	if !strings.Contains(reply, "not allowed") {
 		t.Fatalf("expected not allowed reply, got %q", reply)
+	}
+}
+
+type contextPlanner struct{}
+
+func (p *contextPlanner) NextStep(ctx context.Context, req PlannerRequest) (PlannerResponse, error) {
+	_ = ctx
+	return PlannerResponse{Reply: req.Context}, nil
+}
+
+func TestLoopRuntimePassesContext(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "SOUL.md"), []byte("soul"), 0644); err != nil {
+		t.Fatalf("write SOUL.md: %v", err)
+	}
+	builder, err := NewContextBuilder(&config.MemoryConfig{SourceRoot: root}, PathSandbox{Roots: []string{root}})
+	if err != nil {
+		t.Fatalf("NewContextBuilder: %v", err)
+	}
+	planner := &contextPlanner{}
+	rt := NewLoopRuntime(NewToolRegistry(nil), planner, builder, 2, 0)
+
+	reply, err := rt.HandleTask(context.Background(), Task{Text: "run", Channel: "telegram"})
+	if err != nil {
+		t.Fatalf("HandleTask: %v", err)
+	}
+	if !strings.Contains(reply, "SOUL.md") {
+		t.Fatalf("expected context in reply, got %q", reply)
 	}
 }

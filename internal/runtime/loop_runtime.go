@@ -30,6 +30,7 @@ type PlannerRequest struct {
 	Task           Task
 	Step           int
 	LastToolResult *ToolCallResult
+	Context        string
 }
 
 // PlannerResponse is the output from a planner step.
@@ -45,16 +46,17 @@ type Planner interface {
 
 // LoopRuntime runs a PI-style loop with a step budget.
 type LoopRuntime struct {
-	registry      *ToolRegistry
-	planner       Planner
-	maxSteps      int
-	maxReplyChars int
-	mu            sync.Mutex
-	events        []Event
+	registry       *ToolRegistry
+	planner        Planner
+	contextBuilder *ContextBuilder
+	maxSteps       int
+	maxReplyChars  int
+	mu             sync.Mutex
+	events         []Event
 }
 
 // NewLoopRuntime constructs a loop runtime with defaults.
-func NewLoopRuntime(registry *ToolRegistry, planner Planner, maxSteps, maxReplyChars int) *LoopRuntime {
+func NewLoopRuntime(registry *ToolRegistry, planner Planner, contextBuilder *ContextBuilder, maxSteps, maxReplyChars int) *LoopRuntime {
 	if maxSteps <= 0 {
 		maxSteps = defaultLoopMaxSteps
 	}
@@ -62,10 +64,11 @@ func NewLoopRuntime(registry *ToolRegistry, planner Planner, maxSteps, maxReplyC
 		maxReplyChars = defaultMaxReplyChars
 	}
 	return &LoopRuntime{
-		registry:      registry,
-		planner:       planner,
-		maxSteps:      maxSteps,
-		maxReplyChars: maxReplyChars,
+		registry:       registry,
+		planner:        planner,
+		contextBuilder: contextBuilder,
+		maxSteps:       maxSteps,
+		maxReplyChars:  maxReplyChars,
 	}
 }
 
@@ -97,6 +100,15 @@ func (r *LoopRuntime) HandleTask(ctx context.Context, task Task) (string, error)
 		return "", nil
 	}
 
+	contextText := ""
+	if r.contextBuilder != nil {
+		built, err := r.contextBuilder.Build(ctx)
+		if err != nil {
+			return "", err
+		}
+		contextText = built
+	}
+
 	r.emitEvent(Event{Time: time.Now().UTC(), Kind: "task_received", Agent: task.Agent, Channel: task.Channel})
 
 	var lastResult *ToolCallResult
@@ -105,6 +117,7 @@ func (r *LoopRuntime) HandleTask(ctx context.Context, task Task) (string, error)
 			Task:           task,
 			Step:           stepIndex + 1,
 			LastToolResult: lastResult,
+			Context:        contextText,
 		})
 		if err != nil {
 			return "", err
