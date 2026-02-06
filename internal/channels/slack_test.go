@@ -444,6 +444,18 @@ func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSlackHelpIncludesToAlias(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	text := bot.helpText()
+	if !strings.Contains(text, "/to <name> <task") {
+		t.Fatalf("expected help text to include /to usage")
+	}
+}
+
 func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
