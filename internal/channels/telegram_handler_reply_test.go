@@ -132,7 +132,7 @@ func TestTelegramToolsBypassAgentSelection(t *testing.T) {
 	const sentinel = "runtime ok"
 	bot.SetHandler(&fakeReplyHandler{reply: sentinel})
 
-	tests := []string{"/tools", "/tool: echo hi"}
+	tests := []string{"/tools", "/tool: echo hi", "tool: echo hi", "tool tools.list"}
 	for _, text := range tests {
 		payload.Text = ""
 		msg := &TelegramMessage{

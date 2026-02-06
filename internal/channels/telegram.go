@@ -1021,7 +1021,9 @@ func isTelegramToolInvocation(text string) bool {
 		return false
 	}
 	lower := strings.ToLower(trimmed)
-	return hasTelegramToolPrefix(lower, "/tools") || hasTelegramToolPrefix(lower, "/tool")
+	return hasTelegramToolPrefix(lower, "/tools") ||
+		hasTelegramToolPrefix(lower, "/tool") ||
+		hasTelegramToolPrefix(lower, "tool")
 }
 
 func isTelegramWhoamiCommand(text string) bool {
