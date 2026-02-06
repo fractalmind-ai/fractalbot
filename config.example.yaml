@@ -14,6 +14,7 @@ channels:
   # Telegram channel configuration
   telegram:
     enabled: true
+    # Telegram is DM-only; non-private chats are ignored.
     # Get from @BotFather on Telegram
     botToken: "your_bot_token_here"
     # Admin Telegram User ID (required for /adduser, /removeuser, /listusers)
@@ -21,6 +22,9 @@ channels:
     # List of Telegram User IDs allowed to interact (admin will be auto-added)
     allowedUsers:
       - 1234567890
+    # Optional: restrict to specific chat IDs (DM-only; non-private chats ignored)
+    # allowedChats:
+    #   - 1234567890
 
     # Mode controls how FractalBot receives Telegram updates.
     # - polling: long polling via getUpdates (recommended for local/dev)
@@ -120,6 +124,9 @@ agents:
     allowedTools:
       - "echo"
       - "version"
+      # - "memory.search"
+      # - "memory.get"
+      # - "memory.list"
     # Optional: cap runtime replies
     maxReplyChars: 2000
     # Tool file sandbox roots (empty = deny all file access)

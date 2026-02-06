@@ -112,10 +112,14 @@ gateway:
 channels:
   telegram:
     enabled: true
+    # DM-only; non-private chats are ignored.
     botToken: "your_bot_token"
     adminID: 1234567890
     allowedUsers:
       - 1234567890
+    # Optional: restrict to specific chat IDs
+    # allowedChats:
+    #   - 1234567890
 
     # Recommended: long polling (local/dev friendly)
     mode: "polling"
@@ -153,6 +157,9 @@ agents:
     allowedTools:
       - "echo"
       - "version"
+      # - "memory.search"
+      # - "memory.get"
+      # - "memory.list"
     # Optional: cap runtime replies
     maxReplyChars: 2000
 ```
@@ -170,12 +177,15 @@ Tool invocation prefixes (case-insensitive tool names; args preserve newlines):
 
 Security model:
 - `agents.runtime.allowedTools` must include the tool name (including `tools.list` if you want to use it).
+- Remember to allowlist `memory.get` and `memory.list` before using them.
 - `agents.runtime.sandboxRoots` must be non-empty for file and command tools; empty means deny all.
 
 Example chat commands (copy/paste):
 - `tool echo hello\nworld`
 - `/tool@fractalbot tools.list`
 - `tool file.read ./workspace/MEMORY.md`
+- `tool memory.list`
+- `tool memory.get\nMEMORY.md\n1\n20`
 
 Phase 3 memory uses a native ONNX Runtime (ORT) library; see `docs/ort-distribution.md` for the distribution strategy and security notes.
 
