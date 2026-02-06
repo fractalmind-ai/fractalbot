@@ -2,6 +2,7 @@ package channels
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,7 @@ func TestParseAgentSelection(t *testing.T) {
 		expectAgent string
 		specified   bool
 		expectErr   bool
+		errContains string
 	}{
 		{
 			name:        "agent command",
@@ -49,14 +51,22 @@ func TestParseAgentSelection(t *testing.T) {
 			specified:  false,
 		},
 		{
-			name:      "missing task",
-			input:     "/agent coder",
-			expectErr: true,
+			name:        "missing task",
+			input:       "/agent coder",
+			expectErr:   true,
+			errContains: "usage: /agent <name> <task>",
 		},
 		{
-			name:      "missing task to",
-			input:     "/to coder",
-			expectErr: true,
+			name:        "missing task to",
+			input:       "/to coder",
+			expectErr:   true,
+			errContains: "usage: /to <name> <task>",
+		},
+		{
+			name:        "missing task to with bot",
+			input:       "/to@bot coder",
+			expectErr:   true,
+			errContains: "usage: /to <name> <task>",
 		},
 	}
 
@@ -66,6 +76,9 @@ func TestParseAgentSelection(t *testing.T) {
 			if tt.expectErr {
 				if err == nil {
 					t.Fatalf("expected error")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error %q, got %q", tt.errContains, err.Error())
 				}
 				return
 			}

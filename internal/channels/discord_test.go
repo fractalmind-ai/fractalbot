@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -357,7 +358,12 @@ func TestDiscordIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
 			channelType: "dm",
 		})
 
-		if !strings.Contains(sent.text, "usage: /agent <name> <task...>") {
+		command := agentCommandName(input)
+		if command == "" {
+			command = "/agent"
+		}
+		expected := fmt.Sprintf("usage: %s <name> <task...>", command)
+		if !strings.Contains(sent.text, expected) {
 			t.Fatalf("expected usage hint for %q, got %q", input, sent.text)
 		}
 		if strings.Contains(sent.text, "Unauthorized") {
