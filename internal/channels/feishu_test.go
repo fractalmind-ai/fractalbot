@@ -68,6 +68,18 @@ func TestFeishuStartStop(t *testing.T) {
 	}
 }
 
+func TestFeishuHelpIncludesToAlias(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	text := bot.helpText()
+	if !strings.Contains(text, "/to <name> <task") {
+		t.Fatalf("expected help text to include /to usage")
+	}
+}
+
 func TestFeishuAllowlist(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "", nil)
 	if err != nil {

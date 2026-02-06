@@ -368,6 +368,7 @@ func (b *DiscordBot) helpText() string {
 		"",
 		"Agent routing:",
 		"  /agent <name> <task...>",
+		"  /to <name> <task...> (alias of /agent)",
 	}
 	return strings.Join(lines, "\n")
 }

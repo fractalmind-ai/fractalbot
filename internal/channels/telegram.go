@@ -997,6 +997,7 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("\n")
 	sb.WriteString("Agent routing:\n")
 	sb.WriteString("  /agent <name> <task...>\n")
+	sb.WriteString("  /to <name> <task...> (alias of /agent)\n")
 	if b.defaultAgent != "" {
 		sb.WriteString(fmt.Sprintf("Default agent: %s\n", b.defaultAgent))
 	}

@@ -397,6 +397,18 @@ func TestDiscordAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDiscordHelpIncludesToAlias(t *testing.T) {
+	bot, err := NewDiscordBot("token", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	text := bot.helpText()
+	if !strings.Contains(text, "/to <name> <task") {
+		t.Fatalf("expected help text to include /to usage")
+	}
+}
+
 func TestDiscordToolsAllowedWithoutAllowlist(t *testing.T) {
 	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
