@@ -219,7 +219,7 @@ func (b *DiscordBot) handleMessageEvent(ctx context.Context, msg *discordInbound
 	}
 
 	if !b.allowlist.Allowed(msg.userID) {
-		_ = b.reply(ctx, msg, "❌ Unauthorized. Ask an admin to add your Discord user ID to channels.discord.allowedUsers.\nTip: use /whoami to get your user ID.")
+		_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Discord user ID to channels.discord.allowedUsers.\nUser ID: %s", msg.userID))
 		return
 	}
 

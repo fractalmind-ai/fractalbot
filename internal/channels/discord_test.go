@@ -98,6 +98,12 @@ func TestDiscordUnauthorized(t *testing.T) {
 	if !strings.Contains(sent.text, "Unauthorized") {
 		t.Fatalf("expected unauthorized reply, got %q", sent.text)
 	}
+	if !strings.Contains(sent.text, "999") {
+		t.Fatalf("expected user ID in reply, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "channels.discord.allowedUsers") {
+		t.Fatalf("expected allowedUsers hint in reply, got %q", sent.text)
+	}
 }
 
 func TestDiscordWhoamiAllowedWithoutAllowlist(t *testing.T) {
