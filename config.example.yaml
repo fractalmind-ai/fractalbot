@@ -120,6 +120,8 @@ agents:
   # Optional: in-process runtime (Phase 3 skeleton)
   runtime:
     enabled: false
+    # Mode: "basic" (default) or "loop" (tool-command planner)
+    mode: "basic"
     # Allowed tool names (empty = deny all)
     allowedTools:
       - "echo"

@@ -153,6 +153,8 @@ agents:
   # Optional: in-process runtime (Phase 3 skeleton)
   runtime:
     enabled: false
+    # Mode: "basic" (default) or "loop" (tool-command planner)
+    mode: "basic"
     # Allowed tool names (empty = deny all)
     allowedTools:
       - "echo"
@@ -168,6 +170,7 @@ agents:
 
 - `agents.ohMyCode` routes tasks to an external agent-manager (oh-my-code). It powers `/agent`, `/agents`, and lifecycle commands.
 - `agents.runtime` is the in-process tool runtime. It only executes allowlisted tools and never shells out unless `command.exec` is explicitly allowed.
+- `agents.runtime.mode: loop` enables a tool-command planner loop (opt-in).
 
 Tool invocation prefixes (case-insensitive tool names; args preserve newlines):
 - `tool <name> <args...>`
