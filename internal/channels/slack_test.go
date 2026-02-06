@@ -226,6 +226,9 @@ func TestSlackDefaultAgentMissingGuidance(t *testing.T) {
 	if !strings.Contains(sent.text, "/agent <name> <task>") {
 		t.Fatalf("expected /agent hint, got %q", sent.text)
 	}
+	if !strings.Contains(sent.text, "/to <name> <task>") {
+		t.Fatalf("expected /to hint, got %q", sent.text)
+	}
 	if !strings.Contains(sent.text, "/agents") {
 		t.Fatalf("expected /agents hint, got %q", sent.text)
 	}

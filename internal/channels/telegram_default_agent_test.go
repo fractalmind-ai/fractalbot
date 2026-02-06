@@ -28,6 +28,9 @@ func TestTelegramDefaultAgentMissingGuidance(t *testing.T) {
 	if !strings.Contains(payload.Text, "/agent <name> <task>") {
 		t.Fatalf("expected /agent hint, got %q", payload.Text)
 	}
+	if !strings.Contains(payload.Text, "/to <name> <task>") {
+		t.Fatalf("expected /to hint, got %q", payload.Text)
+	}
 	if !strings.Contains(payload.Text, "/agents") {
 		t.Fatalf("expected /agents hint, got %q", payload.Text)
 	}
