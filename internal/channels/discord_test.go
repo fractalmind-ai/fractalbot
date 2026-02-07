@@ -161,6 +161,12 @@ func TestDiscordAgentsEmptyConfigHint(t *testing.T) {
 	if !strings.Contains(sent.text, "agents.ohMyCode.allowedAgents") {
 		t.Fatalf("expected allowedAgents hint, got %q", sent.text)
 	}
+	if !strings.Contains(sent.text, "/agent <name> <task>") {
+		t.Fatalf("expected /agent hint, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "/to <name> <task>") {
+		t.Fatalf("expected /to hint, got %q", sent.text)
+	}
 }
 
 func TestDiscordAgentsDedupesDefault(t *testing.T) {
