@@ -11,7 +11,7 @@ import (
 var agentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]*$`)
 
 var errDefaultAgentMissing = errors.New("default agent is not configured")
-var noAgentsConfiguredMessage = "⚠️ No agents configured.\nSet agents.ohMyCode.defaultAgent or agents.ohMyCode.allowedAgents."
+var noAgentsConfiguredMessage = "⚠️ No agents configured.\nSet agents.ohMyCode.defaultAgent or agents.ohMyCode.allowedAgents.\nTry: /agent <name> <task> (or /to <name> <task>)."
 
 // AgentSelection describes the resolved target agent and task text.
 type AgentSelection struct {
