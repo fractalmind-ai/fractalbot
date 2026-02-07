@@ -88,6 +88,9 @@ func NewRuntime(cfg *config.RuntimeConfig, memoryCfg *config.MemoryConfig) (Agen
 	if err := registry.Register(NewFileExistsTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
+	if err := registry.Register(NewFileStatTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
+		return nil, err
+	}
 	if err := registry.Register(NewFileGrepTool(PathSandbox{Roots: cfg.SandboxRoots})); err != nil {
 		return nil, err
 	}
