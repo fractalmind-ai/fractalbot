@@ -79,16 +79,16 @@ func (t FileGrepTool) Execute(ctx context.Context, req ToolRequest) (string, err
 func parseGrepArgs(args string) (string, string, error) {
 	trimmed := strings.TrimSpace(args)
 	if trimmed == "" {
-		return "", "", fmt.Errorf("pattern and path are required")
+		return "", "", fmt.Errorf("usage: file.grep <pattern> <path>")
 	}
 	fields := strings.Fields(trimmed)
 	if len(fields) < 2 {
-		return "", "", fmt.Errorf("pattern and path are required")
+		return "", "", fmt.Errorf("usage: file.grep <pattern> <path>")
 	}
 	pattern := fields[0]
 	path := strings.TrimSpace(strings.Join(fields[1:], " "))
 	if pattern == "" || path == "" {
-		return "", "", fmt.Errorf("pattern and path are required")
+		return "", "", fmt.Errorf("usage: file.grep <pattern> <path>")
 	}
 	return pattern, path, nil
 }
