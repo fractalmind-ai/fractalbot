@@ -20,8 +20,12 @@ func TestFileGrepToolRejectsMissingArgs(t *testing.T) {
 	root := t.TempDir()
 	tool := NewFileGrepTool(PathSandbox{Roots: []string{root}})
 	for _, args := range []string{"", "hit"} {
-		if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
+		_, err := tool.Execute(context.Background(), ToolRequest{Args: args})
+		if err == nil {
 			t.Fatalf("expected error for args %q", args)
+		}
+		if err.Error() != "usage: file.grep <pattern> <path>" {
+			t.Fatalf("unexpected error for args %q: %q", args, err.Error())
 		}
 	}
 }
