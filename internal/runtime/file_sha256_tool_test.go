@@ -34,3 +34,16 @@ func TestFileSha256ToolRejectsOutsideRoot(t *testing.T) {
 		t.Fatal("expected error for outside root")
 	}
 }
+
+func TestFileSha256ToolRejectsLargeFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "big.bin")
+	data := make([]byte, fileSha256MaxBytes+1)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	tool := NewFileSha256Tool(PathSandbox{Roots: []string{root}})
+	if _, err := tool.Execute(context.Background(), ToolRequest{Args: path}); err == nil || err.Error() != "file is too large" {
+		t.Fatalf("expected size error, got %v", err)
+	}
+}

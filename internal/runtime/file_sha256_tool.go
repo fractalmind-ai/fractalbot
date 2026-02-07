@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
+
+const fileSha256MaxBytes = 512 * 1024
 
 // FileSha256Tool returns a SHA-256 hash for a sandboxed file.
 type FileSha256Tool struct {
@@ -42,10 +45,17 @@ func (t FileSha256Tool) Execute(ctx context.Context, req ToolRequest) (string, e
 	if info.IsDir() {
 		return "", fmt.Errorf("path is a directory")
 	}
-	data, err := os.ReadFile(safePath)
+	if info.Size() > fileSha256MaxBytes {
+		return "", fmt.Errorf("file is too large")
+	}
+	file, err := os.Open(safePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file")
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	defer file.Close()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("failed to read file")
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
