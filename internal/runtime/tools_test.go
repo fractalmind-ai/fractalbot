@@ -32,6 +32,9 @@ func TestToolRegistryDisallowedToolSuggestsList(t *testing.T) {
 	if !strings.Contains(err.Error(), "tools.list") {
 		t.Fatalf("expected tools.list hint, got %q", err.Error())
 	}
+	if !strings.Contains(err.Error(), "agents.runtime.allowedTools") {
+		t.Fatalf("expected allowlist hint, got %q", err.Error())
+	}
 }
 
 func TestToolRegistryAllowsToolsListWithoutAllowlist(t *testing.T) {
