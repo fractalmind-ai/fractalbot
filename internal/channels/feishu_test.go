@@ -78,6 +78,9 @@ func TestFeishuHelpIncludesToAlias(t *testing.T) {
 	if !strings.Contains(text, "/to <name> <task") {
 		t.Fatalf("expected help text to include /to usage")
 	}
+	if !strings.Contains(text, "allowlist") {
+		t.Fatalf("expected help text to mention allowlist")
+	}
 }
 
 func TestFeishuAllowlist(t *testing.T) {

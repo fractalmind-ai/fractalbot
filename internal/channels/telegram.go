@@ -998,6 +998,8 @@ func (b *TelegramBot) helpText() string {
 	sb.WriteString("Agent routing:\n")
 	sb.WriteString("  /agent <name> <task...>\n")
 	sb.WriteString("  /to <name> <task...> (alias of /agent)\n")
+	sb.WriteString("  /agents - see available agents\n")
+	sb.WriteString("  Note: if an allowlist is configured, only allowlisted agents can be used.\n")
 	if b.defaultAgent != "" {
 		sb.WriteString(fmt.Sprintf("Default agent: %s\n", b.defaultAgent))
 	}
