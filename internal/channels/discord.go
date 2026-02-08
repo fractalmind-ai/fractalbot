@@ -308,8 +308,18 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 	if command == "/agent" || command == "/to" {
 		return false, nil
 	}
-	if command != "/tools" && (command == "/tool" || strings.HasPrefix(command, "/tool:")) {
-		return false, nil
+	if command == "/tool" || strings.HasPrefix(command, "/tool:") {
+		if b.handler == nil {
+			return true, errors.New("runtime handler is not available")
+		}
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, ""))
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(replyText) == "" {
+			return true, nil
+		}
+		return true, b.reply(ctx, msg, replyText)
 	}
 
 	switch command {
