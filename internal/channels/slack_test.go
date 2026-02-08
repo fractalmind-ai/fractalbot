@@ -545,6 +545,37 @@ func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
 	}
 }
 
+func TestSlackToolBypassesAgentSelection(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/tool: echo hi",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if sent.text != "ok" {
+		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+}
+
 func TestSlackToolCommandUnauthorized(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
