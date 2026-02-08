@@ -78,11 +78,12 @@
 
 #### Tool Execution Engine
 - [x] Tool registry skeleton (default-deny allowlist)
-- [ ] Tool execution with sandboxing
-- [ ] File operations (read/write/edit)
-- [ ] System command execution
+- [x] Tool execution with sandboxing
+- [x] File operations (read/write/edit/delete/list/tail/exists/stat/sha256/grep)
+- [x] System command execution
 - [ ] Browser control integration
 - [ ] Canvas integration
+  - Note: browser.canvas exists as a stub and is not wired yet.
 
 **Priority**: High
 **Estimated**: 7-10 days
@@ -211,4 +212,4 @@ Want to contribute? Check out:
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-08*
