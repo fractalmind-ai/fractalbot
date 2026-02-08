@@ -28,7 +28,7 @@ func TestPathSandboxRejectsTraversal(t *testing.T) {
 	}
 }
 
-func TestPathSandboxRejectsEmptyRoots(t *testing.T) {
+func TestPathSandboxEmptyRootsMentionsConfigKey(t *testing.T) {
 	sandbox := PathSandbox{}
 	if _, err := sandbox.ValidatePath("note.txt"); err == nil {
 		t.Fatal("expected error for empty roots")
