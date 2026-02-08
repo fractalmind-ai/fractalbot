@@ -24,6 +24,45 @@ func (f *fakeDiscordHandler) HandleIncoming(ctx context.Context, msg *protocol.M
 	return f.reply, f.err
 }
 
+type fakeDiscordLifecycle struct {
+	monitorCalled bool
+	monitorName   string
+	monitorLines  int
+	monitorReply  string
+	monitorErr    error
+}
+
+func (f *fakeDiscordLifecycle) HandleIncoming(ctx context.Context, msg *protocol.Message) (string, error) {
+	_ = ctx
+	_ = msg
+	return "", nil
+}
+
+func (f *fakeDiscordLifecycle) MonitorAgent(ctx context.Context, agentName string, lines int) (string, error) {
+	_ = ctx
+	f.monitorCalled = true
+	f.monitorName = agentName
+	f.monitorLines = lines
+	return f.monitorReply, f.monitorErr
+}
+
+func (f *fakeDiscordLifecycle) StartAgent(ctx context.Context, agentName string) (string, error) {
+	_ = ctx
+	_ = agentName
+	return "", nil
+}
+
+func (f *fakeDiscordLifecycle) StopAgent(ctx context.Context, agentName string) (string, error) {
+	_ = ctx
+	_ = agentName
+	return "", nil
+}
+
+func (f *fakeDiscordLifecycle) Doctor(ctx context.Context) (string, error) {
+	_ = ctx
+	return "", nil
+}
+
 type discordSendCapture struct {
 	channelID string
 	text      string
@@ -526,6 +565,102 @@ func TestDiscordToolBypassesAgentSelection(t *testing.T) {
 	}
 	if sent.text != "ok" {
 		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+}
+
+func TestDiscordMonitorUnauthorized(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordLifecycle{monitorReply: "logs"}
+	bot.SetHandler(handler)
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/monitor qa-1 5",
+		userID:      "999",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if handler.monitorCalled {
+		t.Fatalf("did not expect monitor to be called")
+	}
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
+func TestDiscordMonitorAllowed(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordLifecycle{monitorReply: "logs"}
+	bot.SetHandler(handler)
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/monitor qa-1 5",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !handler.monitorCalled {
+		t.Fatalf("expected monitor to be called")
+	}
+	if handler.monitorName != "qa-1" || handler.monitorLines != 5 {
+		t.Fatalf("unexpected monitor args: %s %d", handler.monitorName, handler.monitorLines)
+	}
+	if sent.text != "logs" {
+		t.Fatalf("expected logs reply, got %q", sent.text)
+	}
+}
+
+func TestDiscordMonitorUsage(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	handler := &fakeDiscordLifecycle{monitorReply: "logs"}
+	bot.SetHandler(handler)
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/monitor",
+		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if handler.monitorCalled {
+		t.Fatalf("did not expect monitor to be called")
+	}
+	if !strings.Contains(sent.text, "usage: /monitor <name> [lines]") {
+		t.Fatalf("expected usage reply, got %q", sent.text)
 	}
 }
 
