@@ -46,10 +46,10 @@ func (t CommandExecTool) Execute(ctx context.Context, req ToolRequest) (string, 
 		return "", fmt.Errorf("command is required")
 	}
 	if len(t.allowlist) == 0 {
-		return "", fmt.Errorf("command allowlist is not configured")
+		return "", fmt.Errorf("command allowlist is not configured (set agents.runtime.commandExec.allowlist)")
 	}
 	if !t.isAllowed(parsed.Command[0]) {
-		return "", fmt.Errorf("command is not allowed")
+		return "", fmt.Errorf("command is not allowed (set agents.runtime.commandExec.allowlist)")
 	}
 	if len(t.sandbox.Roots) == 0 {
 		return "", fmt.Errorf("sandbox roots are not configured")
