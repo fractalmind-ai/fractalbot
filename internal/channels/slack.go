@@ -334,7 +334,7 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 	}
 	if command == "/tool" || strings.HasPrefix(command, "/tool:") {
 		if b.handler == nil {
-			return true, errors.New("runtime handler is not available")
+			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, ""))
 		if err != nil {
@@ -353,7 +353,7 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 		return true, b.reply(ctx, msg, b.statusText())
 	case "/tools":
 		if b.handler == nil {
-			return true, errors.New("runtime handler is not available")
+			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", ""))
 		if err != nil {
