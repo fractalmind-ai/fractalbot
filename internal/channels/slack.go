@@ -397,6 +397,8 @@ func (b *SlackBot) helpText() string {
 		"Agent routing:",
 		"  /agent <name> <task...>",
 		"  /to <name> <task...> (alias of /agent)",
+		"  /agents - see available agents",
+		"  Note: if an allowlist is configured, only allowlisted agents can be used.",
 	}
 	return strings.Join(lines, "\n")
 }
