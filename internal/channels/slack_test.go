@@ -652,6 +652,40 @@ func TestSlackMonitorAllowed(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 
+	handler := &fakeSlackLifecycle{monitorReply: "logs"}
+	bot.SetHandler(handler)
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/monitor qa-1 5",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !handler.monitorCalled {
+		t.Fatalf("expected monitor to be called")
+	}
+	if handler.monitorName != "qa-1" || handler.monitorLines != 5 {
+		t.Fatalf("unexpected monitor args: %s %d", handler.monitorName, handler.monitorLines)
+	}
+	if sent.text != "logs" {
+		t.Fatalf("expected logs reply, got %q", sent.text)
+	}
+}
+
+func TestSlackMonitorHandlerMissing(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
 	var sent slackSendCapture
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
 		_ = ctx
@@ -677,6 +711,9 @@ func TestSlackMonitorUsage(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 
+	handler := &fakeSlackLifecycle{monitorReply: "logs"}
+	bot.SetHandler(handler)
+
 	var sent slackSendCapture
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
 		_ = ctx
@@ -691,8 +728,86 @@ func TestSlackMonitorUsage(t *testing.T) {
 		channelType: "im",
 	})
 
+	if handler.monitorCalled {
+		t.Fatalf("did not expect monitor to be called")
+	}
 	if !strings.Contains(sent.text, "usage: /monitor <name> [lines]") {
 		t.Fatalf("expected usage reply, got %q", sent.text)
+	}
+}
+
+func TestSlackStartAgentHandlerMissing(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/startagent qa-1",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.enabled") {
+		t.Fatalf("expected config hint, got %q", sent.text)
+	}
+}
+
+func TestSlackStopAgentHandlerMissing(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/stopagent qa-1",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.enabled") {
+		t.Fatalf("expected config hint, got %q", sent.text)
+	}
+}
+
+func TestSlackDoctorHandlerMissing(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/doctor",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "agents.ohMyCode.enabled") {
+		t.Fatalf("expected config hint, got %q", sent.text)
 	}
 }
 
