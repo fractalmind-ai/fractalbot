@@ -375,6 +375,10 @@ func (b *DiscordBot) helpText() string {
 		"  /to <name> <task...> (alias of /agent)",
 		"  /agents - see available agents",
 		"  Note: if an allowlist is configured, only allowlisted agents can be used.",
+		"",
+		"Runtime tools (if enabled):",
+		"  /tools - list enabled tools (same as /tool tools.list)",
+		"  /tool <name> <args...> (try: /tool tools.list)",
 	}
 	return strings.Join(lines, "\n")
 }
