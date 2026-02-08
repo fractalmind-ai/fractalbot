@@ -28,6 +28,15 @@ func TestPathSandboxRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestPathSandboxRejectsEmptyRoots(t *testing.T) {
+	sandbox := PathSandbox{}
+	if _, err := sandbox.ValidatePath("note.txt"); err == nil {
+		t.Fatal("expected error for empty roots")
+	} else if !strings.Contains(err.Error(), "agents.runtime.sandboxRoots") {
+		t.Fatalf("expected sandboxRoots hint, got %q", err.Error())
+	}
+}
+
 func TestPathSandboxRejectsAbsoluteOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	sandbox := PathSandbox{Roots: []string{root}}
