@@ -19,7 +19,7 @@ func (s PathSandbox) ValidatePath(candidate string) (string, error) {
 		return "", fmt.Errorf("path is required")
 	}
 	if len(s.Roots) == 0 {
-		return "", fmt.Errorf("sandbox roots are not configured")
+		return "", fmt.Errorf("sandbox roots are not configured (set agents.runtime.sandboxRoots)")
 	}
 
 	var lastErr error
@@ -36,7 +36,7 @@ func (s PathSandbox) ValidatePath(candidate string) (string, error) {
 	if lastErr != nil {
 		return "", lastErr
 	}
-	return "", fmt.Errorf("sandbox roots are not configured")
+	return "", fmt.Errorf("sandbox roots are not configured (set agents.runtime.sandboxRoots)")
 }
 
 func validateUnderRoot(root, candidate string) (string, error) {
