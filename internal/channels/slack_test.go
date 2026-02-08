@@ -500,6 +500,12 @@ func TestSlackHelpIncludesToAlias(t *testing.T) {
 	if !strings.Contains(text, "/to <name> <task") {
 		t.Fatalf("expected help text to include /to usage")
 	}
+	if !strings.Contains(text, "/agents") {
+		t.Fatalf("expected help text to include /agents")
+	}
+	if !strings.Contains(text, "allowlist") {
+		t.Fatalf("expected help text to mention allowlist")
+	}
 }
 
 func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
