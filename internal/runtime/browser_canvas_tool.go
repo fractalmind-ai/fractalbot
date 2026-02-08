@@ -27,7 +27,7 @@ func (BrowserCanvasTool) Name() string {
 func (t BrowserCanvasTool) Execute(ctx context.Context, req ToolRequest) (string, error) {
 	_ = ctx
 	if len(t.sandbox.Roots) == 0 {
-		return "", fmt.Errorf("sandbox roots are not configured")
+		return "", fmt.Errorf("sandbox roots are not configured (set agents.runtime.sandboxRoots)")
 	}
 	trimmed := strings.TrimSpace(req.Args)
 	if trimmed == "" {

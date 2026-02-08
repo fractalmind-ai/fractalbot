@@ -30,6 +30,8 @@ func TestCommandExecToolRejectsEmptyRoots(t *testing.T) {
 	args := mustJSONArgs(commandExecArgs{Command: []string{"echo", "hi"}})
 	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
 		t.Fatal("expected error for empty roots")
+	} else if !strings.Contains(err.Error(), "agents.runtime.sandboxRoots") {
+		t.Fatalf("expected sandboxRoots hint, got %q", err.Error())
 	}
 }
 
