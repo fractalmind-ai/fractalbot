@@ -42,6 +42,23 @@ func TestFileWriteToolWritesNestedFile(t *testing.T) {
 	}
 }
 
+func TestFileWriteToolWritesEmptyFile(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "empty.txt")
+	tool := NewFileWriteTool(PathSandbox{Roots: []string{root}})
+	_, err := tool.Execute(context.Background(), ToolRequest{Args: target + "\n"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("expected empty file, got size %d", info.Size())
+	}
+}
+
 func TestFileWriteToolRejectsOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(t.TempDir(), "note.txt")

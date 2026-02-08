@@ -53,11 +53,10 @@ func (t FileWriteTool) Execute(ctx context.Context, req ToolRequest) (string, er
 }
 
 func parseWriteArgs(args string) (string, string, error) {
-	trimmed := strings.TrimSpace(args)
-	if trimmed == "" {
+	if strings.TrimSpace(args) == "" {
 		return "", "", fmt.Errorf("path is required")
 	}
-	lines := strings.SplitN(trimmed, "\n", 2)
+	lines := strings.SplitN(args, "\n", 2)
 	path := strings.TrimSpace(lines[0])
 	if path == "" {
 		return "", "", fmt.Errorf("path is required")
@@ -66,9 +65,6 @@ func parseWriteArgs(args string) (string, string, error) {
 		return "", "", fmt.Errorf("content is required")
 	}
 	content := strings.TrimLeft(lines[1], "\r\n")
-	if content == "" {
-		return "", "", fmt.Errorf("content is required")
-	}
 	return path, content, nil
 }
 
