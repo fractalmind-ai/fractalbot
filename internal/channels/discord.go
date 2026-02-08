@@ -362,12 +362,90 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
 		}
 		return true, b.reply(ctx, msg, strings.TrimSpace(sb.String()))
+	case "/monitor":
+		agentName, lines, err := parseMonitorArgs(fields)
+		if err != nil {
+			return true, err
+		}
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.MonitorAgent(b.ctx, agentName, lines)
+		if err != nil {
+			return true, b.sanitizeLifecycleError(command, err)
+		}
+		if strings.TrimSpace(out) == "" {
+			out = "No output from agent-monitor."
+		}
+		return true, b.reply(ctx, msg, out)
+	case "/startagent":
+		if len(fields) != 2 {
+			return true, fmt.Errorf("usage: /startagent <name>")
+		}
+		agentName := strings.TrimSpace(fields[1])
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.StartAgent(b.ctx, agentName)
+		if err != nil {
+			return true, b.sanitizeLifecycleError(command, err)
+		}
+		if strings.TrimSpace(out) == "" {
+			out = fmt.Sprintf("✅ Started agent %s", agentName)
+		}
+		return true, b.reply(ctx, msg, out)
+	case "/stopagent":
+		if len(fields) != 2 {
+			return true, fmt.Errorf("usage: /stopagent <name>")
+		}
+		agentName := strings.TrimSpace(fields[1])
+		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
+			return true, err
+		}
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.StopAgent(b.ctx, agentName)
+		if err != nil {
+			return true, b.sanitizeLifecycleError(command, err)
+		}
+		if strings.TrimSpace(out) == "" {
+			out = fmt.Sprintf("✅ Stopped agent %s", agentName)
+		}
+		return true, b.reply(ctx, msg, out)
+	case "/doctor":
+		lifecycle, ok := b.handler.(AgentLifecycle)
+		if !ok || lifecycle == nil {
+			return true, errors.New("agent-manager is not available")
+		}
+		out, err := lifecycle.Doctor(b.ctx)
+		if err != nil {
+			return true, b.sanitizeLifecycleError(command, err)
+		}
+		if strings.TrimSpace(out) == "" {
+			out = "✅ agent-manager doctor completed"
+		}
+		return true, b.reply(ctx, msg, out)
 	case "/whoami":
 		reply := fmt.Sprintf("user_id: %s\nchannel_id: %s", msg.userID, msg.channelID)
 		return true, b.reply(ctx, msg, reply)
 	default:
 		return true, fmt.Errorf("unknown command: %s", command)
 	}
+}
+
+func (b *DiscordBot) sanitizeLifecycleError(command string, err error) error {
+	log.Printf("Discord command %s failed: %v", command, err)
+	return errors.New("agent-manager error; please check server logs")
 }
 
 func (b *DiscordBot) helpText() string {
