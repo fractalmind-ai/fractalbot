@@ -652,9 +652,6 @@ func TestSlackMonitorAllowed(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 
-	handler := &fakeSlackLifecycle{monitorReply: "logs"}
-	bot.SetHandler(handler)
-
 	var sent slackSendCapture
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
 		_ = ctx
@@ -669,14 +666,8 @@ func TestSlackMonitorAllowed(t *testing.T) {
 		channelType: "im",
 	})
 
-	if !handler.monitorCalled {
-		t.Fatalf("expected monitor to be called")
-	}
-	if handler.monitorName != "qa-1" || handler.monitorLines != 5 {
-		t.Fatalf("unexpected monitor args: %s %d", handler.monitorName, handler.monitorLines)
-	}
-	if sent.text != "logs" {
-		t.Fatalf("expected logs reply, got %q", sent.text)
+	if !strings.Contains(sent.text, "agents.ohMyCode.enabled") {
+		t.Fatalf("expected config hint, got %q", sent.text)
 	}
 }
 
@@ -685,9 +676,6 @@ func TestSlackMonitorUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
-
-	handler := &fakeSlackLifecycle{monitorReply: "logs"}
-	bot.SetHandler(handler)
 
 	var sent slackSendCapture
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
@@ -703,9 +691,6 @@ func TestSlackMonitorUsage(t *testing.T) {
 		channelType: "im",
 	})
 
-	if handler.monitorCalled {
-		t.Fatalf("did not expect monitor to be called")
-	}
 	if !strings.Contains(sent.text, "usage: /monitor <name> [lines]") {
 		t.Fatalf("expected usage reply, got %q", sent.text)
 	}

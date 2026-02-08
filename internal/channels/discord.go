@@ -372,7 +372,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available")
+			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.MonitorAgent(b.ctx, agentName, lines)
 		if err != nil {
@@ -392,7 +392,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available")
+			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.StartAgent(b.ctx, agentName)
 		if err != nil {
@@ -412,7 +412,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available")
+			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.StopAgent(b.ctx, agentName)
 		if err != nil {
@@ -425,7 +425,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 	case "/doctor":
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available")
+			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.Doctor(b.ctx)
 		if err != nil {
