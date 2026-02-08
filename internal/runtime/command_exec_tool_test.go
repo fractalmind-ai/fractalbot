@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,8 @@ func TestCommandExecToolRejectsEmptyAllowlist(t *testing.T) {
 	args := mustJSONArgs(commandExecArgs{Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"}})
 	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
 		t.Fatal("expected error for empty allowlist")
+	} else if !strings.Contains(err.Error(), "agents.runtime.commandExec.allowlist") {
+		t.Fatalf("expected allowlist hint, got %q", err.Error())
 	}
 }
 
@@ -47,6 +50,8 @@ func TestCommandExecToolRejectsNotAllowedCommand(t *testing.T) {
 	args := mustJSONArgs(commandExecArgs{Command: []string{os.Args[0], "-test.run=TestCommandExecHelper"}})
 	if _, err := tool.Execute(context.Background(), ToolRequest{Args: args}); err == nil {
 		t.Fatal("expected error for not-allowed command")
+	} else if !strings.Contains(err.Error(), "agents.runtime.commandExec.allowlist") {
+		t.Fatalf("expected allowlist hint, got %q", err.Error())
 	}
 }
 
