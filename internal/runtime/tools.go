@@ -74,7 +74,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 		return "", fmt.Errorf("unknown tool %q (see tools.list)", trimmed)
 	}
 	if !r.isAllowed(trimmed) {
-		return "", fmt.Errorf("tool %q is not allowed (see tools.list)", trimmed)
+		return "", fmt.Errorf("tool %q is not allowed (see tools.list). Configure agents.runtime.allowedTools.", trimmed)
 	}
 	return tool.Execute(ctx, req)
 }

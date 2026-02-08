@@ -117,6 +117,9 @@ func TestLoopRuntimeDisallowedTool(t *testing.T) {
 	if !strings.Contains(reply, "not allowed") {
 		t.Fatalf("expected not allowed reply, got %q", reply)
 	}
+	if !strings.Contains(reply, "agents.runtime.allowedTools") {
+		t.Fatalf("expected allowlist hint, got %q", reply)
+	}
 }
 
 type contextPlanner struct{}
