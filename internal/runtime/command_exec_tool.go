@@ -52,7 +52,7 @@ func (t CommandExecTool) Execute(ctx context.Context, req ToolRequest) (string, 
 		return "", fmt.Errorf("command is not allowed (set agents.runtime.commandExec.allowlist)")
 	}
 	if len(t.sandbox.Roots) == 0 {
-		return "", fmt.Errorf("sandbox roots are not configured")
+		return "", fmt.Errorf("sandbox roots are not configured (set agents.runtime.sandboxRoots)")
 	}
 
 	cwd := strings.TrimSpace(parsed.Cwd)
