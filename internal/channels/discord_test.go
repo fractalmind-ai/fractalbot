@@ -568,7 +568,7 @@ func TestDiscordToolBypassesAgentSelection(t *testing.T) {
 	}
 }
 
-func TestDiscordToolHandlerMissing(t *testing.T) {
+func TestDiscordToolRuntimeDisabledWithoutHandler(t *testing.T) {
 	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewDiscordBot: %v", err)
@@ -584,6 +584,31 @@ func TestDiscordToolHandlerMissing(t *testing.T) {
 	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
 		text:        "/tool: echo hi",
 		userID:      "123",
+		channelID:   "D123",
+		channelType: "dm",
+	})
+
+	if !strings.Contains(sent.text, "runtime tools are disabled") {
+		t.Fatalf("expected disabled reply, got %q", sent.text)
+	}
+}
+
+func TestDiscordToolsRuntimeDisabledWithoutHandler(t *testing.T) {
+	bot, err := NewDiscordBot("discord-secret", []string{"123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewDiscordBot: %v", err)
+	}
+
+	var sent discordSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = discordSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &discordInboundMessage{
+		text:        "/tools",
+		userID:      "999",
 		channelID:   "D123",
 		channelType: "dm",
 	})

@@ -615,7 +615,7 @@ func TestSlackToolBypassesAgentSelection(t *testing.T) {
 	}
 }
 
-func TestSlackToolHandlerMissing(t *testing.T) {
+func TestSlackToolRuntimeDisabledWithoutHandler(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -631,6 +631,31 @@ func TestSlackToolHandlerMissing(t *testing.T) {
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
 		text:        "/tool: echo hi",
 		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !strings.Contains(sent.text, "runtime tools are disabled") {
+		t.Fatalf("expected disabled reply, got %q", sent.text)
+	}
+}
+
+func TestSlackToolsRuntimeDisabledWithoutHandler(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "/tools",
+		userID:      "U999",
 		channelID:   "D456",
 		channelType: "im",
 	})
