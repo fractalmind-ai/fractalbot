@@ -246,6 +246,16 @@ func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.E
 			return
 		}
 		b.handleMessageEvent(ctx, msg)
+	case *slackevents.AppMentionEvent:
+		msg := slackMessageFromAppMentionEvent(ev)
+		if msg == nil {
+			return
+		}
+		replyText := b.slashCommandReply(ctx, msg)
+		if strings.TrimSpace(replyText) == "" {
+			return
+		}
+		_ = b.reply(ctx, msg, replyText)
 	}
 }
 
@@ -749,6 +759,43 @@ func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage
 		channelID:   event.Channel,
 		channelType: event.ChannelType,
 	}
+}
+
+func slackMessageFromAppMentionEvent(event *slackevents.AppMentionEvent) *slackInboundMessage {
+	if event == nil {
+		return nil
+	}
+	if strings.TrimSpace(event.User) == "" || strings.TrimSpace(event.Channel) == "" {
+		return nil
+	}
+	trimmed := stripLeadingSlackMentions(event.Text)
+	if trimmed == "" {
+		trimmed = "/help"
+	}
+	return &slackInboundMessage{
+		text:        trimmed,
+		userID:      event.User,
+		channelID:   event.Channel,
+		channelType: "app_mention",
+	}
+}
+
+func stripLeadingSlackMentions(text string) string {
+	out := strings.TrimSpace(text)
+	for {
+		if !strings.HasPrefix(out, "<@") {
+			break
+		}
+		end := strings.Index(out, ">")
+		if end == -1 {
+			break
+		}
+		out = strings.TrimSpace(out[end+1:])
+		if strings.HasPrefix(out, ":") {
+			out = strings.TrimSpace(out[1:])
+		}
+	}
+	return out
 }
 
 type SlackAllowlist struct {

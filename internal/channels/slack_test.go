@@ -636,6 +636,71 @@ func TestSlackSlashCommandAckUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSlackAppMentionAllowlisted(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleSocketEvent(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			Type: slackevents.CallbackEvent,
+			InnerEvent: slackevents.EventsAPIInnerEvent{Data: &slackevents.AppMentionEvent{
+				User:    "U123",
+				Channel: "C123",
+				Text:    "<@B999> /help",
+			}},
+		},
+		Request: &socketmode.Request{EnvelopeID: "1"},
+	})
+
+	if sent.channelID != "C123" {
+		t.Fatalf("expected channel C123, got %q", sent.channelID)
+	}
+	if !strings.Contains(sent.text, "FractalBot Slack Help") {
+		t.Fatalf("expected help reply, got %q", sent.text)
+	}
+}
+
+func TestSlackAppMentionUnauthorized(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	bot.handleSocketEvent(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			Type: slackevents.CallbackEvent,
+			InnerEvent: slackevents.EventsAPIInnerEvent{Data: &slackevents.AppMentionEvent{
+				User:    "U999",
+				Channel: "C123",
+				Text:    "<@B999> /help",
+			}},
+		},
+		Request: &socketmode.Request{EnvelopeID: "1"},
+	})
+
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", sent.text)
+	}
+}
+
 func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
