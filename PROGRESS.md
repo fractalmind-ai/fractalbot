@@ -45,6 +45,9 @@
 
 ## Next Steps
 
+- **Messaging UX baseline (Phase 2.5)**: plain-message conversational replies, diagnostics separation, fallback/error polish
+- **Outbound control plane (Phase 2.5)**: provider-agnostic send/notify/broadcast API + CLI
+- **Routing/policy hardening (Phase 2.5)**: origin-channel continuity, allowlist guardrails, rate-limit/audit
 - **Slack + Discord channels** (complete transport + non-DM support)
 - **Agent Runtime (Phase 3)**: lifecycle, isolation, memory, tool execution
 
