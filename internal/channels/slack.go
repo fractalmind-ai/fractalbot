@@ -476,6 +476,8 @@ func (b *SlackBot) helpText() string {
 	lines := []string{
 		"FractalBot Slack Help",
 		"",
+		"Note: DM-only; channel messages are ignored.",
+		"",
 		"Commands:",
 		"  /help - show this help",
 		"  /status - bot status",
