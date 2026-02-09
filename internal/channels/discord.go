@@ -452,6 +452,8 @@ func (b *DiscordBot) helpText() string {
 	lines := []string{
 		"FractalBot Discord Help",
 		"",
+		"Note: DM-only; channel messages are ignored.",
+		"",
 		"Commands:",
 		"  /help - show this help",
 		"  /status - bot status",

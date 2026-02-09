@@ -551,6 +551,9 @@ func TestSlackHelpIncludesToAlias(t *testing.T) {
 	if !strings.Contains(text, "allowlist") {
 		t.Fatalf("expected help text to mention allowlist")
 	}
+	if !strings.Contains(text, "DM-only") {
+		t.Fatalf("expected help text to mention DM-only")
+	}
 }
 
 func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
