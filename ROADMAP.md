@@ -2,9 +2,11 @@
 
 ## 🎯 Project Status
 
-**Current Phase**: Phase 2 - Channel Integrations
+**Current Phase**: Phase 2.5 - Messaging UX + Routing Control Plane
 
 **Progress**: Core gateway complete. Telegram + Feishu/Lark channels are production-ready; Slack/Discord DM-only skeletons landed. Agent runtime skeleton started.
+
+**Roadmap Adjustment (2026-02-09)**: Prioritize user-facing messaging UX and channel routing control before deeper agent-runtime expansion. This aligns implementation order with real-world usage quality (clean replies, proactive messaging, cross-channel continuity).
 
 ---
 
@@ -64,6 +66,37 @@
 
 ---
 
+### Phase 2.5: Messaging UX & Routing Control Plane 🆕 (IN PROGRESS)
+
+#### Conversational Reply Experience
+- [ ] Default-agent conversational mode for plain messages (no raw monitor dump)
+- [ ] Separate user-facing replies from operator diagnostics (`/monitor`, `/doctor`)
+- [ ] Reply normalization (silent/heartbeat filtering + concise fallback behavior)
+- [ ] Friendly progress/error responses (actionable next-step hints)
+
+**Priority**: Critical
+**Estimated**: 1-2 weeks
+
+#### Outbound Messaging API + CLI
+- [ ] Unified outbound message API (provider-agnostic)
+- [ ] CLI surface for send/proactive notify/broadcast
+- [ ] Default "reply to originating channel" behavior when target is omitted
+- [ ] Multi-target fan-out (broadcast) with delivery receipts
+
+**Priority**: Critical
+**Estimated**: 1-2 weeks
+
+#### Routing, Policy, and Safety
+- [ ] Conversation routing memory (origin channel/thread/account mapping)
+- [ ] Per-agent allowed channels/targets policy enforcement
+- [ ] Rate limiting + duplicate suppression for proactive/broadcast sends
+- [ ] Audit trail for outbound delivery actions
+
+**Priority**: High
+**Estimated**: 1 week
+
+---
+
 ### Phase 3: Agent Runtime 🔜 (PLANNED)
 
 #### Agent Manager
@@ -74,7 +107,7 @@
 - [ ] Parallel execution with goroutines
 
 **Priority**: High
-**Estimated**: 5-7 days
+**Estimated**: 2-3 weeks
 
 #### Tool Execution Engine
 - [x] Tool registry skeleton (default-deny allowlist)
@@ -86,7 +119,7 @@
   - Note: browser.canvas exists as a stub and is not wired yet.
 
 **Priority**: High
-**Estimated**: 7-10 days
+**Estimated**: 2-3 weeks
 
 ---
 
@@ -131,6 +164,7 @@
 
 - [ ] Add comprehensive unit tests (target: 80% coverage)
 - [ ] Add integration tests
+- [ ] Add end-to-end messaging UX tests (plain chat, proactive notify, broadcast)
 - [ ] Implement WebSocket reconnection logic
 - [ ] Add request/response validation
 - [ ] Implement rate limiting
@@ -165,6 +199,9 @@
 
 - [ ] Telegram channel functional (end-to-end messaging)
 - [ ] At least 2 channels operational
+- [ ] Plain user message returns concise final reply (no tmux/monitor raw output)
+- [ ] Agent can proactively notify user without inbound trigger
+- [ ] Broadcast can deliver to multiple configured channels safely
 - [ ] Agent can execute basic tools
 - [ ] Multi-agent coordination working
 - [ ] Quality gates running
@@ -181,9 +218,14 @@
 **Status**: In development
 
 ### v0.2.0-beta
-**Target**: Multi-channel support
-**Scope**: Telegram + Slack + Discord
-**Dependencies**: Phase 2 completion
+**Target**: Multi-channel + messaging UX baseline
+**Scope**: Telegram + Slack + Discord transport completion + clean conversational replies
+**Dependencies**: Phase 2 + Phase 2.5 (Conversational Reply Experience)
+
+### v0.3.0-beta
+**Target**: Outbound control plane
+**Scope**: provider-agnostic outbound API + CLI send/notify/broadcast + policy guardrails
+**Dependencies**: Phase 2.5 (Outbound Messaging API + Routing/Policy)
 
 ### v0.5.0-beta
 **Target**: Agent runtime
@@ -205,11 +247,11 @@ Want to contribute? Check out:
 - [Development Guide](CONTRIBUTING.md)
 
 **Priority Areas**:
-1. Telegram bot implementation (Phase 2)
-2. Agent runtime (Phase 3)
-3. Test coverage
-4. Documentation improvements
+1. Messaging UX + routing control plane (Phase 2.5)
+2. Slack/Discord channel completion (Phase 2)
+3. Agent runtime hardening (Phase 3)
+4. Test coverage and docs parity
 
 ---
 
-*Last updated: 2026-02-08*
+*Last updated: 2026-02-09*
