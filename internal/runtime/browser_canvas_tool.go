@@ -13,6 +13,8 @@ type BrowserCanvasTool struct {
 	sandbox PathSandbox
 }
 
+const browserCanvasSandboxHint = "agents.runtime.sandboxRoots"
+
 // NewBrowserCanvasTool creates a new browser.canvas tool.
 func NewBrowserCanvasTool(sandbox PathSandbox) Tool {
 	return BrowserCanvasTool{sandbox: sandbox}
@@ -27,7 +29,7 @@ func (BrowserCanvasTool) Name() string {
 func (t BrowserCanvasTool) Execute(ctx context.Context, req ToolRequest) (string, error) {
 	_ = ctx
 	if len(t.sandbox.Roots) == 0 {
-		return "", fmt.Errorf("sandbox roots are not configured (set agents.runtime.sandboxRoots)")
+		return "", fmt.Errorf("sandbox roots are not configured (set %s)", browserCanvasSandboxHint)
 	}
 	trimmed := strings.TrimSpace(req.Args)
 	if trimmed == "" {
