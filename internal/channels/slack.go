@@ -29,6 +29,7 @@ type SlackBot struct {
 
 	apiClient    *slack.Client
 	socketClient *socketmode.Client
+	ackFn        func(req socketmode.Request, payload ...interface{})
 
 	startFn       func(ctx context.Context) error
 	stopFn        func() error
@@ -156,6 +157,9 @@ func (b *SlackBot) initClients() {
 	}
 	b.apiClient = slack.New(b.botToken, slack.OptionAppLevelToken(b.appToken))
 	b.socketClient = socketmode.New(b.apiClient)
+	if b.ackFn == nil {
+		b.ackFn = b.socketClient.Ack
+	}
 	b.sendMessageFn = b.sendText
 	b.startFn = b.startSocketMode
 }
@@ -190,8 +194,12 @@ func (b *SlackBot) consumeSocketEvents(ctx context.Context) {
 }
 
 func (b *SlackBot) handleSocketEvent(ctx context.Context, event socketmode.Event) {
+	if event.Type == socketmode.EventTypeSlashCommand {
+		b.handleSlashCommandEvent(ctx, event)
+		return
+	}
 	if event.Request != nil {
-		b.socketClient.Ack(*event.Request)
+		b.ack(*event.Request)
 	}
 
 	if event.Type != socketmode.EventTypeEventsAPI {
@@ -202,6 +210,29 @@ func (b *SlackBot) handleSocketEvent(ctx context.Context, event socketmode.Event
 		return
 	}
 	b.handleEventsAPIEvent(ctx, eventsAPIEvent)
+}
+
+func (b *SlackBot) handleSlashCommandEvent(ctx context.Context, event socketmode.Event) {
+	if event.Request == nil {
+		return
+	}
+	cmd, ok := event.Data.(slack.SlashCommand)
+	if !ok {
+		b.ack(*event.Request, map[string]string{"text": "❌ Invalid slash command payload."})
+		return
+	}
+	text := strings.TrimSpace(cmd.Command)
+	if extra := strings.TrimSpace(cmd.Text); extra != "" {
+		text = fmt.Sprintf("%s %s", text, extra)
+	}
+	msg := &slackInboundMessage{
+		text:        text,
+		userID:      cmd.UserID,
+		channelID:   cmd.ChannelID,
+		channelType: "slash",
+	}
+	replyText := b.slashCommandReply(ctx, msg)
+	b.ack(*event.Request, map[string]string{"text": replyText})
 }
 
 func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
@@ -216,6 +247,67 @@ func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.E
 		}
 		b.handleMessageEvent(ctx, msg)
 	}
+}
+
+func (b *SlackBot) slashCommandReply(ctx context.Context, msg *slackInboundMessage) string {
+	if msg == nil {
+		return ""
+	}
+
+	b.markActivity()
+
+	if !b.allowlist.Allowed(msg.userID) {
+		return fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID)
+	}
+
+	if isIncompleteSlackAgentCommand(msg.text) {
+		command := agentCommandName(msg.text)
+		if command == "" {
+			command = "/agent"
+		}
+		return fmt.Sprintf("❌ usage: %s <name> <task...>\nTip: use /agents to see allowed agents.", command)
+	}
+
+	if handled, replyText, cmdErr := b.commandResponse(ctx, msg); handled {
+		if cmdErr != nil {
+			return b.formatCommandError(cmdErr)
+		}
+		return replyText
+	}
+
+	selection, err := ParseAgentSelection(msg.text)
+	if err != nil {
+		return b.formatCommandError(err)
+	}
+
+	if strings.TrimSpace(selection.Task) == "" {
+		return ""
+	}
+
+	enforceSelection := selection.Specified || b.defaultAgent != "" || b.agentAllow.configured
+	if enforceSelection {
+		selection, err = ResolveAgentSelection(selection, b.defaultAgent, b.agentAllow)
+		if err != nil {
+			if isDefaultAgentMissingError(err) && !selection.Specified && b.agentAllow.configured {
+				return "❌ Default agent is missing or invalid.\nSet agents.ohMyCode.defaultAgent or use /agent <name> <task> (or /to <name> <task>).\nTip: use /agents to see allowed agents."
+			}
+			return b.formatCommandError(err)
+		}
+	}
+
+	if b.handler != nil {
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent))
+		if err != nil {
+			log.Printf("slack handler error: %v", err)
+			replyText = "❌ Something went wrong. Please try again."
+		}
+		return strings.TrimSpace(replyText)
+	}
+
+	if selection.Task != "" {
+		return fmt.Sprintf("echo: %s", selection.Task)
+	}
+	return ""
 }
 
 func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMessage) {
@@ -315,14 +407,28 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 }
 
 func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) (bool, error) {
+	handled, replyText, cmdErr := b.commandResponse(ctx, msg)
+	if !handled {
+		return false, nil
+	}
+	if cmdErr != nil {
+		return true, cmdErr
+	}
+	if strings.TrimSpace(replyText) == "" {
+		return true, nil
+	}
+	return true, b.reply(ctx, msg, replyText)
+}
+
+func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage) (bool, string, error) {
 	text := strings.TrimSpace(msg.text)
 	if text == "" || !strings.HasPrefix(text, "/") {
-		return false, nil
+		return false, "", nil
 	}
 
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
-		return true, nil
+		return true, "", nil
 	}
 
 	command := fields[0]
@@ -330,39 +436,33 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 		command = command[:idx]
 	}
 	if command == "/agent" || command == "/to" {
-		return false, nil
+		return false, "", nil
 	}
 	if command == "/tool" || strings.HasPrefix(command, "/tool:") {
 		if b.handler == nil {
-			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
+			return true, "⚠️ runtime tools are disabled", nil
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, ""))
 		if err != nil {
-			return true, err
+			return true, "", err
 		}
-		if strings.TrimSpace(replyText) == "" {
-			return true, nil
-		}
-		return true, b.reply(ctx, msg, replyText)
+		return true, strings.TrimSpace(replyText), nil
 	}
 
 	switch command {
 	case "/help", "/start":
-		return true, b.reply(ctx, msg, b.helpText())
+		return true, b.helpText(), nil
 	case "/status":
-		return true, b.reply(ctx, msg, b.statusText())
+		return true, b.statusText(), nil
 	case "/tools":
 		if b.handler == nil {
-			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
+			return true, "⚠️ runtime tools are disabled", nil
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", ""))
 		if err != nil {
-			return true, err
+			return true, "", err
 		}
-		if strings.TrimSpace(replyText) == "" {
-			return true, nil
-		}
-		return true, b.reply(ctx, msg, replyText)
+		return true, strings.TrimSpace(replyText), nil
 	case "/agents":
 		names := b.agentAllow.Names()
 		defaultName := strings.TrimSpace(b.defaultAgent)
@@ -371,7 +471,7 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 		}
 		if len(names) == 0 {
 			if defaultName == "" {
-				return true, b.reply(ctx, msg, noAgentsConfiguredMessage)
+				return true, noAgentsConfiguredMessage, nil
 			}
 			if !b.agentAllow.configured {
 				names = []string{defaultName}
@@ -385,91 +485,102 @@ func (b *SlackBot) handleCommand(ctx context.Context, msg *slackInboundMessage) 
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
 		}
-		return true, b.reply(ctx, msg, strings.TrimSpace(sb.String()))
+		return true, strings.TrimSpace(sb.String()), nil
 	case "/monitor":
 		agentName, lines, err := parseMonitorArgs(fields)
 		if err != nil {
-			return true, err
+			return true, "", err
 		}
 		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
-			return true, err
+			return true, "", err
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
+			return true, "", errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.MonitorAgent(b.ctx, agentName, lines)
 		if err != nil {
-			return true, b.sanitizeLifecycleError(command, err)
+			return true, "", b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = "No output from agent-monitor."
 		}
-		return true, b.reply(ctx, msg, out)
+		return true, out, nil
 	case "/startagent":
 		if len(fields) != 2 {
-			return true, fmt.Errorf("usage: /startagent <name>")
+			return true, "", fmt.Errorf("usage: /startagent <name>")
 		}
 		agentName := strings.TrimSpace(fields[1])
 		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
-			return true, err
+			return true, "", err
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
+			return true, "", errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.StartAgent(b.ctx, agentName)
 		if err != nil {
-			return true, b.sanitizeLifecycleError(command, err)
+			return true, "", b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Started agent %s", agentName)
 		}
-		return true, b.reply(ctx, msg, out)
+		return true, out, nil
 	case "/stopagent":
 		if len(fields) != 2 {
-			return true, fmt.Errorf("usage: /stopagent <name>")
+			return true, "", fmt.Errorf("usage: /stopagent <name>")
 		}
 		agentName := strings.TrimSpace(fields[1])
 		if err := validateAgentCommandName(agentName, b.defaultAgent, b.agentAllow); err != nil {
-			return true, err
+			return true, "", err
 		}
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
+			return true, "", errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.StopAgent(b.ctx, agentName)
 		if err != nil {
-			return true, b.sanitizeLifecycleError(command, err)
+			return true, "", b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Stopped agent %s", agentName)
 		}
-		return true, b.reply(ctx, msg, out)
+		return true, out, nil
 	case "/doctor":
 		lifecycle, ok := b.handler.(AgentLifecycle)
 		if !ok || lifecycle == nil {
-			return true, errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
+			return true, "", errors.New("agent-manager is not available (set agents.ohMyCode.enabled)")
 		}
 		out, err := lifecycle.Doctor(b.ctx)
 		if err != nil {
-			return true, b.sanitizeLifecycleError(command, err)
+			return true, "", b.sanitizeLifecycleError(command, err)
 		}
 		if strings.TrimSpace(out) == "" {
 			out = "✅ agent-manager doctor completed"
 		}
-		return true, b.reply(ctx, msg, out)
+		return true, out, nil
 	case "/whoami":
 		reply := fmt.Sprintf("user_id: %s\nchannel_id: %s", msg.userID, msg.channelID)
-		return true, b.reply(ctx, msg, reply)
+		return true, reply, nil
 	default:
-		return true, fmt.Errorf("unknown command: %s", command)
+		return true, "", fmt.Errorf("unknown command: %s", command)
 	}
 }
 
 func (b *SlackBot) sanitizeLifecycleError(command string, err error) error {
 	log.Printf("Slack command %s failed: %v", command, err)
 	return errors.New("agent-manager error; please check server logs")
+}
+
+func (b *SlackBot) formatCommandError(err error) string {
+	reply := fmt.Sprintf("❌ %v", err)
+	if isAgentNotAllowedError(err) {
+		return agentNotAllowedMessage(err, b.defaultAgent, b.agentAllow)
+	}
+	if isAgentAllowlistError(err) {
+		return fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
+	}
+	return reply
 }
 
 func (b *SlackBot) helpText() string {
@@ -559,6 +670,16 @@ func isIncompleteSlackAgentCommand(text string) bool {
 		return false
 	}
 	return len(fields) < 3
+}
+
+func (b *SlackBot) ack(req socketmode.Request, payload ...interface{}) {
+	if b.ackFn != nil {
+		b.ackFn(req, payload...)
+		return
+	}
+	if b.socketClient != nil {
+		b.socketClient.Ack(req, payload...)
+	}
 }
 
 func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text string) error {

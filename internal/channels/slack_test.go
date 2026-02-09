@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
@@ -553,6 +555,84 @@ func TestSlackHelpIncludesToAlias(t *testing.T) {
 	}
 	if !strings.Contains(text, "DM-only") {
 		t.Fatalf("expected help text to mention DM-only")
+	}
+}
+
+func TestSlackSlashCommandAckAllowlisted(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var ackText string
+	bot.ackFn = func(req socketmode.Request, payload ...interface{}) {
+		_ = req
+		if len(payload) == 0 {
+			return
+		}
+		if data, ok := payload[0].(map[string]string); ok {
+			ackText = data["text"]
+			return
+		}
+		if data, ok := payload[0].(map[string]interface{}); ok {
+			if text, ok := data["text"].(string); ok {
+				ackText = text
+			}
+		}
+	}
+
+	bot.handleSocketEvent(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{
+			Command:   "/help",
+			Text:      "",
+			UserID:    "U123",
+			ChannelID: "C123",
+		},
+		Request: &socketmode.Request{EnvelopeID: "1"},
+	})
+
+	if !strings.Contains(ackText, "FractalBot Slack Help") {
+		t.Fatalf("expected help in ack, got %q", ackText)
+	}
+}
+
+func TestSlackSlashCommandAckUnauthorized(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var ackText string
+	bot.ackFn = func(req socketmode.Request, payload ...interface{}) {
+		_ = req
+		if len(payload) == 0 {
+			return
+		}
+		if data, ok := payload[0].(map[string]string); ok {
+			ackText = data["text"]
+			return
+		}
+		if data, ok := payload[0].(map[string]interface{}); ok {
+			if text, ok := data["text"].(string); ok {
+				ackText = text
+			}
+		}
+	}
+
+	bot.handleSocketEvent(context.Background(), socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: slack.SlashCommand{
+			Command:   "/help",
+			Text:      "",
+			UserID:    "U999",
+			ChannelID: "C123",
+		},
+		Request: &socketmode.Request{EnvelopeID: "1"},
+	})
+
+	if !strings.Contains(ackText, "Unauthorized") {
+		t.Fatalf("expected unauthorized in ack, got %q", ackText)
 	}
 }
 
