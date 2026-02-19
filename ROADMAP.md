@@ -162,16 +162,52 @@
 
 ## 🔧 Technical Debt & Improvements
 
+### Testing (Current: 6/10 → Target: 9/10)
 - [ ] Add comprehensive unit tests (target: 80% coverage)
-- [ ] Add integration tests
+- [ ] Integrate coverage reporting into CI (`go test -coverprofile`, upload to Codecov/Coveralls)
+- [ ] Add integration tests for each channel (Telegram, Slack, Discord, Feishu end-to-end flows)
 - [ ] Add end-to-end messaging UX tests (plain chat, proactive notify, broadcast)
-- [ ] Implement WebSocket reconnection logic
-- [ ] Add request/response validation
-- [ ] Implement rate limiting
-- [ ] Add metrics and monitoring
-- [ ] Performance profiling and optimization
-- [ ] Add Docker support
-- [ ] Create Helm charts for deployment
+- [ ] Add concurrency/stress tests (parallel message handling, connection storms, agent contention)
+- [ ] Add fuzz testing for protocol message parsing and config loading
+- [ ] Add benchmark tests for hot paths (message routing, tool dispatch, sandbox validation)
+
+### Observability & Reliability (Current: 6/10 → Target: 9/10)
+- [ ] Replace `log` with structured logging (zerolog or zap) — JSON output, log levels, request tracing
+- [ ] Add OpenTelemetry tracing (gateway → channel → agent → tool spans)
+- [ ] Add Prometheus metrics (message latency, agent utilization, tool execution duration, error rates)
+- [ ] Expose `/metrics` endpoint for scraping
+- [ ] Add health check endpoint with dependency status (channels, agents, memory DB)
+- [ ] Implement WebSocket reconnection logic with exponential backoff
+- [ ] Add request/response validation middleware
+- [ ] Add graceful shutdown with in-flight request draining
+
+### Security Hardening (Current: 7.5/10 → Target: 9.5/10)
+- [ ] Implement rate limiting per user/channel (token bucket or sliding window)
+- [ ] Add duplicate message suppression (idempotency keys)
+- [ ] Add persistent audit logging for all outbound actions and sensitive operations
+- [ ] Enforce TLS in production mode (reject plaintext WebSocket unless explicitly configured)
+- [ ] Add shell metacharacter sanitization for CommandExecTool inputs
+- [ ] Add ONNX model integrity verification (SHA256 checksum validation on download)
+- [ ] Add secret rotation support (reload tokens without restart)
+- [ ] Security scanning in CI (govulncheck, gosec)
+
+### DevOps & Release Engineering (Current: 6/10 → Target: 9/10)
+- [ ] Add Dockerfile (multi-stage build, minimal runtime image)
+- [ ] Add docker-compose.yml for local development (fractalbot + dependencies)
+- [ ] Create Helm charts for Kubernetes deployment
+- [ ] Add automated release workflow (semantic versioning, goreleaser, changelog generation)
+- [ ] Add binary signing and checksum verification for release artifacts
+- [ ] Add Dependabot/Renovate for automated dependency updates
+- [ ] Add CI matrix testing (multiple Go versions, multiple OS)
+- [ ] Add configuration hot-reload (watch config file, SIGHUP handler)
+
+### Code Quality (Current: 8/10 → Target: 9.5/10)
+- [ ] Add golangci-lint to CI with strict ruleset (errcheck, gocritic, exhaustive, etc.)
+- [ ] Eliminate silent failures — return explicit errors instead of empty strings
+- [ ] Remove stub/dead code (Canvas tool) or wire it up
+- [ ] Complete Memory search tool implementation
+- [ ] Add godoc for all exported types and functions (enforce via linter)
+- [ ] Performance profiling and optimization (pprof baselines, allocation reduction)
 
 ---
 
@@ -197,16 +233,27 @@
 
 ## 📊 Success Metrics
 
+### Functional
 - [ ] Telegram channel functional (end-to-end messaging)
-- [ ] At least 2 channels operational
+- [ ] At least 3 channels fully operational (Telegram + Feishu + Slack or Discord)
 - [ ] Plain user message returns concise final reply (no tmux/monitor raw output)
 - [ ] Agent can proactively notify user without inbound trigger
 - [ ] Broadcast can deliver to multiple configured channels safely
 - [ ] Agent can execute basic tools
 - [ ] Multi-agent coordination working
 - [ ] Quality gates running
-- [ ] Test coverage > 80%
-- [ ] First stable release
+
+### Engineering Excellence
+- [ ] Test coverage > 80% with coverage gate in CI (fail build if below threshold)
+- [ ] Zero `govulncheck` / `gosec` findings in CI
+- [ ] golangci-lint passes with strict config
+- [ ] Structured logging throughout (no raw `log.Println`)
+- [ ] Prometheus metrics + `/metrics` endpoint operational
+- [ ] Dockerfile published, `docker run` works out of the box
+- [ ] Automated releases via goreleaser with signed binaries
+- [ ] Rate limiting active on all inbound channels
+- [ ] Audit log covers all outbound actions
+- [ ] First stable release (v1.0.0)
 
 ---
 
@@ -227,6 +274,11 @@
 **Scope**: provider-agnostic outbound API + CLI send/notify/broadcast + policy guardrails
 **Dependencies**: Phase 2.5 (Outbound Messaging API + Routing/Policy)
 
+### v0.4.0-beta
+**Target**: Engineering hardening
+**Scope**: Structured logging + Prometheus metrics + rate limiting + audit logging + Dockerfile + CI security scanning + 80% test coverage
+**Dependencies**: Technical Debt (Testing, Observability, Security, DevOps)
+
 ### v0.5.0-beta
 **Target**: Agent runtime
 **Scope**: Full agent lifecycle + tool execution
@@ -234,8 +286,8 @@
 
 ### v1.0.0
 **Target**: Stable multi-agent orchestration
-**Scope**: Complete feature parity with Clawdbot MVP
-**Dependencies**: All phases complete + stability testing
+**Scope**: Complete feature parity with Clawdbot MVP + full documentation + goreleaser automated releases + signed binaries
+**Dependencies**: All phases complete + stability testing + engineering excellence metrics met
 
 ---
 
@@ -249,9 +301,10 @@ Want to contribute? Check out:
 **Priority Areas**:
 1. Messaging UX + routing control plane (Phase 2.5)
 2. Slack/Discord channel completion (Phase 2)
-3. Agent runtime hardening (Phase 3)
-4. Test coverage and docs parity
+3. Engineering hardening (Testing + Observability + Security + DevOps)
+4. Agent runtime hardening (Phase 3)
+5. Documentation: WebSocket protocol spec, architecture deep-dive, troubleshooting guide
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-20*
