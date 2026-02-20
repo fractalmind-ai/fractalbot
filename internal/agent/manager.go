@@ -22,8 +22,8 @@ const (
 	defaultOhMyCodeAgentManagerScript = ".claude/skills/agent-manager/scripts/main.py"
 	defaultOhMyCodeDefaultAgent       = "qa-1"
 	defaultOhMyCodeAssignTimeout      = 90 * time.Second
+	ohMyCodeAssignAckMessage          = "处理中…"
 
-	defaultOhMyCodeMonitorDelay   = 1 * time.Second
 	defaultOhMyCodeMonitorTimeout = 15 * time.Second
 	defaultOhMyCodeMonitorLines   = 60
 
@@ -246,29 +246,11 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 		defer cancel()
 	}
 
-	assignOut, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", name)
-	if err != nil {
+	if _, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", name); err != nil {
 		return "", err
 	}
 
-	if defaultOhMyCodeMonitorDelay > 0 {
-		time.Sleep(defaultOhMyCodeMonitorDelay)
-	}
-
-	monitorCtx, cancel := context.WithTimeout(ctx, defaultOhMyCodeMonitorTimeout)
-	defer cancel()
-
-	monitorOut, monitorErr := runOhMyCodeAgentManager(monitorCtx, workspace, script, "", "monitor", name, "--lines", strconv.Itoa(defaultOhMyCodeMonitorLines))
-	if monitorErr != nil {
-		return assignOut, nil
-	}
-
-	snapshot := extractMonitorSnapshot(monitorOut)
-	if strings.TrimSpace(snapshot) == "" {
-		return assignOut, nil
-	}
-
-	return strings.TrimSpace(assignOut) + "\n\n" + snapshot, nil
+	return ohMyCodeAssignAckMessage, nil
 }
 
 // MonitorAgent returns the latest agent-manager monitor output.
@@ -427,28 +409,4 @@ func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin strin
 
 func buildOhMyCodeTaskPrompt(userText string) string {
 	return fmt.Sprintf("User message:\n%s\n", strings.TrimSpace(userText))
-}
-
-func extractMonitorSnapshot(monitorOutput string) string {
-	lines := strings.Split(monitorOutput, "\n")
-	firstSep := -1
-	secondSep := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "====") {
-			if firstSep == -1 {
-				firstSep = i
-				continue
-			}
-			secondSep = i
-			break
-		}
-	}
-
-	if firstSep == -1 || secondSep == -1 || secondSep <= firstSep {
-		return strings.TrimSpace(monitorOutput)
-	}
-
-	snapshot := strings.Join(lines[firstSep+1:secondSep], "\n")
-	return strings.TrimSpace(snapshot)
 }
