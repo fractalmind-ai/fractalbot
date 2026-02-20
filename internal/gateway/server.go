@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +72,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Status endpoint
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/api/v1/message/send", s.handleMessageSend)
 
 	if s.startTime.IsZero() {
 		s.startTime = time.Now()
@@ -243,6 +246,81 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type messageSendRequest struct {
+	Channel string `json:"channel"`
+	To      int64  `json:"to"`
+	Text    string `json:"text"`
+}
+
+type messageSendResponse struct {
+	Status  string `json:"status"`
+	Channel string `json:"channel,omitempty"`
+	To      int64  `json:"to,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeJSON(w, http.StatusMethodNotAllowed, messageSendResponse{Status: "error", Error: "method not allowed"})
+		return
+	}
+
+	var request messageSendRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "invalid JSON payload"})
+		return
+	}
+
+	request.Channel = strings.ToLower(strings.TrimSpace(request.Channel))
+	request.Text = strings.TrimSpace(request.Text)
+
+	if request.Channel == "" {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "channel is required"})
+		return
+	}
+	if request.To == 0 {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "to is required"})
+		return
+	}
+	if request.Text == "" {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "text is required"})
+		return
+	}
+
+	if s.agentManager == nil || s.agentManager.ChannelManager == nil {
+		writeJSON(w, http.StatusServiceUnavailable, messageSendResponse{Status: "error", Error: "channel manager unavailable"})
+		return
+	}
+
+	channel := s.agentManager.ChannelManager.Get(request.Channel)
+	if channel == nil {
+		writeJSON(w, http.StatusNotFound, messageSendResponse{Status: "error", Error: fmt.Sprintf("channel %q not found", request.Channel)})
+		return
+	}
+
+	if err := channel.SendMessage(r.Context(), request.To, request.Text); err != nil {
+		writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, messageSendResponse{
+		Status:  "ok",
+		Channel: request.Channel,
+		To:      request.To,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("failed to encode JSON response (status=%s): %v", strconv.Itoa(statusCode), err)
+	}
 }
 
 func (s *Server) activeClients() int {
