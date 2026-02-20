@@ -396,3 +396,122 @@ func TestStatusDoesNotExposeSecrets(t *testing.T) {
 		t.Fatalf("status response leaked secrets: %s", text)
 	}
 }
+
+type fakeSendChannel struct {
+	name     string
+	running  bool
+	lastChat int64
+	lastText string
+	sendErr  error
+}
+
+func (f *fakeSendChannel) Name() string { return f.name }
+
+func (f *fakeSendChannel) Start(ctx context.Context) error {
+	_ = ctx
+	f.running = true
+	return nil
+}
+
+func (f *fakeSendChannel) Stop() error {
+	f.running = false
+	return nil
+}
+
+func (f *fakeSendChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+	_ = ctx
+	f.lastChat = chatID
+	f.lastText = text
+	return f.sendErr
+}
+
+func (f *fakeSendChannel) IsRunning() bool { return f.running }
+
+func TestMessageSendAPI(t *testing.T) {
+	cfg := &config.Config{
+		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{Telegram: &config.TelegramConfig{Enabled: true}},
+		Agents:   &config.AgentsConfig{},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	fake := &fakeSendChannel{name: "telegram"}
+	if err := server.agentManager.ChannelManager.Register(fake); err != nil {
+		t.Fatalf("register fake channel: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/message/send", server.handleMessageSend)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	t.Run("success", func(t *testing.T) {
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"telegram","to":12345,"text":"hello from api"}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("unexpected status %d body=%s", resp.StatusCode, string(body))
+		}
+
+		if fake.lastChat != 12345 {
+			t.Fatalf("expected lastChat=12345 got %d", fake.lastChat)
+		}
+		if fake.lastText != "hello from api" {
+			t.Fatalf("expected text captured, got %q", fake.lastText)
+		}
+
+		var payload messageSendResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if payload.Status != "ok" || payload.Channel != "telegram" || payload.To != 12345 {
+			t.Fatalf("unexpected response payload: %#v", payload)
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"telegram","to":0,"text":""}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 400, got %d body=%s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"slack","to":1,"text":"hello"}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 404, got %d body=%s", resp.StatusCode, string(body))
+		}
+	})
+}
