@@ -65,16 +65,49 @@ func TestValidateOhMyCodeAgentInvalidName(t *testing.T) {
 	}
 }
 
-func TestBuildOhMyCodeTaskPrompt(t *testing.T) {
-	out := buildOhMyCodeTaskPrompt("hello world")
-	if !strings.HasPrefix(out, "User message:\n") {
-		t.Fatalf("expected user message prefix, got %q", out)
+func TestBuildOhMyCodeTaskPromptIncludesTelegramContextAndSkillHint(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello world", "main", map[string]interface{}{
+		"channel":  "telegram",
+		"chat_id":  int64(99),
+		"user_id":  int64(123),
+		"username": "alice",
+	})
+
+	expectedParts := []string{
+		"Inbound routing context:",
+		"- channel: telegram",
+		"- chat_id: 99",
+		"- user_id: 123",
+		"- username: alice",
+		"- selected_agent: main",
+		"prefer `use-fractalbot` skill",
+		"use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)",
+		"default to current chat_id",
+		"User message:\nhello world",
 	}
-	if strings.Contains(out, "Telegram") {
-		t.Fatalf("did not expect channel-specific wording, got %q", out)
+	for _, part := range expectedParts {
+		if !strings.Contains(out, part) {
+			t.Fatalf("expected %q in prompt, got %q", part, out)
+		}
 	}
-	if !strings.Contains(out, "hello world") {
-		t.Fatalf("expected message content, got %q", out)
+}
+
+func TestBuildOhMyCodeTaskPromptIncludesResolvedTargetContract(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("send a message", "qa-1", nil)
+
+	expectedParts := []string{
+		"- channel: (unknown)",
+		"- chat_id: (unknown)",
+		"- user_id: (unknown)",
+		"- username: (unknown)",
+		"- selected_agent: qa-1",
+		"selected_agent is the final routing target after default/allowlist resolution",
+		"default to current chat_id",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(out, part) {
+			t.Fatalf("expected %q in prompt, got %q", part, out)
+		}
 	}
 }
 
@@ -148,7 +181,7 @@ sys.exit(1)
 		},
 	})
 
-	out, err := manager.assignOhMyCode(context.Background(), "hello world", "")
+	out, err := manager.assignOhMyCode(context.Background(), "hello world", "", nil)
 	if err != nil {
 		t.Fatalf("assignOhMyCode: %v", err)
 	}
@@ -197,7 +230,7 @@ sys.exit(1)
 		},
 	})
 
-	out, err := manager.assignOhMyCode(context.Background(), "hello world", "")
+	out, err := manager.assignOhMyCode(context.Background(), "hello world", "", nil)
 	if err == nil {
 		t.Fatal("expected assign failure")
 	}
@@ -206,5 +239,72 @@ sys.exit(1)
 	}
 	if !strings.Contains(err.Error(), "assign failed") {
 		t.Fatalf("expected assign failure error, got %v", err)
+	}
+}
+
+func TestAssignOhMyCodePromptUsesResolvedDefaultAgent(t *testing.T) {
+	workspace := t.TempDir()
+	scriptPath := filepath.Join(workspace, "agent_manager_prompt_capture.py")
+	promptPath := filepath.Join(workspace, "prompt.log")
+
+	script := `import pathlib
+import sys
+
+base = pathlib.Path(sys.argv[0]).parent
+prompt = sys.stdin.read()
+(base / "prompt.log").write_text(prompt, encoding="utf-8")
+
+if len(sys.argv) >= 2 and sys.argv[1] == "assign":
+    print("assign ok")
+    sys.exit(0)
+
+print("unexpected command", file=sys.stderr)
+sys.exit(1)
+`
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	manager := NewManager(&config.AgentsConfig{
+		OhMyCode: &config.OhMyCodeConfig{
+			Enabled:            true,
+			Workspace:          workspace,
+			AgentManagerScript: scriptPath,
+			DefaultAgent:       "qa-1",
+		},
+	})
+
+	out, err := manager.assignOhMyCode(context.Background(), "send hello", "", map[string]interface{}{
+		"channel":  "telegram",
+		"chat_id":  int64(321),
+		"user_id":  int64(456),
+		"username": "bob",
+	})
+	if err != nil {
+		t.Fatalf("assignOhMyCode: %v", err)
+	}
+	if out != ohMyCodeAssignAckMessage {
+		t.Fatalf("expected %q, got %q", ohMyCodeAssignAckMessage, out)
+	}
+
+	promptRaw, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt log: %v", err)
+	}
+	prompt := string(promptRaw)
+
+	expectedParts := []string{
+		"- selected_agent: qa-1",
+		"- channel: telegram",
+		"- chat_id: 321",
+		"- user_id: 456",
+		"- username: bob",
+		"default to current chat_id",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(prompt, part) {
+			t.Fatalf("expected %q in prompt, got %q", part, prompt)
+		}
 	}
 }

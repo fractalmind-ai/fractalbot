@@ -134,7 +134,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 
 	if m.isOhMyCodeEnabled() {
 		agentName, _ := data["agent"].(string)
-		out, err := m.assignOhMyCode(ctx, text, agentName)
+		out, err := m.assignOhMyCode(ctx, text, agentName, data)
 		if err != nil {
 			return "", err
 		}
@@ -215,7 +215,7 @@ func (m *Manager) isOhMyCodeEnabled() bool {
 	return strings.TrimSpace(m.config.OhMyCode.Workspace) != ""
 }
 
-func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride string) (string, error) {
+func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride string, inboundData map[string]interface{}) (string, error) {
 	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
 	if err != nil {
 		return "", err
@@ -246,7 +246,8 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 		defer cancel()
 	}
 
-	if _, err := runOhMyCodeAgentManager(assignCtx, workspace, script, buildOhMyCodeTaskPrompt(userText), "assign", name); err != nil {
+	prompt := buildOhMyCodeTaskPrompt(userText, name, inboundData)
+	if _, err := runOhMyCodeAgentManager(assignCtx, workspace, script, prompt, "assign", name); err != nil {
 		return "", err
 	}
 
@@ -407,6 +408,47 @@ func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin strin
 	return outText, nil
 }
 
-func buildOhMyCodeTaskPrompt(userText string) string {
-	return fmt.Sprintf("User message:\n%s\n", strings.TrimSpace(userText))
+func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[string]interface{}) string {
+	channel := promptContextValue(inboundData, "channel")
+	chatID := promptContextValue(inboundData, "chat_id")
+	userID := promptContextValue(inboundData, "user_id")
+	username := promptContextValue(inboundData, "username")
+
+	var sb strings.Builder
+	sb.WriteString("Inbound routing context:\n")
+	sb.WriteString(fmt.Sprintf("- channel: %s\n", defaultPromptContextValue(channel)))
+	sb.WriteString(fmt.Sprintf("- chat_id: %s\n", defaultPromptContextValue(chatID)))
+	sb.WriteString(fmt.Sprintf("- user_id: %s\n", defaultPromptContextValue(userID)))
+	sb.WriteString(fmt.Sprintf("- username: %s\n", defaultPromptContextValue(username)))
+	sb.WriteString(fmt.Sprintf("- selected_agent: %s\n", defaultPromptContextValue(strings.TrimSpace(selectedAgent))))
+	sb.WriteString("\n")
+	sb.WriteString("Routing instructions:\n")
+	sb.WriteString("- selected_agent is the final routing target after default/allowlist resolution.\n")
+	sb.WriteString("- For outbound messaging intent, prefer `use-fractalbot` skill.\n")
+	sb.WriteString("- Effective available skills:\n")
+	sb.WriteString("  - use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)\n")
+	sb.WriteString("- If channel=telegram and recipient is omitted, default to current chat_id.\n")
+	sb.WriteString("\n")
+	sb.WriteString("User message:\n")
+	sb.WriteString(strings.TrimSpace(userText))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+func promptContextValue(inboundData map[string]interface{}, key string) string {
+	if len(inboundData) == 0 {
+		return ""
+	}
+	value, ok := inboundData[key]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func defaultPromptContextValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(unknown)"
+	}
+	return value
 }
