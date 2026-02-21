@@ -106,6 +106,12 @@ agents:
     allowedAgents:
       - "qa-1"
       - "coder-a"
+    # Inbound channel context (channel/chat_id/user_id/username + selected_agent) is
+    # injected into assign prompts. For Telegram outbound intent, FractalBot instructs
+    # the agent to prefer the use-fractalbot skill and default recipient to current chat_id
+    # when omitted.
+    # Keep skill naming/path consistent in your agent workspace:
+    #   use-fractalbot -> .claude/skills/use-fractalbot/SKILL.md
     # How long to wait for agent-manager output
     assignTimeoutSeconds: 90
     # Telegram lifecycle commands:

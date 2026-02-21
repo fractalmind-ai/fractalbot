@@ -149,6 +149,12 @@ agents:
     allowedAgents:
       - "qa-1"
       - "coder-a"
+    # FractalBot injects inbound routing context into assign prompts:
+    # channel/chat_id/user_id/username + resolved selected_agent.
+    # For Telegram outbound intent, the prompt directs the agent to
+    # prefer use-fractalbot and default recipient to current chat_id if omitted.
+    # Keep skill path/name consistent in the agent workspace:
+    # .claude/skills/use-fractalbot/SKILL.md
 
   # Optional: in-process runtime (Phase 3 skeleton)
   runtime:
@@ -193,6 +199,8 @@ Example chat commands (copy/paste):
 Phase 3 memory uses a native ONNX Runtime (ORT) library; see `docs/ort-distribution.md` for the distribution strategy and security notes.
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
+For Telegram-routed assignments, FractalBot includes routing context (`channel`, `chat_id`, `user_id`, `username`, `selected_agent`) in the assign prompt and explicitly hints outbound-send intent through `use-fractalbot`. If no Telegram recipient is provided, the prompt contract defaults target to current `chat_id`.
+Operator note: make sure `use-fractalbot` appears in the agent's effective available skills list and points to `.claude/skills/use-fractalbot/SKILL.md`.
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)
 - `/monitor <name> [lines]` (show recent agent output; lines capped to 200)
