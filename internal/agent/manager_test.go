@@ -8,8 +8,31 @@ import (
 	"testing"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
+	agentruntime "github.com/fractalmind-ai/fractalbot/internal/runtime"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
+
+type runtimeStub struct {
+	reply string
+	err   error
+	tasks []agentruntime.Task
+}
+
+func (r *runtimeStub) Start(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
+func (r *runtimeStub) Stop(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
+func (r *runtimeStub) HandleTask(ctx context.Context, task agentruntime.Task) (string, error) {
+	_ = ctx
+	r.tasks = append(r.tasks, task)
+	return r.reply, r.err
+}
 
 func TestValidateOhMyCodeAgentDefaultOnly(t *testing.T) {
 	manager := NewManager(&config.AgentsConfig{
@@ -141,6 +164,64 @@ func TestHandleIncomingToolDisabledWhenRuntimeOff(t *testing.T) {
 		if !strings.Contains(out, "agents.runtime.allowedTools") {
 			t.Fatalf("expected allowedTools config hint for %q, got %q", input, out)
 		}
+	}
+}
+
+func TestHandleIncomingNormalizesHeartbeatAndNoReplyMarkers(t *testing.T) {
+	tests := []struct {
+		name    string
+		channel string
+		reply   string
+	}{
+		{name: "heartbeat-slack", channel: "slack", reply: markerHeartbeatOK},
+		{name: "heartbeat-telegram-whitespace", channel: "telegram", reply: "  HEARTBEAT_OK  \n"},
+		{name: "no-reply-slack", channel: "slack", reply: markerNoReply},
+		{name: "no-reply-telegram-whitespace", channel: "telegram", reply: "\nNO_REPLY\n"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &runtimeStub{reply: tc.reply}
+			manager := NewManager(&config.AgentsConfig{})
+			manager.runtime = rt
+
+			out, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+				Data: map[string]interface{}{
+					"channel": tc.channel,
+					"text":    "hello",
+					"agent":   "qa-1",
+				},
+			})
+			if err != nil {
+				t.Fatalf("HandleIncoming: %v", err)
+			}
+			if out != "" {
+				t.Fatalf("expected empty normalized reply, got %q", out)
+			}
+			if len(rt.tasks) != 1 {
+				t.Fatalf("expected one runtime task, got %d", len(rt.tasks))
+			}
+		})
+	}
+}
+
+func TestHandleIncomingKeepsNonMarkerRuntimeReply(t *testing.T) {
+	rt := &runtimeStub{reply: "runtime: received task"}
+	manager := NewManager(&config.AgentsConfig{})
+	manager.runtime = rt
+
+	out, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "slack",
+			"text":    "hello",
+			"agent":   "qa-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming: %v", err)
+	}
+	if out != "runtime: received task" {
+		t.Fatalf("expected runtime reply preserved, got %q", out)
 	}
 }
 

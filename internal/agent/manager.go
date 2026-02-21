@@ -31,6 +31,8 @@ const (
 	maxOhMyCodeMonitorLines         = 200
 
 	runtimeToolsDisabledMessage = "⚠️ runtime tools are disabled. Set agents.runtime.enabled and agents.runtime.allowedTools."
+	markerHeartbeatOK           = "HEARTBEAT_OK"
+	markerNoReply               = "NO_REPLY"
 )
 
 // Manager is a minimal stub for agent lifecycle management.
@@ -126,6 +128,10 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
+		out = normalizeUserReply(out)
+		if out == "" {
+			return "", nil
+		}
 		if channel == "telegram" {
 			return channels.TruncateTelegramReply(out), nil
 		}
@@ -137,6 +143,10 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		out, err := m.assignOhMyCode(ctx, text, agentName, data)
 		if err != nil {
 			return "", err
+		}
+		out = normalizeUserReply(out)
+		if out == "" {
+			return "", nil
 		}
 		if channel == "telegram" {
 			return channels.TruncateTelegramReply(out), nil
@@ -451,4 +461,12 @@ func defaultPromptContextValue(value string) string {
 		return "(unknown)"
 	}
 	return value
+}
+
+func normalizeUserReply(reply string) string {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == markerHeartbeatOK || trimmed == markerNoReply {
+		return ""
+	}
+	return reply
 }
