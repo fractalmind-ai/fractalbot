@@ -15,6 +15,9 @@
 - **#72** Slack DM-only skeleton + /whoami onboarding
 - **#73** Discord DM-only skeleton + /whoami onboarding
 - **#74** Phase 3 runtime skeleton (default-deny tools)
+- **#275** HTTP outbound message send API (`POST /api/v1/message/send`)
+- **#276** CLI `fractalbot message send` via gateway API
+- **#277** concise assign acknowledgement (`处理中…`) for plain conversation flow
 
 ---
 
@@ -40,6 +43,23 @@
 - Safer error messaging and reply truncation
 - One-click local install script (XDG-friendly)
 - Phase 3 runtime skeleton with default-deny tool registry (echo/version)
+- Outbound single-target send path (HTTP API + CLI send command)
+- Concise default assign acknowledgement instead of raw monitor dump
+
+---
+
+## Issue #269 Snapshot (Partial Delivery)
+
+Implemented:
+- Natural default-agent chat now replies with concise acknowledgement (`处理中…`) after assign (#277)
+- Outbound single-target message send API is available (`POST /api/v1/message/send`) (#275)
+- CLI command for send is available (`fractalbot message send --channel --to --text`) (#276)
+
+Still pending for full #269 scope:
+- Channel-agnostic target model (`--to` currently numeric `int64`)
+- Origin-channel/thread routing memory when target is omitted
+- Proactive notify mode and multi-target broadcast/fan-out
+- Broadcast safety controls (policy/rate-limit/audit trail)
 
 ---
 

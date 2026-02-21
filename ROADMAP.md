@@ -69,7 +69,8 @@
 ### Phase 2.5: Messaging UX & Routing Control Plane 🆕 (IN PROGRESS)
 
 #### Conversational Reply Experience
-- [ ] Default-agent conversational mode for plain messages (no raw monitor dump)
+- [x] Default-agent conversational mode for plain messages (no raw monitor dump)
+- [x] Direct assign acknowledgement uses concise `"处理中…"` reply (#277)
 - [ ] Separate user-facing replies from operator diagnostics (`/monitor`, `/doctor`)
 - [ ] Reply normalization (silent/heartbeat filtering + concise fallback behavior)
 - [ ] Friendly progress/error responses (actionable next-step hints)
@@ -78,8 +79,10 @@
 **Estimated**: 1-2 weeks
 
 #### Outbound Messaging API + CLI
-- [ ] Unified outbound message API (provider-agnostic)
-- [ ] CLI surface for send/proactive notify/broadcast
+- [x] Unified outbound message API (single-target send: `POST /api/v1/message/send`) (#275)
+- [x] CLI surface for send (`fractalbot message send`) (#276)
+- [ ] CLI/API surface for proactive notify
+- [ ] CLI/API surface for multi-target broadcast
 - [ ] Default "reply to originating channel" behavior when target is omitted
 - [ ] Multi-target fan-out (broadcast) with delivery receipts
 
