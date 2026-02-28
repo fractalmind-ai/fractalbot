@@ -2,9 +2,12 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -978,5 +981,81 @@ func TestSlackAgentWithMentionRoutes(t *testing.T) {
 	}
 	if data["text"] != "hello" {
 		t.Fatalf("expected task text, got %v", data["text"])
+	}
+}
+
+func TestNextSlackReconnectBackoff(t *testing.T) {
+	if got := nextSlackReconnectBackoff(0); got != defaultSlackReconnectBackoffMin {
+		t.Fatalf("backoff(0)=%s", got)
+	}
+	if got := nextSlackReconnectBackoff(defaultSlackReconnectBackoffMin); got != 2*defaultSlackReconnectBackoffMin {
+		t.Fatalf("backoff(min)=%s", got)
+	}
+	if got := nextSlackReconnectBackoff(defaultSlackReconnectBackoffMax); got != defaultSlackReconnectBackoffMax {
+		t.Fatalf("backoff(max)=%s", got)
+	}
+}
+
+func TestSlackSocketModeReconnectsWithBackoff(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+	bot.initClients()
+
+	bot.socketClientFactoryFn = func(apiClient *slack.Client) *socketmode.Client {
+		_ = apiClient
+		return &socketmode.Client{}
+	}
+	bot.runSocketModeFn = func(ctx context.Context, socketClient *socketmode.Client) error {
+		_ = ctx
+		_ = socketClient
+		return errors.New("socket closed")
+	}
+
+	var (
+		mu     sync.Mutex
+		waited []time.Duration
+		done   = make(chan struct{})
+	)
+	bot.waitReconnectFn = func(ctx context.Context, backoff time.Duration) bool {
+		_ = ctx
+		mu.Lock()
+		waited = append(waited, backoff)
+		shouldStop := len(waited) >= 3
+		mu.Unlock()
+		if shouldStop {
+			close(done)
+			return false
+		}
+		return true
+	}
+
+	if err := bot.startSocketMode(context.Background()); err != nil {
+		t.Fatalf("startSocketMode: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for reconnect attempts")
+	}
+
+	mu.Lock()
+	got := append([]time.Duration(nil), waited...)
+	mu.Unlock()
+
+	want := []time.Duration{
+		defaultSlackReconnectBackoffMin,
+		2 * defaultSlackReconnectBackoffMin,
+		4 * defaultSlackReconnectBackoffMin,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("waited=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("waited=%v want=%v", got, want)
+		}
 	}
 }

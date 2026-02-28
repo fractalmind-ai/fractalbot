@@ -23,16 +23,57 @@ import (
 
 var messageSendFn = sendMessageViaGatewayAPI
 
+const exitCodeRestartRequested = 75
+
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
 func main() {
 	os.Exit(Run(os.Args[1:], os.Stderr))
 }
 
 // Run executes the fractalbot CLI.
 func Run(args []string, out io.Writer) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, stop, observedSignal := newShutdownContext(context.Background())
+	code := runWithContext(ctx, args, out)
+	stop()
 
-	return runWithContext(ctx, args, out)
+	sig, ok := <-observedSignal
+	return exitCodeForShutdown(code, sig, ok)
+}
+
+func exitCodeForShutdown(code int, sig os.Signal, hasSignal bool) int {
+	if code == 0 && hasSignal && sig == syscall.SIGHUP {
+		return exitCodeRestartRequested
+	}
+	return code
+}
+
+func newShutdownContext(parent context.Context) (context.Context, func(), <-chan os.Signal) {
+	ctx, cancel := context.WithCancel(parent)
+	sigCh := make(chan os.Signal, 1)
+	observed := make(chan os.Signal, 1)
+	signal.Notify(sigCh, shutdownSignals...)
+
+	go func() {
+		defer close(observed)
+		select {
+		case <-ctx.Done():
+			return
+		case <-parent.Done():
+			cancel()
+			return
+		case sig := <-sigCh:
+			observed <- sig
+			cancel()
+			return
+		}
+	}()
+
+	cleanup := func() {
+		signal.Stop(sigCh)
+		cancel()
+	}
+	return ctx, cleanup, observed
 }
 
 func runWithContext(ctx context.Context, args []string, out io.Writer) int {

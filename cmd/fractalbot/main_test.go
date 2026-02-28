@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -202,4 +203,31 @@ func writeMinimalConfig(t *testing.T) string {
 	}
 
 	return configPath
+}
+
+func TestShutdownSignalsIncludeSIGHUP(t *testing.T) {
+	if !containsSignal(shutdownSignals, syscall.SIGHUP) {
+		t.Fatalf("expected shutdown signals to include SIGHUP")
+	}
+}
+
+func TestExitCodeForShutdown(t *testing.T) {
+	if got := exitCodeForShutdown(0, syscall.SIGHUP, true); got != exitCodeRestartRequested {
+		t.Fatalf("expected restart code %d, got %d", exitCodeRestartRequested, got)
+	}
+	if got := exitCodeForShutdown(0, syscall.SIGTERM, true); got != 0 {
+		t.Fatalf("expected normal exit code for SIGTERM, got %d", got)
+	}
+	if got := exitCodeForShutdown(1, syscall.SIGHUP, true); got != 1 {
+		t.Fatalf("expected existing failure code to be preserved, got %d", got)
+	}
+}
+
+func containsSignal(signals []os.Signal, target os.Signal) bool {
+	for _, sig := range signals {
+		if sig == target {
+			return true
+		}
+	}
+	return false
 }
