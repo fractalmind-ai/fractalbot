@@ -16,6 +16,11 @@ import (
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
+const (
+	defaultSlackReconnectBackoffMin = 1 * time.Second
+	defaultSlackReconnectBackoffMax = 1 * time.Minute
+)
+
 // SlackBot implements a minimal Slack channel skeleton.
 type SlackBot struct {
 	botToken string
@@ -34,6 +39,10 @@ type SlackBot struct {
 	startFn       func(ctx context.Context) error
 	stopFn        func() error
 	sendMessageFn func(ctx context.Context, channelID, text string) error
+
+	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
+	runSocketModeFn       func(ctx context.Context, socketClient *socketmode.Client) error
+	waitReconnectFn       func(ctx context.Context, backoff time.Duration) bool
 
 	runningMu sync.RWMutex
 	running   bool
@@ -156,50 +165,118 @@ func (b *SlackBot) initClients() {
 		return
 	}
 	b.apiClient = slack.New(b.botToken, slack.OptionAppLevelToken(b.appToken))
-	b.socketClient = socketmode.New(b.apiClient)
-	if b.ackFn == nil {
-		b.ackFn = b.socketClient.Ack
+	if b.socketClientFactoryFn == nil {
+		b.socketClientFactoryFn = func(apiClient *slack.Client) *socketmode.Client {
+			return socketmode.New(apiClient)
+		}
+	}
+	if b.runSocketModeFn == nil {
+		b.runSocketModeFn = func(ctx context.Context, socketClient *socketmode.Client) error {
+			return socketClient.RunContext(ctx)
+		}
+	}
+	if b.waitReconnectFn == nil {
+		b.waitReconnectFn = waitForReconnect
 	}
 	b.sendMessageFn = b.sendText
 	b.startFn = b.startSocketMode
 }
 
 func (b *SlackBot) startSocketMode(ctx context.Context) error {
-	if b.socketClient == nil {
-		return errors.New("slack socket mode client not initialized")
+	if b.apiClient == nil {
+		return errors.New("slack api client not initialized")
 	}
-
-	go b.consumeSocketEvents(ctx)
-
-	go func() {
-		if err := b.socketClient.RunContext(ctx); err != nil {
-			log.Printf("slack socket mode error: %v", err)
-		}
-	}()
+	if b.socketClientFactoryFn == nil {
+		return errors.New("slack socket mode client factory not configured")
+	}
+	if b.runSocketModeFn == nil {
+		return errors.New("slack socket mode runner not configured")
+	}
+	if b.waitReconnectFn == nil {
+		b.waitReconnectFn = waitForReconnect
+	}
+	go b.runSocketModeLoop(ctx)
 	return nil
 }
 
-func (b *SlackBot) consumeSocketEvents(ctx context.Context) {
+func (b *SlackBot) runSocketModeLoop(ctx context.Context) {
+	backoff := defaultSlackReconnectBackoffMin
+	for {
+		err := b.runSocketModeSession(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			b.markError()
+			log.Printf("slack socket mode error: %v (retry in %s)", err, backoff)
+		} else {
+			log.Printf("slack socket mode disconnected (retry in %s)", backoff)
+		}
+		if !b.waitReconnectFn(ctx, backoff) {
+			return
+		}
+		backoff = nextSlackReconnectBackoff(backoff)
+	}
+}
+
+func (b *SlackBot) runSocketModeSession(ctx context.Context) error {
+	socketClient, err := b.newSocketClient()
+	if err != nil {
+		return err
+	}
+	b.socketClient = socketClient
+
+	ackFn := b.ack
+	if b.ackFn == nil {
+		ackFn = socketClient.Ack
+	}
+
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go b.consumeSocketEvents(sessionCtx, socketClient, ackFn)
+	return b.runSocketModeFn(sessionCtx, socketClient)
+}
+
+func (b *SlackBot) newSocketClient() (*socketmode.Client, error) {
+	if b.socketClientFactoryFn == nil {
+		return nil, errors.New("slack socket mode client factory not configured")
+	}
+	socketClient := b.socketClientFactoryFn(b.apiClient)
+	if socketClient == nil {
+		return nil, errors.New("slack socket mode client not initialized")
+	}
+	return socketClient, nil
+}
+
+func (b *SlackBot) consumeSocketEvents(ctx context.Context, socketClient *socketmode.Client, ackFn func(req socketmode.Request, payload ...interface{})) {
+	if socketClient == nil {
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-b.socketClient.Events:
+		case event, ok := <-socketClient.Events:
 			if !ok {
 				return
 			}
-			b.handleSocketEvent(ctx, event)
+			b.handleSocketEventWithAck(ctx, event, ackFn)
 		}
 	}
 }
 
 func (b *SlackBot) handleSocketEvent(ctx context.Context, event socketmode.Event) {
+	b.handleSocketEventWithAck(ctx, event, b.ack)
+}
+
+func (b *SlackBot) handleSocketEventWithAck(ctx context.Context, event socketmode.Event, ackFn func(req socketmode.Request, payload ...interface{})) {
 	if event.Type == socketmode.EventTypeSlashCommand {
-		b.handleSlashCommandEvent(ctx, event)
+		b.handleSlashCommandEventWithAck(ctx, event, ackFn)
 		return
 	}
-	if event.Request != nil {
-		b.ack(*event.Request)
+	if event.Request != nil && ackFn != nil {
+		ackFn(*event.Request)
 	}
 
 	if event.Type != socketmode.EventTypeEventsAPI {
@@ -213,12 +290,18 @@ func (b *SlackBot) handleSocketEvent(ctx context.Context, event socketmode.Event
 }
 
 func (b *SlackBot) handleSlashCommandEvent(ctx context.Context, event socketmode.Event) {
+	b.handleSlashCommandEventWithAck(ctx, event, b.ack)
+}
+
+func (b *SlackBot) handleSlashCommandEventWithAck(ctx context.Context, event socketmode.Event, ackFn func(req socketmode.Request, payload ...interface{})) {
 	if event.Request == nil {
 		return
 	}
 	cmd, ok := event.Data.(slack.SlashCommand)
 	if !ok {
-		b.ack(*event.Request, map[string]string{"text": "❌ Invalid slash command payload."})
+		if ackFn != nil {
+			ackFn(*event.Request, map[string]string{"text": "❌ Invalid slash command payload."})
+		}
 		return
 	}
 	text := strings.TrimSpace(cmd.Command)
@@ -232,7 +315,34 @@ func (b *SlackBot) handleSlashCommandEvent(ctx context.Context, event socketmode
 		channelType: "slash",
 	}
 	replyText := b.slashCommandReply(ctx, msg)
-	b.ack(*event.Request, map[string]string{"text": replyText})
+	if ackFn != nil {
+		ackFn(*event.Request, map[string]string{"text": replyText})
+	}
+}
+
+func nextSlackReconnectBackoff(current time.Duration) time.Duration {
+	if current < defaultSlackReconnectBackoffMin {
+		return defaultSlackReconnectBackoffMin
+	}
+	next := current * 2
+	if next > defaultSlackReconnectBackoffMax {
+		return defaultSlackReconnectBackoffMax
+	}
+	return next
+}
+
+func waitForReconnect(ctx context.Context, backoff time.Duration) bool {
+	if backoff <= 0 {
+		return true
+	}
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.EventsAPIEvent) {

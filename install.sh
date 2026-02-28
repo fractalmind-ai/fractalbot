@@ -114,7 +114,7 @@ After=network.target
 [Service]
 ExecStart=${bin_dir}/fractalbot --config ${config_path}
 WorkingDirectory=${data_dir}
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]

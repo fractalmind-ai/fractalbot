@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
@@ -17,6 +19,9 @@ type Manager struct {
 	handler   IncomingMessageHandler
 
 	channels map[string]Channel
+
+	startMu      sync.Mutex
+	startCancels map[string]context.CancelFunc
 }
 
 // NewManager creates a new channel manager.
@@ -25,6 +30,8 @@ func NewManager(cfg *config.ChannelsConfig, agentsCfg *config.AgentsConfig) *Man
 		cfg:       cfg,
 		agentsCfg: agentsCfg,
 		channels:  make(map[string]Channel),
+
+		startCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -88,9 +95,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		if channel.IsRunning() {
 			continue
 		}
-		if err := channel.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start %s: %w", channel.Name(), err)
+		name := channel.Name()
+		if m.hasInFlightStart(name) {
+			continue
 		}
+		channelCtx, cancel := context.WithCancel(ctx)
+		m.trackInFlightStart(name, cancel)
+		go m.startChannel(name, channel, channelCtx)
 	}
 
 	return nil
@@ -98,6 +109,8 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // Stop stops configured channels.
 func (m *Manager) Stop() error {
+	m.cancelInFlightStarts()
+
 	var errs []error
 	for _, channel := range m.List() {
 		if !channel.IsRunning() {
@@ -113,6 +126,45 @@ func (m *Manager) Stop() error {
 	}
 
 	return nil
+}
+
+func (m *Manager) startChannel(name string, channel Channel, ctx context.Context) {
+	defer m.clearInFlightStart(name)
+	if err := channel.Start(ctx); err != nil {
+		log.Printf("channel %s failed to start: %v", name, err)
+	}
+}
+
+func (m *Manager) hasInFlightStart(name string) bool {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	_, ok := m.startCancels[name]
+	return ok
+}
+
+func (m *Manager) trackInFlightStart(name string, cancel context.CancelFunc) {
+	m.startMu.Lock()
+	m.startCancels[name] = cancel
+	m.startMu.Unlock()
+}
+
+func (m *Manager) clearInFlightStart(name string) {
+	m.startMu.Lock()
+	delete(m.startCancels, name)
+	m.startMu.Unlock()
+}
+
+func (m *Manager) cancelInFlightStarts() {
+	m.startMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(m.startCancels))
+	for name, cancel := range m.startCancels {
+		cancels = append(cancels, cancel)
+		delete(m.startCancels, name)
+	}
+	m.startMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 }
 
 func (m *Manager) registerConfiguredChannels() error {
