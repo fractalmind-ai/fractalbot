@@ -845,12 +845,12 @@ func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent strin
 		Kind:   protocol.MessageKindChannel,
 		Action: protocol.ActionCreate,
 		Data: map[string]interface{}{
-			"channel":    "slack",
-			"text":       text,
-			"agent":      agent,
-			"user_id":    msg.userID,
-			"chat_id":    msg.channelID,
-			"chatType":   msg.channelType,
+			"channel":  "slack",
+			"text":     text,
+			"agent":    agent,
+			"user_id":  msg.userID,
+			"chat_id":  msg.channelID,
+			"chatType": msg.channelType,
 		},
 	}
 }
