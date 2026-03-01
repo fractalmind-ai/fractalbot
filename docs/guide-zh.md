@@ -257,6 +257,46 @@ skills:
 > main Agent 负责接收消息、分配任务给其他 Agent、定期巡检系统状态。
 > 它是整个多 Agent 架构的「入口」。
 
+#### 让 Claude Code 加载 AGENTS.md
+
+`AGENTS.md` **不是** Claude Code 默认加载的文件（默认只加载 `CLAUDE.md`）。你需要配置一个 **SessionStart hook** 让 Claude 在每次启动时自动读取它。
+
+1. 创建 hook 脚本 `.claude/hooks/load-agents.sh`：
+
+```bash
+mkdir -p .claude/hooks
+cat > .claude/hooks/load-agents.sh << 'EOF'
+#!/bin/bash
+if [ -f "$CLAUDE_PROJECT_DIR/AGENTS.md" ]; then
+  cat "$CLAUDE_PROJECT_DIR/AGENTS.md"
+fi
+EOF
+chmod +x .claude/hooks/load-agents.sh
+```
+
+2. 创建或编辑 `.claude/settings.json`，注册 hook：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/load-agents.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+配置完成后，Claude Code 每次启动新 session 时会自动执行 hook，将 `AGENTS.md` 的内容（frontmatter + 工作规范）注入到系统上下文中。
+
+> 验证方法：启动 Claude Code 后问「你的 name 是什么？」，应回答 `main`。
+
 #### 创建子 Agent（EMP_*.md）
 
 创建你的第一个子 Agent，例如 `agents/EMP_0001.md`：
