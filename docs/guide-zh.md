@@ -361,7 +361,7 @@ agents:
 
 ### 第五步：安装 use-fractalbot skill
 
-Agent 需要此 skill 才能通过 FractalBot 回复消息：
+Agent 需要 [use-fractalbot](https://github.com/fractalmind-ai/use-fractalbot-skill) skill 才能通过 FractalBot 回复消息：
 
 ```bash
 cd /path/to/your/workspace
@@ -519,7 +519,7 @@ tmux attach -t qa-1
    npx openskills install agent-manager
    ```
 
-4. **安装 use-fractalbot skill** — Agent 需要此 skill 来回复消息：
+4. **安装 [use-fractalbot](https://github.com/fractalmind-ai/use-fractalbot-skill) skill** — Agent 需要此 skill 来回复消息：
    ```bash
    npx openskills install use-fractalbot
    ```
@@ -536,5 +536,7 @@ tmux attach -t qa-1
 
 - [GitHub 仓库](https://github.com/fractalmind-ai/fractalbot)
 - [config.example.yaml](https://github.com/fractalmind-ai/fractalbot/blob/main/config.example.yaml) — 完整配置参考
+- [agent-manager skill](https://github.com/fractalmind-ai/agent-manager-skill) — Agent 生命周期管理
+- [use-fractalbot skill](https://github.com/fractalmind-ai/use-fractalbot-skill) — Agent 回复消息的 skill
 - [ROADMAP.md](https://github.com/fractalmind-ai/fractalbot/blob/main/ROADMAP.md) — 开发路线图
 - [CONTRIBUTING.md](https://github.com/fractalmind-ai/fractalbot/blob/main/CONTRIBUTING.md) — 贡献指南
