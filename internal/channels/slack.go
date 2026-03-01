@@ -849,7 +849,7 @@ func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent strin
 			"text":       text,
 			"agent":      agent,
 			"user_id":    msg.userID,
-			"channel_id": msg.channelID,
+			"chat_id":    msg.channelID,
 			"chatType":   msg.channelType,
 		},
 	}
