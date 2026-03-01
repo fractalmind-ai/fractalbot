@@ -3,7 +3,6 @@ package channels
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -188,7 +187,7 @@ func TestSlackSocketModeDMEvent(t *testing.T) {
 	}
 }
 
-func TestSlackWhoamiAllowedWithoutAllowlist(t *testing.T) {
+func TestSlackWhoamiRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -208,11 +207,8 @@ func TestSlackWhoamiAllowedWithoutAllowlist(t *testing.T) {
 		channelType: "im",
 	})
 
-	if !strings.Contains(sent.text, "user_id: U999") {
-		t.Fatalf("expected whoami reply, got %q", sent.text)
-	}
-	if strings.Contains(sent.text, "Unauthorized") {
-		t.Fatalf("did not expect unauthorized for /whoami, got %q", sent.text)
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized for /whoami from non-allowed user, got %q", sent.text)
 	}
 }
 
@@ -402,7 +398,7 @@ func TestSlackStatusDoesNotLeakTokens(t *testing.T) {
 	}
 }
 
-func TestSlackStatusAllowedWithoutAllowlist(t *testing.T) {
+func TestSlackStatusRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -422,15 +418,12 @@ func TestSlackStatusAllowedWithoutAllowlist(t *testing.T) {
 		channelType: "im",
 	})
 
-	if !strings.Contains(sent.text, "Bot Status") {
-		t.Fatalf("expected status header, got %q", sent.text)
-	}
-	if strings.Contains(sent.text, "Unauthorized") {
-		t.Fatalf("did not expect unauthorized for /status, got %q", sent.text)
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized for /status from non-allowed user, got %q", sent.text)
 	}
 }
 
-func TestSlackAgentsAllowedWithoutAllowlist(t *testing.T) {
+func TestSlackAgentsRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -450,15 +443,12 @@ func TestSlackAgentsAllowedWithoutAllowlist(t *testing.T) {
 		channelType: "im",
 	})
 
-	if strings.Contains(sent.text, "Unauthorized") {
-		t.Fatalf("did not expect unauthorized for /agents, got %q", sent.text)
-	}
-	if !strings.Contains(sent.text, "Allowed agents:") && !strings.Contains(sent.text, "agents.ohMyCode.defaultAgent") {
-		t.Fatalf("expected agents output or config hint, got %q", sent.text)
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized for /agents from non-allowed user, got %q", sent.text)
 	}
 }
 
-func TestSlackIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
+func TestSlackIncompleteAgentUsageRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -489,16 +479,8 @@ func TestSlackIncompleteAgentUsageBypassesAllowlist(t *testing.T) {
 			channelType: "im",
 		})
 
-		command := agentCommandName(input)
-		if command == "" {
-			command = "/agent"
-		}
-		expected := fmt.Sprintf("usage: %s <name> <task...>", command)
-		if !strings.Contains(sent.text, expected) {
-			t.Fatalf("expected usage hint for %q, got %q", input, sent.text)
-		}
-		if strings.Contains(sent.text, "Unauthorized") {
-			t.Fatalf("did not expect unauthorized for %q, got %q", input, sent.text)
+		if !strings.Contains(sent.text, "Unauthorized") {
+			t.Fatalf("expected unauthorized for %q from non-allowed user, got %q", input, sent.text)
 		}
 	}
 }
@@ -704,7 +686,7 @@ func TestSlackAppMentionUnauthorized(t *testing.T) {
 	}
 }
 
-func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
+func TestSlackToolsRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -727,11 +709,8 @@ func TestSlackToolsAllowedWithoutAllowlist(t *testing.T) {
 		channelType: "im",
 	})
 
-	if strings.Contains(sent.text, "Unauthorized") {
-		t.Fatalf("did not expect unauthorized for /tools, got %q", sent.text)
-	}
-	if !strings.Contains(sent.text, "runtime tools are disabled") {
-		t.Fatalf("expected tools response, got %q", sent.text)
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized for /tools from non-allowed user, got %q", sent.text)
 	}
 }
 
@@ -925,7 +904,7 @@ func TestSlackToolCommandAllowedRoutes(t *testing.T) {
 	}
 }
 
-func TestSlackStatusWithMentionBypassesAllowlist(t *testing.T) {
+func TestSlackStatusWithMentionRequiresAllowlist(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -945,11 +924,8 @@ func TestSlackStatusWithMentionBypassesAllowlist(t *testing.T) {
 		channelType: "im",
 	})
 
-	if !strings.Contains(sent.text, "Bot Status") {
-		t.Fatalf("expected status header, got %q", sent.text)
-	}
-	if strings.Contains(sent.text, "Unauthorized") {
-		t.Fatalf("did not expect unauthorized for /status@bot, got %q", sent.text)
+	if !strings.Contains(sent.text, "Unauthorized") {
+		t.Fatalf("expected unauthorized for /status@bot from non-allowed user, got %q", sent.text)
 	}
 }
 
