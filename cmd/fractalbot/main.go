@@ -157,7 +157,7 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 
 	sendFS := flag.NewFlagSet("message send", flag.ContinueOnError)
 	sendFS.SetOutput(out)
-	channel := sendFS.String("channel", "telegram", "target channel (e.g. telegram, slack, feishu, discord)")
+	channel := sendFS.String("channel", "telegram", "target channel (e.g. telegram, slack, feishu, discord, imessage)")
 	to := sendFS.String("to", "", "target chat ID")
 	text := sendFS.String("text", "", "message text")
 

@@ -229,3 +229,37 @@ func TestLoadConfigAcceptsOhMyCodeAbsoluteWorkspaceWithRelativeScript(t *testing
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadConfigAcceptsIMessagePollingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`channels:
+  imessage:
+    enabled: true
+    recipient: "recipient@example.com"
+    service: "E:iMessage"
+    pollingEnabled: true
+    pollingIntervalSeconds: 10
+    pollingLimit: 25
+    databasePath: "~/Library/Messages/chat.db"
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Channels == nil || cfg.Channels.IMessage == nil {
+		t.Fatalf("expected channels.imessage config")
+	}
+	if !cfg.Channels.IMessage.PollingEnabled {
+		t.Fatalf("expected pollingEnabled=true")
+	}
+	if cfg.Channels.IMessage.PollingIntervalSeconds != 10 {
+		t.Fatalf("pollingIntervalSeconds=%d want 10", cfg.Channels.IMessage.PollingIntervalSeconds)
+	}
+	if cfg.Channels.IMessage.PollingLimit != 25 {
+		t.Fatalf("pollingLimit=%d want 25", cfg.Channels.IMessage.PollingLimit)
+	}
+}
