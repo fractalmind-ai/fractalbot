@@ -26,9 +26,10 @@ type SlackBot struct {
 	botToken string
 	appToken string
 
-	allowlist    SlackAllowlist
-	defaultAgent string
-	agentAllow   AgentAllowlist
+	allowlist        SlackAllowlist
+	channelAllowlist SlackAllowlist
+	defaultAgent     string
+	agentAllow       AgentAllowlist
 
 	handler IncomingMessageHandler
 
@@ -55,7 +56,7 @@ type SlackBot struct {
 	lastError    time.Time
 }
 
-func NewSlackBot(botToken, appToken string, allowedUsers []string, defaultAgent string, allowedAgents []string) (*SlackBot, error) {
+func NewSlackBot(botToken, appToken string, allowedUsers []string, allowedChannels []string, defaultAgent string, allowedAgents []string) (*SlackBot, error) {
 	trimmedBot := strings.TrimSpace(botToken)
 	trimmedApp := strings.TrimSpace(appToken)
 	if trimmedBot == "" || trimmedApp == "" {
@@ -63,12 +64,13 @@ func NewSlackBot(botToken, appToken string, allowedUsers []string, defaultAgent 
 	}
 
 	return &SlackBot{
-		botToken:     trimmedBot,
-		appToken:     trimmedApp,
-		allowlist:    NewSlackAllowlist(allowedUsers),
-		defaultAgent: strings.TrimSpace(defaultAgent),
-		agentAllow:   NewAgentAllowlist(allowedAgents),
-		ctx:          context.Background(),
+		botToken:         trimmedBot,
+		appToken:         trimmedApp,
+		allowlist:        NewSlackAllowlist(allowedUsers),
+		channelAllowlist: NewSlackAllowlist(allowedChannels),
+		defaultAgent:     strings.TrimSpace(defaultAgent),
+		agentAllow:       NewAgentAllowlist(allowedAgents),
+		ctx:              context.Background(),
 	}, nil
 }
 
@@ -384,7 +386,8 @@ func (b *SlackBot) slashCommandReply(ctx context.Context, msg *slackInboundMessa
 
 	b.markActivity()
 
-	if !b.allowlist.Allowed(msg.userID) {
+	trustLevel := b.authorize(msg)
+	if trustLevel == "" {
 		return fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID)
 	}
 
@@ -424,7 +427,7 @@ func (b *SlackBot) slashCommandReply(ctx context.Context, msg *slackInboundMessa
 	}
 
 	if b.handler != nil {
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel))
 		if err != nil {
 			log.Printf("slack handler error: %v", err)
 			replyText = "❌ Something went wrong. Please try again."
@@ -434,6 +437,16 @@ func (b *SlackBot) slashCommandReply(ctx context.Context, msg *slackInboundMessa
 
 	if selection.Task != "" {
 		return fmt.Sprintf("echo: %s", selection.Task)
+	}
+	return ""
+}
+
+func (b *SlackBot) authorize(msg *slackInboundMessage) string {
+	if b.allowlist.Allowed(msg.userID) {
+		return "full"
+	}
+	if b.channelAllowlist.Allowed(msg.channelID) {
+		return "channel"
 	}
 	return ""
 }
@@ -448,11 +461,14 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 
 	b.markActivity()
 
-	if !b.allowlist.Allowed(msg.userID) {
-		_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID))
+	trustLevel := b.authorize(msg)
+	if trustLevel == "" {
+		if msg.channelType == "im" {
+			_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID))
+		}
 		return
 	}
-	log.Printf("slack: authorized user=%s, routing message", msg.userID)
+	log.Printf("slack: authorized user=%s trust=%s, routing message", msg.userID, trustLevel)
 
 	if isSlackSafeCommand(msg.text) {
 		if handled, cmdErr := b.handleCommand(ctx, msg); handled {
@@ -519,7 +535,7 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 	}
 
 	if b.handler != nil {
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel))
 		if err != nil {
 			log.Printf("slack handler error: %v", err)
 			replyText = "❌ Something went wrong. Please try again."
@@ -571,7 +587,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 		if b.handler == nil {
 			return true, "⚠️ runtime tools are disabled", nil
 		}
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, ""))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, "", b.authorize(msg)))
 		if err != nil {
 			return true, "", err
 		}
@@ -587,7 +603,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 		if b.handler == nil {
 			return true, "⚠️ runtime tools are disabled", nil
 		}
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", ""))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", "", b.authorize(msg)))
 		if err != nil {
 			return true, "", err
 		}
@@ -840,17 +856,18 @@ func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
 	return nil
 }
 
-func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent string) *protocol.Message {
+func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trustLevel string) *protocol.Message {
 	return &protocol.Message{
 		Kind:   protocol.MessageKindChannel,
 		Action: protocol.ActionCreate,
 		Data: map[string]interface{}{
-			"channel":  "slack",
-			"text":     text,
-			"agent":    agent,
-			"user_id":  msg.userID,
-			"chat_id":  msg.channelID,
-			"chatType": msg.channelType,
+			"channel":     "slack",
+			"text":        text,
+			"agent":       agent,
+			"user_id":     msg.userID,
+			"chat_id":     msg.channelID,
+			"chatType":    msg.channelType,
+			"trust_level": trustLevel,
 		},
 	}
 }

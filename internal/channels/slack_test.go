@@ -73,7 +73,7 @@ type slackSendCapture struct {
 }
 
 func TestSlackAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSlackAllowlist(t *testing.T) {
 }
 
 func TestSlackUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestSlackUnauthorized(t *testing.T) {
 }
 
 func TestSlackSocketModeDMEvent(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestSlackSocketModeDMEvent(t *testing.T) {
 }
 
 func TestSlackWhoamiRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestSlackWhoamiRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackAgentsEmptyConfigHint(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestSlackAgentsEmptyConfigHint(t *testing.T) {
 }
 
 func TestSlackDefaultAgentMissingGuidance(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestSlackDefaultAgentMissingGuidance(t *testing.T) {
 }
 
 func TestSlackAgentsDedupesDefault(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "qa-1", []string{"qa-1", "coder-a"})
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "qa-1", []string{"qa-1", "coder-a"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestSlackAgentsDedupesDefault(t *testing.T) {
 }
 
 func TestSlackReplyTruncation(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -339,8 +339,8 @@ func TestSlackReplyTruncation(t *testing.T) {
 	}
 }
 
-func TestSlackIgnoreNonDM(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+func TestSlackIgnoreNonDMFromUnauthorized(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestSlackIgnoreNonDM(t *testing.T) {
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
 		text:        "hello",
-		userID:      "U123",
+		userID:      "U999",
 		channelID:   "C999",
 		channelType: "channel",
 	})
@@ -370,8 +370,114 @@ func TestSlackIgnoreNonDM(t *testing.T) {
 	}
 }
 
+func TestSlackIgnoreNonDMEvenFromAllowedUser(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		return nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "C999",
+		channelType: "channel",
+	})
+
+	if handler.called {
+		t.Fatalf("expected handler not called for non-DM even from allowed user")
+	}
+}
+
+func TestSlackChannelAllowlistAuthorizes(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, []string{"C555"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	// Channel allowlist is tested via slashCommandReply (AppMentionEvent path)
+	reply := bot.slashCommandReply(context.Background(), &slackInboundMessage{
+		text:        "hello from channel",
+		userID:      "U999",
+		channelID:   "C555",
+		channelType: "channel",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called for user in allowed channel")
+	}
+	if reply != "ok" {
+		t.Fatalf("expected reply ok, got %q", reply)
+	}
+	data := handler.last.Data.(map[string]interface{})
+	if data["trust_level"] != "channel" {
+		t.Fatalf("expected trust_level=channel, got %v", data["trust_level"])
+	}
+}
+
+func TestSlackChannelAllowlistDeniesUnknownChannel(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, []string{"C555"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	// Channel allowlist is tested via slashCommandReply (AppMentionEvent path)
+	reply := bot.slashCommandReply(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U999",
+		channelID:   "C999",
+		channelType: "channel",
+	})
+
+	if handler.called {
+		t.Fatalf("expected handler not called for unknown channel")
+	}
+	if !strings.Contains(reply, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", reply)
+	}
+}
+
+func TestSlackAllowedUserInChannelGetsTrustFull(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, []string{"C555"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	// allowedUser @mentions bot in a channel — trust_level should be "full"
+	bot.slashCommandReply(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "C555",
+		channelType: "channel",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called for allowed user")
+	}
+	data := handler.last.Data.(map[string]interface{})
+	if data["trust_level"] != "full" {
+		t.Fatalf("expected trust_level=full for allowedUser, got %v", data["trust_level"])
+	}
+}
+
 func TestSlackStatusDoesNotLeakTokens(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -399,7 +505,7 @@ func TestSlackStatusDoesNotLeakTokens(t *testing.T) {
 }
 
 func TestSlackStatusRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -424,7 +530,7 @@ func TestSlackStatusRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackAgentsRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -449,7 +555,7 @@ func TestSlackAgentsRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackIncompleteAgentUsageRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -486,7 +592,7 @@ func TestSlackIncompleteAgentUsageRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -517,7 +623,7 @@ func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
 }
 
 func TestSlackHelpIncludesToAlias(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", nil, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -544,7 +650,7 @@ func TestSlackHelpIncludesToAlias(t *testing.T) {
 }
 
 func TestSlackSlashCommandAckAllowlisted(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -583,7 +689,7 @@ func TestSlackSlashCommandAckAllowlisted(t *testing.T) {
 }
 
 func TestSlackSlashCommandAckUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -622,7 +728,7 @@ func TestSlackSlashCommandAckUnauthorized(t *testing.T) {
 }
 
 func TestSlackAppMentionAllowlisted(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -656,7 +762,7 @@ func TestSlackAppMentionAllowlisted(t *testing.T) {
 }
 
 func TestSlackAppMentionUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -687,7 +793,7 @@ func TestSlackAppMentionUnauthorized(t *testing.T) {
 }
 
 func TestSlackToolsRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -715,7 +821,7 @@ func TestSlackToolsRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackToolBypassesAgentSelection(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -746,7 +852,7 @@ func TestSlackToolBypassesAgentSelection(t *testing.T) {
 }
 
 func TestSlackToolHandlerMissing(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -771,7 +877,7 @@ func TestSlackToolHandlerMissing(t *testing.T) {
 }
 
 func TestSlackMonitorUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -802,7 +908,7 @@ func TestSlackMonitorUnauthorized(t *testing.T) {
 }
 
 func TestSlackMonitorAllowed(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -827,7 +933,7 @@ func TestSlackMonitorAllowed(t *testing.T) {
 }
 
 func TestSlackMonitorUsage(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -852,7 +958,7 @@ func TestSlackMonitorUsage(t *testing.T) {
 }
 
 func TestSlackToolCommandUnauthorized(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -877,7 +983,7 @@ func TestSlackToolCommandUnauthorized(t *testing.T) {
 }
 
 func TestSlackToolCommandAllowedRoutes(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -905,7 +1011,7 @@ func TestSlackToolCommandAllowedRoutes(t *testing.T) {
 }
 
 func TestSlackStatusWithMentionRequiresAllowlist(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-secret", "xapp-secret", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -930,7 +1036,7 @@ func TestSlackStatusWithMentionRequiresAllowlist(t *testing.T) {
 }
 
 func TestSlackAgentWithMentionRoutes(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "qa-1", []string{"qa-1"})
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "qa-1", []string{"qa-1"})
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
@@ -973,7 +1079,7 @@ func TestNextSlackReconnectBackoff(t *testing.T) {
 }
 
 func TestSlackSocketModeReconnectsWithBackoff(t *testing.T) {
-	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, "", nil)
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
