@@ -136,11 +136,19 @@ func (b *DiscordBot) Stop() error {
 	return nil
 }
 
-func (b *DiscordBot) SendMessage(ctx context.Context, chatID int64, text string) error {
-	_ = ctx
-	_ = chatID
-	_ = text
-	return errors.New("discord SendMessage requires a string channel ID")
+func (b *DiscordBot) SendMessage(ctx context.Context, target string, text string) error {
+	if b.sendMessageFn == nil {
+		return errors.New("discord sender not configured")
+	}
+	if strings.TrimSpace(target) == "" {
+		return errors.New("discord channel ID is required")
+	}
+	if err := b.sendMessageFn(ctx, target, text); err != nil {
+		b.markError()
+		return err
+	}
+	b.markActivity()
+	return nil
 }
 
 func (b *DiscordBot) initClients() error {

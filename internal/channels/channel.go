@@ -10,7 +10,7 @@ type Channel interface {
 	Name() string
 	Start(ctx context.Context) error
 	Stop() error
-	SendMessage(ctx context.Context, chatID int64, text string) error
+	SendMessage(ctx context.Context, target string, text string) error
 	IsRunning() bool
 }
 
