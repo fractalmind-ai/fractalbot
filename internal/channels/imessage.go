@@ -226,13 +226,16 @@ func (b *IMessageBot) Stop() error {
 	return nil
 }
 
-func (b *IMessageBot) SendMessage(ctx context.Context, chatID int64, text string) error {
-	_ = chatID
+func (b *IMessageBot) SendMessage(ctx context.Context, target string, text string) error {
+	recipient := strings.TrimSpace(target)
+	if recipient == "" {
+		recipient = b.recipient
+	}
 	message := strings.TrimSpace(text)
 	if message == "" {
 		message = b.defaultMessage
 	}
-	return b.send(ctx, b.recipient, message)
+	return b.send(ctx, recipient, message)
 }
 
 // Send sends a message to the configured recipient using osascript.

@@ -155,11 +155,19 @@ func (b *FeishuBot) Stop() error {
 	return nil
 }
 
-func (b *FeishuBot) SendMessage(ctx context.Context, chatID int64, text string) error {
-	_ = ctx
-	_ = chatID
-	_ = text
-	return errors.New("feishu SendMessage requires a string receive_id")
+func (b *FeishuBot) SendMessage(ctx context.Context, target string, text string) error {
+	if b.sendMessageFn == nil {
+		return errors.New("feishu sender not configured")
+	}
+	if strings.TrimSpace(target) == "" {
+		return errors.New("feishu receive_id is required")
+	}
+	if err := b.sendMessageFn(ctx, "open_id", target, text); err != nil {
+		b.markError()
+		return err
+	}
+	b.markActivity()
+	return nil
 }
 
 func (b *FeishuBot) initClients() {

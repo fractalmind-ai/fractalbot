@@ -14,7 +14,7 @@ type fakeChannel struct {
 	running  bool
 	startErr error
 	stopErr  error
-	lastChat int64
+	lastChat string
 	lastText string
 }
 
@@ -36,9 +36,9 @@ func (f *fakeChannel) Stop() error {
 	return f.stopErr
 }
 
-func (f *fakeChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (f *fakeChannel) SendMessage(ctx context.Context, target string, text string) error {
 	_ = ctx
-	f.lastChat = chatID
+	f.lastChat = target
 	f.lastText = text
 	return nil
 }
@@ -166,9 +166,9 @@ func (b *blockingStartChannel) Start(ctx context.Context) error {
 
 func (b *blockingStartChannel) Stop() error { return nil }
 
-func (b *blockingStartChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (b *blockingStartChannel) SendMessage(ctx context.Context, target string, text string) error {
 	_ = ctx
-	_ = chatID
+	_ = target
 	_ = text
 	return nil
 }

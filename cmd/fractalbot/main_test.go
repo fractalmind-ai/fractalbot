@@ -55,15 +55,15 @@ func TestRunMessageSend(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		called := false
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to int64, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
 			_ = ctx
 			_ = cfg
 			called = true
 			if channel != "telegram" {
 				t.Fatalf("channel=%q", channel)
 			}
-			if to != 5088760910 {
-				t.Fatalf("to=%d", to)
+			if to != "5088760910" {
+				t.Fatalf("to=%s", to)
 			}
 			if text != "hello from cli" {
 				t.Fatalf("text=%q", text)
@@ -103,11 +103,6 @@ func TestRunMessageSend(t *testing.T) {
 				expectedError: "--to is required",
 			},
 			{
-				name:          "invalid to",
-				args:          []string{"--channel", "telegram", "--to", "not-number", "--text", "hello"},
-				expectedError: "invalid --to chat_id",
-			},
-			{
 				name:          "missing text",
 				args:          []string{"--channel", "telegram", "--to", "5088760910"},
 				expectedError: "--text is required",
@@ -116,7 +111,7 @@ func TestRunMessageSend(t *testing.T) {
 
 		for _, testCase := range cases {
 			t.Run(testCase.name, func(t *testing.T) {
-				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to int64, text string) error {
+				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
 					_ = ctx
 					_ = cfg
 					_ = channel
@@ -140,7 +135,7 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("unknown subcommand", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to int64, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel
@@ -164,7 +159,7 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("send failure", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to int64, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel

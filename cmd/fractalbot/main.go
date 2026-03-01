@@ -171,12 +171,6 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 		return 1
 	}
 
-	chatID, err := strconv.ParseInt(toValue, 10, 64)
-	if err != nil {
-		logger.Printf("invalid --to chat_id: %s", toValue)
-		return 1
-	}
-
 	messageText := strings.TrimSpace(*text)
 	if messageText == "" {
 		logger.Printf("--text is required")
@@ -189,19 +183,19 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 		return 1
 	}
 
-	if err := messageSendFn(ctx, cfg, channelName, chatID, messageText); err != nil {
+	if err := messageSendFn(ctx, cfg, channelName, toValue, messageText); err != nil {
 		logger.Printf("failed to send message: %v", err)
 		return 1
 	}
 
-	fmt.Fprintf(out, "✅ Message sent via %s to %d\n", channelName, chatID)
+	fmt.Fprintf(out, "✅ Message sent via %s to %s\n", channelName, toValue)
 	return 0
 }
 
-func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to int64, text string) error {
+func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
 	type requestPayload struct {
 		Channel string `json:"channel"`
-		To      int64  `json:"to"`
+		To      string `json:"to"`
 		Text    string `json:"text"`
 	}
 

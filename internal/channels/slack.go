@@ -150,11 +150,19 @@ func (b *SlackBot) Stop() error {
 	return nil
 }
 
-func (b *SlackBot) SendMessage(ctx context.Context, chatID int64, text string) error {
-	_ = ctx
-	_ = chatID
-	_ = text
-	return errors.New("slack SendMessage requires a string channel ID")
+func (b *SlackBot) SendMessage(ctx context.Context, target string, text string) error {
+	if b.sendMessageFn == nil {
+		return errors.New("slack sender not configured")
+	}
+	if strings.TrimSpace(target) == "" {
+		return errors.New("slack channel ID is required")
+	}
+	if err := b.sendMessageFn(ctx, target, text); err != nil {
+		b.markError()
+		return err
+	}
+	b.markActivity()
+	return nil
 }
 
 func (b *SlackBot) initClients() {
@@ -275,7 +283,7 @@ func (b *SlackBot) handleSocketEventWithAck(ctx context.Context, event socketmod
 		b.handleSlashCommandEventWithAck(ctx, event, ackFn)
 		return
 	}
-	if event.Request != nil && ackFn != nil {
+	if event.Request != nil && ackFn != nil && event.Request.EnvelopeID != "" {
 		ackFn(*event.Request)
 	}
 
@@ -462,6 +470,7 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 		_ = b.reply(ctx, msg, fmt.Sprintf("❌ Unauthorized. Ask an admin to add your Slack user ID to channels.slack.allowedUsers.\nUser ID: %s", msg.userID))
 		return
 	}
+	log.Printf("slack: authorized user=%s, routing message", msg.userID)
 
 	if handled, cmdErr := b.handleCommand(ctx, msg); handled {
 		if cmdErr != nil {
@@ -858,6 +867,9 @@ func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage
 		return nil
 	}
 	if event.SubType != "" {
+		return nil
+	}
+	if event.BotID != "" {
 		return nil
 	}
 	if strings.TrimSpace(event.User) == "" || strings.TrimSpace(event.Channel) == "" {

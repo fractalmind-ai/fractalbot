@@ -281,9 +281,9 @@ func (f *fakeTelemetryChannel) Stop() error {
 	return nil
 }
 
-func (f *fakeTelemetryChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (f *fakeTelemetryChannel) SendMessage(ctx context.Context, target string, text string) error {
 	_ = ctx
-	_ = chatID
+	_ = target
 	_ = text
 	return nil
 }
@@ -400,7 +400,7 @@ func TestStatusDoesNotExposeSecrets(t *testing.T) {
 type fakeSendChannel struct {
 	name     string
 	running  bool
-	lastChat int64
+	lastChat string
 	lastText string
 	sendErr  error
 }
@@ -418,9 +418,9 @@ func (f *fakeSendChannel) Stop() error {
 	return nil
 }
 
-func (f *fakeSendChannel) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (f *fakeSendChannel) SendMessage(ctx context.Context, target string, text string) error {
 	_ = ctx
-	f.lastChat = chatID
+	f.lastChat = target
 	f.lastText = text
 	return f.sendErr
 }
@@ -453,7 +453,7 @@ func TestMessageSendAPI(t *testing.T) {
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
 			"application/json",
-			strings.NewReader(`{"channel":"telegram","to":12345,"text":"hello from api"}`),
+			strings.NewReader(`{"channel":"telegram","to":"12345","text":"hello from api"}`),
 		)
 		if err != nil {
 			t.Fatalf("post failed: %v", err)
@@ -465,8 +465,8 @@ func TestMessageSendAPI(t *testing.T) {
 			t.Fatalf("unexpected status %d body=%s", resp.StatusCode, string(body))
 		}
 
-		if fake.lastChat != 12345 {
-			t.Fatalf("expected lastChat=12345 got %d", fake.lastChat)
+		if fake.lastChat != "12345" {
+			t.Fatalf("expected lastChat=12345 got %s", fake.lastChat)
 		}
 		if fake.lastText != "hello from api" {
 			t.Fatalf("expected text captured, got %q", fake.lastText)
@@ -476,7 +476,7 @@ func TestMessageSendAPI(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
-		if payload.Status != "ok" || payload.Channel != "telegram" || payload.To != 12345 {
+		if payload.Status != "ok" || payload.Channel != "telegram" || payload.To != "12345" {
 			t.Fatalf("unexpected response payload: %#v", payload)
 		}
 	})
@@ -485,7 +485,7 @@ func TestMessageSendAPI(t *testing.T) {
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
 			"application/json",
-			strings.NewReader(`{"channel":"telegram","to":0,"text":""}`),
+			strings.NewReader(`{"channel":"telegram","to":"","text":""}`),
 		)
 		if err != nil {
 			t.Fatalf("post failed: %v", err)
@@ -502,7 +502,7 @@ func TestMessageSendAPI(t *testing.T) {
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
 			"application/json",
-			strings.NewReader(`{"channel":"slack","to":1,"text":"hello"}`),
+			strings.NewReader(`{"channel":"slack","to":"1","text":"hello"}`),
 		)
 		if err != nil {
 			t.Fatalf("post failed: %v", err)

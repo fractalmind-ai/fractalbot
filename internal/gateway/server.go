@@ -250,14 +250,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 type messageSendRequest struct {
 	Channel string `json:"channel"`
-	To      int64  `json:"to"`
+	To      string `json:"to"`
 	Text    string `json:"text"`
 }
 
 type messageSendResponse struct {
 	Status  string `json:"status"`
 	Channel string `json:"channel,omitempty"`
-	To      int64  `json:"to,omitempty"`
+	To      string `json:"to,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -283,7 +283,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "channel is required"})
 		return
 	}
-	if request.To == 0 {
+	if request.To == "" {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "to is required"})
 		return
 	}

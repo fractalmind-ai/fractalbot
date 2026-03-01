@@ -642,7 +642,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		log.Printf("🚫 Unauthorized Telegram user: %d", message.From.ID)
 		if isTelegramWhoamiCommand(message.Text) {
 			reply := formatTelegramWhoamiReply(message, b.adminID)
-			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
+			_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 			return
 		}
 		username := strings.TrimSpace(message.From.UserName)
@@ -656,7 +656,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 			message.From.ID,
 			username,
 		)
-		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(hint))
+		_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(hint))
 		return
 	}
 
@@ -668,7 +668,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 			} else if isAgentAllowlistError(cmdErr) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
-			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
+			_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 		}
 		return
 	}
@@ -681,7 +681,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		} else if isAgentAllowlistError(err) {
 			reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 		}
-		_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
+		_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 		return
 	}
 
@@ -701,7 +701,7 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 			} else if isAgentAllowlistError(err) {
 				reply = fmt.Sprintf("%s\nTip: use /agents to see allowed agents.", reply)
 			}
-			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
+			_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(reply))
 			return
 		}
 	}
@@ -715,14 +715,14 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 			replyText = "❌ Something went wrong. Please try again."
 		}
 		if strings.TrimSpace(replyText) != "" {
-			_ = b.SendMessage(b.ctx, message.Chat.ID, TruncateTelegramReply(replyText))
+			_ = b.sendToChat(b.ctx, message.Chat.ID, TruncateTelegramReply(replyText))
 		}
 		return
 	}
 
 	if selection.Task != "" {
 		reply := fmt.Sprintf("echo: %s", selection.Task)
-		_ = b.SendMessage(b.ctx, message.Chat.ID, reply)
+		_ = b.sendToChat(b.ctx, message.Chat.ID, reply)
 	}
 }
 
@@ -761,14 +761,14 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 
 	switch command {
 	case "/help", "/start":
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, b.helpText())
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, b.helpText())
 
 	case "/ping":
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, "pong")
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, "pong")
 
 	case "/whoami":
 		reply := formatTelegramWhoamiReply(msg, b.adminID)
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(reply))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, TruncateTelegramReply(reply))
 
 	case "/agents":
 		names := b.agentAllowlist.Names()
@@ -777,7 +777,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 			names = filterOutAgentName(names, defaultName)
 		}
 		if len(names) == 0 && defaultName == "" {
-			return true, b.SendMessage(b.ctx, msg.Chat.ID, noAgentsConfiguredMessage)
+			return true, b.sendToChat(b.ctx, msg.Chat.ID, noAgentsConfiguredMessage)
 		}
 		var sb strings.Builder
 		sb.WriteString("Allowed agents:\n")
@@ -787,7 +787,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		for _, name := range names {
 			sb.WriteString(fmt.Sprintf("  - %s\n", name))
 		}
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, strings.TrimSpace(sb.String()))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, strings.TrimSpace(sb.String()))
 
 	case "/monitor":
 		agentName, lines, err := parseMonitorArgs(parts)
@@ -808,7 +808,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		if strings.TrimSpace(out) == "" {
 			out = "No output from agent-monitor."
 		}
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
 
 	case "/startagent":
 		if err := requireAdmin(); err != nil {
@@ -832,7 +832,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Started agent %s", agentName)
 		}
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
 
 	case "/stopagent":
 		if err := requireAdmin(); err != nil {
@@ -856,7 +856,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		if strings.TrimSpace(out) == "" {
 			out = fmt.Sprintf("✅ Stopped agent %s", agentName)
 		}
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
 
 	case "/doctor":
 		if err := requireAdmin(); err != nil {
@@ -873,7 +873,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		if strings.TrimSpace(out) == "" {
 			out = "✅ agent-manager doctor completed"
 		}
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, TruncateTelegramReply(out))
 
 	case "/adduser":
 		if err := requireAdmin(); err != nil {
@@ -887,7 +887,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 			return true, fmt.Errorf("invalid user id")
 		}
 		b.userManager.AddUser(userID)
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, fmt.Sprintf("✅ Added user %d", userID))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, fmt.Sprintf("✅ Added user %d", userID))
 
 	case "/removeuser":
 		if err := requireAdmin(); err != nil {
@@ -901,7 +901,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 			return true, fmt.Errorf("invalid user id")
 		}
 		b.userManager.RemoveUser(userID)
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, fmt.Sprintf("✅ Removed user %d", userID))
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, fmt.Sprintf("✅ Removed user %d", userID))
 
 	case "/listusers":
 		if err := requireAdmin(); err != nil {
@@ -909,7 +909,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 		}
 		users := b.userManager.GetAllowedUsers()
 		response := fmt.Sprintf("✅ Authorized users:\n%s", formatUserList(users))
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, response)
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, response)
 
 	case "/status":
 		uptime := time.Since(b.startTime).Truncate(time.Second)
@@ -925,7 +925,7 @@ func (b *TelegramBot) handleCommand(msg *TelegramMessage) (bool, error) {
 			b.pollingOffsetFile,
 			uptime,
 		)
-		return true, b.SendMessage(b.ctx, msg.Chat.ID, status)
+		return true, b.sendToChat(b.ctx, msg.Chat.ID, status)
 
 	default:
 		return true, fmt.Errorf("unknown command: %s", command)
@@ -1151,7 +1151,16 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent
 }
 
 // SendMessage sends a message to Telegram.
-func (b *TelegramBot) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (b *TelegramBot) SendMessage(ctx context.Context, target string, text string) error {
+	chatID, err := strconv.ParseInt(strings.TrimSpace(target), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid telegram chat ID %q: %w", target, err)
+	}
+	return b.sendToChat(ctx, chatID, text)
+}
+
+// sendToChat is the internal implementation for sending a Telegram message.
+func (b *TelegramBot) sendToChat(ctx context.Context, chatID int64, text string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", b.botToken)
 
 	payload := map[string]interface{}{
