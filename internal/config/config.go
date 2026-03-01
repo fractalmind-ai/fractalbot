@@ -34,6 +34,7 @@ type ChannelsConfig struct {
 	Feishu   *FeishuConfig   `yaml:"feishu,omitempty"`
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
+	IMessage *IMessageConfig `yaml:"imessage,omitempty"`
 }
 
 // TelegramConfig contains Telegram channel settings.
@@ -98,6 +99,25 @@ type DiscordConfig struct {
 	Enabled      bool     `yaml:"enabled,omitempty"`
 	Token        string   `yaml:"token,omitempty"`
 	AllowedUsers []string `yaml:"allowedUsers,omitempty"`
+}
+
+// IMessageConfig contains iMessage channel settings.
+type IMessageConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Recipient is the default iMessage target (email/phone/Apple ID handle).
+	Recipient string `yaml:"recipient,omitempty"`
+	// Message is the fallback text used when API/CLI send text is empty.
+	Message string `yaml:"message,omitempty"`
+	// Service defaults to "E:iMessage" when empty.
+	Service string `yaml:"service,omitempty"`
+	// PollingEnabled controls whether inbound iMessage polling is enabled.
+	PollingEnabled bool `yaml:"pollingEnabled,omitempty"`
+	// PollingIntervalSeconds sets polling interval. Default: 5.
+	PollingIntervalSeconds int `yaml:"pollingIntervalSeconds,omitempty"`
+	// PollingLimit caps number of messages fetched per poll. Default: 20.
+	PollingLimit int `yaml:"pollingLimit,omitempty"`
+	// DatabasePath overrides Messages DB path. Default: ~/Library/Messages/chat.db.
+	DatabasePath string `yaml:"databasePath,omitempty"`
 }
 
 // OhMyCodeConfig contains integration settings for the oh-my-code workspace.

@@ -320,6 +320,34 @@ func (m *Manager) registerConfiguredChannels() error {
 		}
 	}
 
+	if m.cfg.IMessage != nil && m.cfg.IMessage.Enabled {
+		if m.Get("imessage") != nil {
+			return nil
+		}
+		if strings.TrimSpace(m.cfg.IMessage.Recipient) == "" {
+			return errors.New("channels.imessage.recipient is required when imessage is enabled")
+		}
+
+		bot, err := NewIMessageBot(
+			m.cfg.IMessage.Recipient,
+			m.cfg.IMessage.Message,
+			m.cfg.IMessage.Service,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to init imessage bot: %w", err)
+		}
+		bot.ConfigurePolling(
+			m.cfg.IMessage.PollingEnabled,
+			m.cfg.IMessage.PollingIntervalSeconds,
+			m.cfg.IMessage.PollingLimit,
+			m.cfg.IMessage.DatabasePath,
+		)
+
+		if err := m.Register(bot); err != nil {
+			return fmt.Errorf("failed to register imessage bot: %w", err)
+		}
+	}
+
 	return nil
 }
 
