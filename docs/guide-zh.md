@@ -214,7 +214,8 @@ description: Main
 enabled: true
 working_directory: ${REPO_ROOT}
 launcher: claude
-launcher_args: []
+launcher_args:
+  - --dangerously-skip-permissions
 heartbeat:
   cron: "*/10 * * * *"
   max_runtime: 8m
@@ -267,7 +268,8 @@ role: developer
 description: "dev — 开发 Agent，负责编码和 bug 修复"
 working_directory: ${REPO_ROOT}
 launcher: claude
-launcher_args: []
+launcher_args:
+  - --dangerously-skip-permissions
 skills:
   - agent-manager
 ---
@@ -301,7 +303,8 @@ skills:
 ```yaml
 # Claude Code
 launcher: claude
-launcher_args: []
+launcher_args:
+  - --dangerously-skip-permissions
 
 # OpenAI Codex CLI
 launcher: codex
