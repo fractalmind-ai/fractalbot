@@ -176,7 +176,110 @@ channels:
 
 ## 对接 agent-manager
 
-FractalBot 通过 `agents.ohMyCode` 配置将消息路由到 [agent-manager](https://github.com/fractalmind-ai/agent-manager-skill)（基于 tmux + Claude Code 的 Agent 管理系统）。
+FractalBot 通过 `agents.ohMyCode` 配置将消息路由到 [agent-manager](https://github.com/fractalmind-ai/agent-manager-skill)（基于 tmux + Claude Code 的 Agent 管理系统）。每个 Agent 跑在独立的 tmux session 里，收到消息后自动执行任务。
+
+### 第一步：安装 agent-manager skill
+
+在你的工作仓库中安装：
+
+```bash
+cd /path/to/your/workspace
+npx openskills install agent-manager
+```
+
+安装后会出现 `.claude/skills/agent-manager/` 目录。
+
+### 第二步：创建 Agent 定义文件
+
+Agent 定义在 `agents/EMP_*.md` 文件中，使用 YAML frontmatter 配置。你需要**至少创建一个 Agent** 才能让 FractalBot 路由消息。
+
+```bash
+mkdir -p agents
+```
+
+创建你的第一个 Agent，例如 `agents/EMP_0001.md`：
+
+```markdown
+---
+name: dev
+role: developer
+description: "dev — 开发 Agent，负责编码和 bug 修复"
+working_directory: ${REPO_ROOT}
+launcher: claude
+launcher_args: []
+skills:
+  - agent-manager
+---
+
+# DEV AGENT
+
+## Primary responsibilities
+- 实现功能开发和 bug 修复
+- 保持变更小、可审查、易验证
+
+## Operating rules
+- 遵循 AGENTS.md 规范
+- 优先通过 PR 提交，方便回滚
+```
+
+**frontmatter 字段说明：**
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | 是 | Agent 标识符，FractalBot 路由时使用此名称 |
+| `role` | 否 | 角色描述（developer / qa / researcher 等） |
+| `description` | 否 | 一行描述，`/agents` 命令时展示 |
+| `working_directory` | 是 | 工作目录，`${REPO_ROOT}` 会替换为仓库根目录 |
+| `launcher` | 是 | 启动器：`claude`（Claude Code）、`codex`（OpenAI Codex）或完整路径 |
+| `launcher_args` | 否 | 启动器参数列表 |
+| `skills` | 否 | 注入的 skill 名称列表 |
+| `enabled` | 否 | 是否可启动，默认 `true`，设 `false` 禁用 |
+
+**常见 launcher 配置：**
+
+```yaml
+# Claude Code
+launcher: claude
+launcher_args: []
+
+# OpenAI Codex CLI
+launcher: codex
+launcher_args:
+  - --model=gpt-5.3-codex
+```
+
+你可以创建多个 Agent（EMP_0002.md、EMP_0003.md…），分别负责不同职责：
+
+```
+agents/
+├── EMP_0001.md    # dev — 开发
+├── EMP_0002.md    # qa — 测试审查
+└── EMP_0003.md    # sre — 运维部署
+```
+
+### 第三步：验证 Agent 可用
+
+```bash
+# 列出所有 Agent
+python3 .claude/skills/agent-manager/scripts/main.py list
+
+# 启动 Agent
+python3 .claude/skills/agent-manager/scripts/main.py start dev
+
+# 手动分配任务测试
+python3 .claude/skills/agent-manager/scripts/main.py assign dev <<EOF
+说 hello world
+EOF
+
+# 查看输出
+python3 .claude/skills/agent-manager/scripts/main.py monitor dev
+```
+
+Agent 启动后会运行在 tmux session `agent-dev` 中，可以用 `tmux attach -t agent-dev` 直接查看。
+
+### 第四步：配置 FractalBot 路由
+
+在 `config.yaml` 中将消息路由到 agent-manager：
 
 ```yaml
 agents:
@@ -185,19 +288,33 @@ agents:
 
   ohMyCode:
     enabled: true
-    workspace: "/path/to/your/oh-my-code"   # 你的 oh-my-code 仓库路径
-    defaultAgent: "qa-1"                     # 默认接收任务的 Agent
-    allowedAgents:
-      - "qa-1"
-      - "coder-a"
-    assignTimeoutSeconds: 90
+    workspace: "/path/to/your/workspace"     # 包含 agents/ 目录的仓库路径
+    defaultAgent: "dev"                      # 普通消息默认路由到这个 Agent
+    allowedAgents:                           # /agent 命令可选的 Agent 列表
+      - "dev"
+      - "qa"
+    assignTimeoutSeconds: 90                 # Agent 响应超时（秒）
 ```
 
-确保目标仓库已安装 `use-fractalbot` skill（用于 Agent 回复消息）：
+> `defaultAgent` 的值必须与某个 `agents/EMP_*.md` 中的 `name` 字段匹配。
+
+### 第五步：安装 use-fractalbot skill
+
+Agent 需要此 skill 才能通过 FractalBot 回复消息：
 
 ```bash
-# 在 oh-my-code 仓库中
+cd /path/to/your/workspace
+npx openskills install use-fractalbot
+# 验证
 ls .claude/skills/use-fractalbot/SKILL.md
+```
+
+同时确保 Agent 定义文件的 `skills` 列表中包含 `use-fractalbot`：
+
+```yaml
+skills:
+  - agent-manager
+  - use-fractalbot    # 添加这一行
 ```
 
 ## 启动与验证
