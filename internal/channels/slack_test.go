@@ -1141,3 +1141,124 @@ func TestSlackSocketModeReconnectsWithBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestSlackMentionIncludesRecentMessages(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, []string{"C555"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		return nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
+		_ = ctx
+		return []map[string]interface{}{
+			{"user": "U111", "text": "msg-1"},
+			{"user": "U222", "text": "msg-2"},
+		}, nil
+	}
+
+	// Trigger via AppMentionEvent path (slashCommandReply)
+	bot.slashCommandReply(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "C555",
+		channelType: "app_mention",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called")
+	}
+	data := handler.last.Data.(map[string]interface{})
+	recent, ok := data["recent_messages"].([]map[string]interface{})
+	if !ok || len(recent) != 2 {
+		t.Fatalf("expected 2 recent messages, got %v", data["recent_messages"])
+	}
+	if recent[0]["user"] != "U111" || recent[1]["text"] != "msg-2" {
+		t.Fatalf("unexpected recent messages: %v", recent)
+	}
+}
+
+func TestSlackDMIncludesRecentMessages(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		return nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
+		_ = ctx
+		return []map[string]interface{}{
+			{"user": "U123", "text": "previous DM"},
+		}, nil
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called")
+	}
+	data := handler.last.Data.(map[string]interface{})
+	recent, ok := data["recent_messages"].([]map[string]interface{})
+	if !ok || len(recent) != 1 {
+		t.Fatalf("expected 1 recent message, got %v", data["recent_messages"])
+	}
+	if recent[0]["text"] != "previous DM" {
+		t.Fatalf("unexpected recent message: %v", recent[0])
+	}
+}
+
+func TestSlackHistoryFetchErrorDoesNotBlock(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
+		_ = ctx
+		return nil, errors.New("slack api error")
+	}
+
+	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "D456",
+		channelType: "im",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called despite fetch error")
+	}
+	if sent.text != "ok" {
+		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+	data := handler.last.Data.(map[string]interface{})
+	if _, hasRecent := data["recent_messages"]; hasRecent {
+		t.Fatalf("expected no recent_messages on fetch error, got %v", data["recent_messages"])
+	}
+}

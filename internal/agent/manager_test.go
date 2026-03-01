@@ -427,3 +427,86 @@ sys.exit(1)
 		}
 	}
 }
+
+func TestBuildPromptWithRecentMessages(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello", "main", map[string]interface{}{
+		"channel":     "slack",
+		"chat_id":     "C123",
+		"user_id":     "U123",
+		"trust_level": "full",
+		"recent_messages": []map[string]interface{}{
+			{"user": "U111", "text": "first message"},
+			{"user": "U222", "text": "second message"},
+		},
+	})
+
+	expectedParts := []string{
+		"Recent conversation in this channel (last 5 messages, oldest first):",
+		"[U111] first message",
+		"[U222] second message",
+		"use the `use-fractalbot` skill",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(out, part) {
+			t.Fatalf("expected %q in prompt, got %q", part, out)
+		}
+	}
+	// trust_level=full should NOT have <conversation_context> tags
+	if strings.Contains(out, "<conversation_context>") {
+		t.Fatalf("expected no <conversation_context> tags for trust_level=full, got %q", out)
+	}
+	// History block should appear before "User message:"
+	histIdx := strings.Index(out, "Recent conversation")
+	msgIdx := strings.Index(out, "User message:")
+	if histIdx >= msgIdx {
+		t.Fatalf("expected recent conversation before User message, hist=%d msg=%d", histIdx, msgIdx)
+	}
+}
+
+func TestBuildPromptWithRecentMessagesChannelTrust(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello", "main", map[string]interface{}{
+		"channel":     "slack",
+		"chat_id":     "C456",
+		"user_id":     "U999",
+		"trust_level": "channel",
+		"recent_messages": []map[string]interface{}{
+			{"user": "U333", "text": "channel msg"},
+		},
+	})
+
+	if !strings.Contains(out, "<conversation_context>") {
+		t.Fatalf("expected <conversation_context> tag for trust_level=channel, got %q", out)
+	}
+	if !strings.Contains(out, "</conversation_context>") {
+		t.Fatalf("expected </conversation_context> tag for trust_level=channel, got %q", out)
+	}
+	if !strings.Contains(out, "[U333] channel msg") {
+		t.Fatalf("expected message in history, got %q", out)
+	}
+	// History block should be wrapped in tags and appear before "User message:"
+	openTag := strings.Index(out, "<conversation_context>")
+	closeTag := strings.Index(out, "</conversation_context>")
+	msgIdx := strings.Index(out, "User message:")
+	if openTag >= closeTag || closeTag >= msgIdx {
+		t.Fatalf("expected <conversation_context>...</conversation_context> before User message")
+	}
+}
+
+func TestBuildPromptWithoutRecentMessages(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello", "main", map[string]interface{}{
+		"channel":     "slack",
+		"chat_id":     "C123",
+		"user_id":     "U123",
+		"trust_level": "full",
+	})
+
+	if strings.Contains(out, "Recent conversation") {
+		t.Fatalf("expected no recent conversation block without messages, got %q", out)
+	}
+	if strings.Contains(out, "<conversation_context>") {
+		t.Fatalf("expected no <conversation_context> tags without messages, got %q", out)
+	}
+	if !strings.Contains(out, "User message:\nhello\n") {
+		t.Fatalf("expected user message, got %q", out)
+	}
+}

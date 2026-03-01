@@ -37,9 +37,10 @@ type SlackBot struct {
 	socketClient *socketmode.Client
 	ackFn        func(req socketmode.Request, payload ...interface{})
 
-	startFn       func(ctx context.Context) error
-	stopFn        func() error
-	sendMessageFn func(ctx context.Context, channelID, text string) error
+	startFn        func(ctx context.Context) error
+	stopFn         func() error
+	sendMessageFn  func(ctx context.Context, channelID, text string) error
+	fetchHistoryFn func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
 
 	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
 	runSocketModeFn       func(ctx context.Context, socketClient *socketmode.Client) error
@@ -427,7 +428,8 @@ func (b *SlackBot) slashCommandReply(ctx context.Context, msg *slackInboundMessa
 	}
 
 	if b.handler != nil {
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel))
+		recentMessages := b.fetchRecentMessages(ctx, msg.channelID, 5)
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel, recentMessages))
 		if err != nil {
 			log.Printf("slack handler error: %v", err)
 			replyText = "❌ Something went wrong. Please try again."
@@ -535,7 +537,8 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 	}
 
 	if b.handler != nil {
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel))
+		recentMessages := b.fetchRecentMessages(ctx, msg.channelID, 5)
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, selection.Task, selection.Agent, trustLevel, recentMessages))
 		if err != nil {
 			log.Printf("slack handler error: %v", err)
 			replyText = "❌ Something went wrong. Please try again."
@@ -587,7 +590,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 		if b.handler == nil {
 			return true, "⚠️ runtime tools are disabled", nil
 		}
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, "", b.authorize(msg)))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, "", b.authorize(msg), nil))
 		if err != nil {
 			return true, "", err
 		}
@@ -603,7 +606,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 		if b.handler == nil {
 			return true, "⚠️ runtime tools are disabled", nil
 		}
-		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", "", b.authorize(msg)))
+		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", "", b.authorize(msg), nil))
 		if err != nil {
 			return true, "", err
 		}
@@ -856,19 +859,70 @@ func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
 	return nil
 }
 
-func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trustLevel string) *protocol.Message {
+func (b *SlackBot) fetchRecentMessages(ctx context.Context, channelID string, limit int) []map[string]interface{} {
+	fetchFn := b.fetchHistoryFn
+	if fetchFn == nil {
+		fetchFn = b.defaultFetchHistory
+	}
+	messages, err := fetchFn(ctx, channelID, limit)
+	if err != nil {
+		log.Printf("slack: failed to fetch recent messages for channel %s: %v", channelID, err)
+		return nil
+	}
+	return messages
+}
+
+func (b *SlackBot) defaultFetchHistory(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
+	if b.apiClient == nil {
+		return nil, errors.New("slack api client not initialized")
+	}
+	resp, err := b.apiClient.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Limit:     limit + 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	msgs := resp.Messages
+	// Slack returns newest-first; reverse to chronological order.
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	// Drop the last message (the trigger message itself).
+	if len(msgs) > 0 {
+		msgs = msgs[:len(msgs)-1]
+	}
+	// Take last `limit` messages.
+	if len(msgs) > limit {
+		msgs = msgs[len(msgs)-limit:]
+	}
+	result := make([]map[string]interface{}, 0, len(msgs))
+	for _, m := range msgs {
+		result = append(result, map[string]interface{}{
+			"user": m.User,
+			"text": m.Text,
+		})
+	}
+	return result, nil
+}
+
+func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trustLevel string, recentMessages []map[string]interface{}) *protocol.Message {
+	data := map[string]interface{}{
+		"channel":     "slack",
+		"text":        text,
+		"agent":       agent,
+		"user_id":     msg.userID,
+		"chat_id":     msg.channelID,
+		"chatType":    msg.channelType,
+		"trust_level": trustLevel,
+	}
+	if len(recentMessages) > 0 {
+		data["recent_messages"] = recentMessages
+	}
 	return &protocol.Message{
 		Kind:   protocol.MessageKindChannel,
 		Action: protocol.ActionCreate,
-		Data: map[string]interface{}{
-			"channel":     "slack",
-			"text":        text,
-			"agent":       agent,
-			"user_id":     msg.userID,
-			"chat_id":     msg.channelID,
-			"chatType":    msg.channelType,
-			"trust_level": trustLevel,
-		},
+		Data:   data,
 	}
 }
 
