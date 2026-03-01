@@ -275,6 +275,7 @@ func (m *Manager) registerConfiguredChannels() error {
 			m.cfg.Slack.BotToken,
 			m.cfg.Slack.AppToken,
 			m.cfg.Slack.AllowedUsers,
+			m.cfg.Slack.AllowedChannels,
 			defaultAgent,
 			allowedAgents,
 		)
