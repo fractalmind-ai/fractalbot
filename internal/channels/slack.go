@@ -26,10 +26,10 @@ type SlackBot struct {
 	botToken string
 	appToken string
 
-	allowlist         SlackAllowlist
-	channelAllowlist  SlackAllowlist
-	defaultAgent string
-	agentAllow   AgentAllowlist
+	allowlist        SlackAllowlist
+	channelAllowlist SlackAllowlist
+	defaultAgent     string
+	agentAllow       AgentAllowlist
 
 	handler IncomingMessageHandler
 
