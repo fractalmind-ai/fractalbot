@@ -441,6 +441,30 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	sb.WriteString("  - use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)\n")
 	sb.WriteString("- If channel=telegram and recipient is omitted, default to current chat_id.\n")
 	sb.WriteString("\n")
+
+	// Insert recent conversation context if available.
+	recentMessages := extractRecentMessages(inboundData)
+	if len(recentMessages) > 0 {
+		wrapTag := trustLevel != "full" && trustLevel != ""
+		if wrapTag {
+			sb.WriteString("<conversation_context>\n")
+		}
+		sb.WriteString("Recent conversation in this channel (last 5 messages, oldest first):\n")
+		for _, msg := range recentMessages {
+			user, _ := msg["user"].(string)
+			text, _ := msg["text"].(string)
+			if user == "" {
+				user = "(unknown)"
+			}
+			sb.WriteString(fmt.Sprintf("[%s] %s\n", user, text))
+		}
+		sb.WriteString("\nNote: Only the 5 most recent messages are shown. To fetch more conversation history, use the `use-fractalbot` skill.\n")
+		if wrapTag {
+			sb.WriteString("</conversation_context>\n")
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("User message:\n")
 	if trustLevel == "full" || trustLevel == "" {
 		sb.WriteString(strings.TrimSpace(userText))
@@ -466,6 +490,21 @@ func promptContextValue(inboundData map[string]interface{}, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func extractRecentMessages(inboundData map[string]interface{}) []map[string]interface{} {
+	if len(inboundData) == 0 {
+		return nil
+	}
+	raw, ok := inboundData["recent_messages"]
+	if !ok {
+		return nil
+	}
+	msgs, ok := raw.([]map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return msgs
 }
 
 func defaultPromptContextValue(value string) string {
