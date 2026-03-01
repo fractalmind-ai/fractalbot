@@ -455,6 +455,9 @@ func (b *SlackBot) handleMessageEvent(ctx context.Context, msg *slackInboundMess
 	if msg == nil {
 		return
 	}
+	if msg.channelType != "im" {
+		return
+	}
 
 	b.markActivity()
 

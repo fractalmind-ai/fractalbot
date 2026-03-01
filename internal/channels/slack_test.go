@@ -363,14 +363,14 @@ func TestSlackIgnoreNonDMFromUnauthorized(t *testing.T) {
 	})
 
 	if handler.called {
-		t.Fatalf("expected handler not called for unauthorized non-DM")
+		t.Fatalf("expected handler not called for non-DM")
 	}
 	if sent.text != "" {
-		t.Fatalf("expected no reply for unauthorized non-DM, got %q", sent.text)
+		t.Fatalf("expected no reply for non-DM, got %q", sent.text)
 	}
 }
 
-func TestSlackAllowedUserProcessedInChannel(t *testing.T) {
+func TestSlackIgnoreNonDMEvenFromAllowedUser(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
@@ -391,8 +391,8 @@ func TestSlackAllowedUserProcessedInChannel(t *testing.T) {
 		channelType: "channel",
 	})
 
-	if !handler.called {
-		t.Fatalf("expected handler called for allowed user in channel")
+	if handler.called {
+		t.Fatalf("expected handler not called for non-DM even from allowed user")
 	}
 }
 
@@ -405,14 +405,8 @@ func TestSlackChannelAllowlistAuthorizes(t *testing.T) {
 	handler := &fakeSlackHandler{reply: "ok"}
 	bot.SetHandler(handler)
 
-	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
-		_ = ctx
-		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
-	}
-
-	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+	// Channel allowlist is tested via slashCommandReply (AppMentionEvent path)
+	reply := bot.slashCommandReply(context.Background(), &slackInboundMessage{
 		text:        "hello from channel",
 		userID:      "U999",
 		channelID:   "C555",
@@ -422,8 +416,12 @@ func TestSlackChannelAllowlistAuthorizes(t *testing.T) {
 	if !handler.called {
 		t.Fatalf("expected handler called for user in allowed channel")
 	}
-	if sent.text != "ok" {
-		t.Fatalf("expected reply ok, got %q", sent.text)
+	if reply != "ok" {
+		t.Fatalf("expected reply ok, got %q", reply)
+	}
+	data := handler.last.Data.(map[string]interface{})
+	if data["trust_level"] != "channel" {
+		t.Fatalf("expected trust_level=channel, got %v", data["trust_level"])
 	}
 }
 
@@ -436,12 +434,8 @@ func TestSlackChannelAllowlistDeniesUnknownChannel(t *testing.T) {
 	handler := &fakeSlackHandler{reply: "ok"}
 	bot.SetHandler(handler)
 
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
-		_ = ctx
-		return nil
-	}
-
-	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
+	// Channel allowlist is tested via slashCommandReply (AppMentionEvent path)
+	reply := bot.slashCommandReply(context.Background(), &slackInboundMessage{
 		text:        "hello",
 		userID:      "U999",
 		channelID:   "C999",
@@ -450,6 +444,35 @@ func TestSlackChannelAllowlistDeniesUnknownChannel(t *testing.T) {
 
 	if handler.called {
 		t.Fatalf("expected handler not called for unknown channel")
+	}
+	if !strings.Contains(reply, "Unauthorized") {
+		t.Fatalf("expected unauthorized reply, got %q", reply)
+	}
+}
+
+func TestSlackAllowedUserInChannelGetsTrustFull(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, []string{"C555"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	// allowedUser @mentions bot in a channel — trust_level should be "full"
+	bot.slashCommandReply(context.Background(), &slackInboundMessage{
+		text:        "hello",
+		userID:      "U123",
+		channelID:   "C555",
+		channelType: "channel",
+	})
+
+	if !handler.called {
+		t.Fatalf("expected handler called for allowed user")
+	}
+	data := handler.last.Data.(map[string]interface{})
+	if data["trust_level"] != "full" {
+		t.Fatalf("expected trust_level=full for allowedUser, got %v", data["trust_level"])
 	}
 }
 
