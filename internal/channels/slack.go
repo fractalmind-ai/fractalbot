@@ -37,10 +37,11 @@ type SlackBot struct {
 	socketClient *socketmode.Client
 	ackFn        func(req socketmode.Request, payload ...interface{})
 
-	startFn        func(ctx context.Context) error
-	stopFn         func() error
-	sendMessageFn  func(ctx context.Context, channelID, text string) error
-	fetchHistoryFn func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
+	startFn                  func(ctx context.Context) error
+	stopFn                   func() error
+	sendMessageFn            func(ctx context.Context, channelID, text string) error
+	sendMessageWithOptionsFn func(ctx context.Context, channelID, text string, opts SendOptions) error
+	fetchHistoryFn           func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
 
 	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
 	runSocketModeFn       func(ctx context.Context, socketClient *socketmode.Client) error
@@ -154,11 +155,26 @@ func (b *SlackBot) Stop() error {
 }
 
 func (b *SlackBot) SendMessage(ctx context.Context, target string, text string) error {
-	if b.sendMessageFn == nil {
-		return errors.New("slack sender not configured")
-	}
+	return b.SendMessageWithOptions(ctx, target, text, SendOptions{})
+}
+
+func (b *SlackBot) SendMessageWithOptions(ctx context.Context, target string, text string, opts SendOptions) error {
 	if strings.TrimSpace(target) == "" {
 		return errors.New("slack channel ID is required")
+	}
+	if b.sendMessageWithOptionsFn != nil {
+		if err := b.sendMessageWithOptionsFn(ctx, target, text, opts); err != nil {
+			b.markError()
+			return err
+		}
+		b.markActivity()
+		return nil
+	}
+	if strings.TrimSpace(opts.ThreadTS) != "" {
+		return errors.New("slack threaded sender not configured")
+	}
+	if b.sendMessageFn == nil {
+		return errors.New("slack sender not configured")
 	}
 	if err := b.sendMessageFn(ctx, target, text); err != nil {
 		b.markError()
@@ -189,6 +205,7 @@ func (b *SlackBot) initClients() {
 	if b.waitReconnectFn == nil {
 		b.waitReconnectFn = waitForReconnect
 	}
+	b.sendMessageWithOptionsFn = b.sendTextWithOptions
 	b.sendMessageFn = b.sendText
 	b.startFn = b.startSocketMode
 }
@@ -843,6 +860,10 @@ func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text str
 }
 
 func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
+	return b.sendTextWithOptions(ctx, channelID, text, SendOptions{})
+}
+
+func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text string, opts SendOptions) error {
 	if b.apiClient == nil {
 		b.markError()
 		return errors.New("slack api client not initialized")
@@ -851,7 +872,13 @@ func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
 		b.markError()
 		return errors.New("slack channel ID is required")
 	}
-	_, _, err := b.apiClient.PostMessageContext(ctx, channelID, slack.MsgOptionText(text, false))
+	msgOptions := []slack.MsgOption{
+		slack.MsgOptionText(text, false),
+	}
+	if strings.TrimSpace(opts.ThreadTS) != "" {
+		msgOptions = append(msgOptions, slack.MsgOptionTS(strings.TrimSpace(opts.ThreadTS)))
+	}
+	_, _, err := b.apiClient.PostMessageContext(ctx, channelID, msgOptions...)
 	if err != nil {
 		b.markError()
 		return err

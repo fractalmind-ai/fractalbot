@@ -14,6 +14,16 @@ type Channel interface {
 	IsRunning() bool
 }
 
+// SendOptions defines optional outbound message metadata.
+type SendOptions struct {
+	ThreadTS string
+}
+
+// ThreadedSender is implemented by channels that support threaded sends.
+type ThreadedSender interface {
+	SendMessageWithOptions(ctx context.Context, target string, text string, opts SendOptions) error
+}
+
 // HandlerAware is implemented by channels that accept inbound handlers.
 type HandlerAware interface {
 	SetHandler(handler IncomingMessageHandler)

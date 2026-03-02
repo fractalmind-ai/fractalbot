@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 	"github.com/gorilla/websocket"
@@ -427,6 +428,45 @@ func (f *fakeSendChannel) SendMessage(ctx context.Context, target string, text s
 
 func (f *fakeSendChannel) IsRunning() bool { return f.running }
 
+type fakeThreadedSendChannel struct {
+	name     string
+	running  bool
+	lastChat string
+	lastText string
+	lastOpts channels.SendOptions
+	sendErr  error
+}
+
+func (f *fakeThreadedSendChannel) Name() string { return f.name }
+
+func (f *fakeThreadedSendChannel) Start(ctx context.Context) error {
+	_ = ctx
+	f.running = true
+	return nil
+}
+
+func (f *fakeThreadedSendChannel) Stop() error {
+	f.running = false
+	return nil
+}
+
+func (f *fakeThreadedSendChannel) SendMessage(ctx context.Context, target string, text string) error {
+	_ = ctx
+	f.lastChat = target
+	f.lastText = text
+	return f.sendErr
+}
+
+func (f *fakeThreadedSendChannel) SendMessageWithOptions(ctx context.Context, target string, text string, opts channels.SendOptions) error {
+	_ = ctx
+	f.lastChat = target
+	f.lastText = text
+	f.lastOpts = opts
+	return f.sendErr
+}
+
+func (f *fakeThreadedSendChannel) IsRunning() bool { return f.running }
+
 func TestMessageSendAPI(t *testing.T) {
 	cfg := &config.Config{
 		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
@@ -442,6 +482,10 @@ func TestMessageSendAPI(t *testing.T) {
 	fake := &fakeSendChannel{name: "telegram"}
 	if err := server.agentManager.ChannelManager.Register(fake); err != nil {
 		t.Fatalf("register fake channel: %v", err)
+	}
+	fakeSlack := &fakeThreadedSendChannel{name: "slack"}
+	if err := server.agentManager.ChannelManager.Register(fakeSlack); err != nil {
+		t.Fatalf("register fake slack channel: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -481,6 +525,62 @@ func TestMessageSendAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("success with thread ts on threaded channel", func(t *testing.T) {
+		fakeSlack.lastChat = ""
+		fakeSlack.lastText = ""
+		fakeSlack.lastOpts = channels.SendOptions{}
+
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"slack","to":"C0A8ESWV7D0","text":"reply","thread_ts":"1234567890.123456"}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("unexpected status %d body=%s", resp.StatusCode, string(body))
+		}
+		if fakeSlack.lastChat != "C0A8ESWV7D0" {
+			t.Fatalf("expected lastChat=C0A8ESWV7D0 got %s", fakeSlack.lastChat)
+		}
+		if fakeSlack.lastText != "reply" {
+			t.Fatalf("expected text captured, got %q", fakeSlack.lastText)
+		}
+		if fakeSlack.lastOpts.ThreadTS != "1234567890.123456" {
+			t.Fatalf("expected thread ts passed, got %q", fakeSlack.lastOpts.ThreadTS)
+		}
+	})
+
+	t.Run("thread ts tolerated for non-threaded channel", func(t *testing.T) {
+		fake.lastChat = ""
+		fake.lastText = ""
+
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"telegram","to":"98765","text":"hello","thread_ts":"1234567890.123456"}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("unexpected status %d body=%s", resp.StatusCode, string(body))
+		}
+		if fake.lastChat != "98765" {
+			t.Fatalf("expected lastChat=98765 got %s", fake.lastChat)
+		}
+		if fake.lastText != "hello" {
+			t.Fatalf("expected text captured, got %q", fake.lastText)
+		}
+	})
+
 	t.Run("validation", func(t *testing.T) {
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
@@ -502,7 +602,7 @@ func TestMessageSendAPI(t *testing.T) {
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
 			"application/json",
-			strings.NewReader(`{"channel":"slack","to":"1","text":"hello"}`),
+			strings.NewReader(`{"channel":"unknown-channel","to":"1","text":"hello"}`),
 		)
 		if err != nil {
 			t.Fatalf("post failed: %v", err)
