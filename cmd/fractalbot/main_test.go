@@ -55,7 +55,7 @@ func TestRunMessageSend(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		called := false
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
 			_ = ctx
 			_ = cfg
 			called = true
@@ -67,6 +67,9 @@ func TestRunMessageSend(t *testing.T) {
 			}
 			if text != "hello from cli" {
 				t.Fatalf("text=%q", text)
+			}
+			if threadTS != "" {
+				t.Fatalf("threadTS=%q", threadTS)
 			}
 			return nil
 		}
@@ -91,6 +94,45 @@ func TestRunMessageSend(t *testing.T) {
 		}
 	})
 
+	t.Run("success with thread ts", func(t *testing.T) {
+		called := false
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+			_ = ctx
+			_ = cfg
+			called = true
+			if channel != "slack" {
+				t.Fatalf("channel=%q", channel)
+			}
+			if to != "C0A8ESWV7D0" {
+				t.Fatalf("to=%s", to)
+			}
+			if text != "thread reply" {
+				t.Fatalf("text=%q", text)
+			}
+			if threadTS != "1234567890.123456" {
+				t.Fatalf("threadTS=%q", threadTS)
+			}
+			return nil
+		}
+
+		var buf bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"message", "send",
+			"--channel", "slack",
+			"--to", "C0A8ESWV7D0",
+			"--thread-ts", "1234567890.123456",
+			"--text", "thread reply",
+		}, &buf)
+
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d output=%q", code, buf.String())
+		}
+		if !called {
+			t.Fatalf("expected message send function to be called")
+		}
+	})
+
 	t.Run("validation errors", func(t *testing.T) {
 		cases := []struct {
 			name          string
@@ -111,12 +153,13 @@ func TestRunMessageSend(t *testing.T) {
 
 		for _, testCase := range cases {
 			t.Run(testCase.name, func(t *testing.T) {
-				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
+				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
 					_ = ctx
 					_ = cfg
 					_ = channel
 					_ = to
 					_ = text
+					_ = threadTS
 					t.Fatalf("messageSendFn should not be called for validation error")
 					return nil
 				}
@@ -135,12 +178,13 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("unknown subcommand", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel
 			_ = to
 			_ = text
+			_ = threadTS
 			t.Fatalf("messageSendFn should not be called")
 			return nil
 		}
@@ -159,12 +203,13 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("send failure", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel
 			_ = to
 			_ = text
+			_ = threadTS
 			return fmt.Errorf("gateway down")
 		}
 

@@ -3,6 +3,8 @@ package channels
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -1260,5 +1262,83 @@ func TestSlackHistoryFetchErrorDoesNotBlock(t *testing.T) {
 	data := handler.last.Data.(map[string]interface{})
 	if _, hasRecent := data["recent_messages"]; hasRecent {
 		t.Fatalf("expected no recent_messages on fetch error, got %v", data["recent_messages"])
+	}
+}
+
+func TestSlackSendMessageWithOptionsUsesThreadTS(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var captured slackSendCapture
+	var capturedOpts SendOptions
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text string, opts SendOptions) error {
+		_ = ctx
+		captured = slackSendCapture{channelID: channelID, text: text}
+		capturedOpts = opts
+		return nil
+	}
+
+	if err := bot.SendMessageWithOptions(
+		context.Background(),
+		"C0A8ESWV7D0",
+		"thread reply",
+		SendOptions{ThreadTS: "1234567890.123456"},
+	); err != nil {
+		t.Fatalf("SendMessageWithOptions: %v", err)
+	}
+
+	if captured.channelID != "C0A8ESWV7D0" {
+		t.Fatalf("channelID=%q", captured.channelID)
+	}
+	if captured.text != "thread reply" {
+		t.Fatalf("text=%q", captured.text)
+	}
+	if capturedOpts.ThreadTS != "1234567890.123456" {
+		t.Fatalf("threadTS=%q", capturedOpts.ThreadTS)
+	}
+}
+
+func TestSlackSendTextWithOptionsPostsThreadTS(t *testing.T) {
+	var receivedChannel string
+	var receivedText string
+	var receivedThreadTS string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		receivedChannel = r.FormValue("channel")
+		receivedText = r.FormValue("text")
+		receivedThreadTS = r.FormValue("thread_ts")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C0A8ESWV7D0","ts":"123.456","message":{"text":"thread reply"}}`))
+	}))
+	defer server.Close()
+
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+
+	if err := bot.sendTextWithOptions(
+		context.Background(),
+		"C0A8ESWV7D0",
+		"thread reply",
+		SendOptions{ThreadTS: "1234567890.123456"},
+	); err != nil {
+		t.Fatalf("sendTextWithOptions: %v", err)
+	}
+
+	if receivedChannel != "C0A8ESWV7D0" {
+		t.Fatalf("channel=%q", receivedChannel)
+	}
+	if receivedText != "thread reply" {
+		t.Fatalf("text=%q", receivedText)
+	}
+	if receivedThreadTS != "1234567890.123456" {
+		t.Fatalf("thread_ts=%q", receivedThreadTS)
 	}
 }

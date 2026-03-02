@@ -160,6 +160,7 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	channel := sendFS.String("channel", "telegram", "target channel (e.g. telegram, slack, feishu, discord, imessage)")
 	to := sendFS.String("to", "", "target chat ID")
 	text := sendFS.String("text", "", "message text")
+	threadTS := sendFS.String("thread-ts", "", "optional Slack thread timestamp for threaded reply")
 
 	if err := sendFS.Parse(args[1:]); err != nil {
 		return 1
@@ -183,7 +184,9 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 		return 1
 	}
 
-	if err := messageSendFn(ctx, cfg, channelName, toValue, messageText); err != nil {
+	threadTSValue := strings.TrimSpace(*threadTS)
+
+	if err := messageSendFn(ctx, cfg, channelName, toValue, messageText, threadTSValue); err != nil {
 		logger.Printf("failed to send message: %v", err)
 		return 1
 	}
@@ -192,11 +195,12 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	return 0
 }
 
-func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to string, text string) error {
+func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
 	type requestPayload struct {
-		Channel string `json:"channel"`
-		To      string `json:"to"`
-		Text    string `json:"text"`
+		Channel  string `json:"channel"`
+		To       string `json:"to"`
+		Text     string `json:"text"`
+		ThreadTS string `json:"thread_ts,omitempty"`
 	}
 
 	type responsePayload struct {
@@ -205,9 +209,10 @@ func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel s
 	}
 
 	requestBody, err := json.Marshal(requestPayload{
-		Channel: channel,
-		To:      to,
-		Text:    text,
+		Channel:  channel,
+		To:       to,
+		Text:     text,
+		ThreadTS: threadTS,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)

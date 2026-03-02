@@ -249,16 +249,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type messageSendRequest struct {
-	Channel string `json:"channel"`
-	To      string `json:"to"`
-	Text    string `json:"text"`
+	Channel  string `json:"channel"`
+	To       string `json:"to"`
+	Text     string `json:"text"`
+	ThreadTS string `json:"thread_ts,omitempty"`
 }
 
 type messageSendResponse struct {
-	Status  string `json:"status"`
-	Channel string `json:"channel,omitempty"`
-	To      string `json:"to,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Status   string `json:"status"`
+	Channel  string `json:"channel,omitempty"`
+	To       string `json:"to,omitempty"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +279,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	request.Channel = strings.ToLower(strings.TrimSpace(request.Channel))
+	request.To = strings.TrimSpace(request.To)
 	request.Text = strings.TrimSpace(request.Text)
+	request.ThreadTS = strings.TrimSpace(request.ThreadTS)
 
 	if request.Channel == "" {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "channel is required"})
@@ -303,15 +307,23 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := channel.SendMessage(r.Context(), request.To, request.Text); err != nil {
+	if threaded, ok := channel.(channels.ThreadedSender); ok {
+		if err := threaded.SendMessageWithOptions(r.Context(), request.To, request.Text, channels.SendOptions{
+			ThreadTS: request.ThreadTS,
+		}); err != nil {
+			writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
+			return
+		}
+	} else if err := channel.SendMessage(r.Context(), request.To, request.Text); err != nil {
 		writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, messageSendResponse{
-		Status:  "ok",
-		Channel: request.Channel,
-		To:      request.To,
+		Status:   "ok",
+		Channel:  request.Channel,
+		To:       request.To,
+		ThreadTS: request.ThreadTS,
 	})
 }
 
