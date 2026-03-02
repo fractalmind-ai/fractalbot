@@ -90,10 +90,11 @@ func TestValidateOhMyCodeAgentInvalidName(t *testing.T) {
 
 func TestBuildOhMyCodeTaskPromptIncludesTelegramContextAndSkillHint(t *testing.T) {
 	out := buildOhMyCodeTaskPrompt("hello world", "main", map[string]interface{}{
-		"channel":  "telegram",
-		"chat_id":  int64(99),
-		"user_id":  int64(123),
-		"username": "alice",
+		"channel":   "telegram",
+		"chat_id":   int64(99),
+		"user_id":   int64(123),
+		"username":  "alice",
+		"thread_ts": "1234567890.123456",
 	})
 
 	expectedParts := []string{
@@ -103,6 +104,8 @@ func TestBuildOhMyCodeTaskPromptIncludesTelegramContextAndSkillHint(t *testing.T
 		"- user_id: 123",
 		"- username: alice",
 		"- selected_agent: main",
+		"- thread_ts: 1234567890.123456",
+		"If thread_ts is present, reply in the same thread using `--thread-ts` flag.",
 		"prefer `use-fractalbot` skill",
 		"use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)",
 		"default to current chat_id",
@@ -134,6 +137,18 @@ func TestBuildOhMyCodeTaskPromptIncludesResolvedTargetContract(t *testing.T) {
 		if !strings.Contains(out, part) {
 			t.Fatalf("expected %q in prompt, got %q", part, out)
 		}
+	}
+}
+
+func TestBuildOhMyCodeTaskPromptOmitsThreadTSWhenMissing(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("send a message", "qa-1", map[string]interface{}{
+		"channel": "slack",
+		"chat_id": "D123",
+		"user_id": "U123",
+	})
+
+	if strings.Contains(out, "- thread_ts:") {
+		t.Fatalf("expected thread_ts to be omitted when missing, got %q", out)
 	}
 }
 
