@@ -1265,6 +1265,92 @@ func TestSlackHistoryFetchErrorDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestSlackMessageFromEventIncludesThreadTS(t *testing.T) {
+	msg := slackMessageFromEvent(&slackevents.MessageEvent{
+		User:            "U123",
+		Channel:         "D456",
+		ChannelType:     "im",
+		Text:            "hello",
+		ThreadTimeStamp: "1234567890.123456",
+	})
+	if msg == nil {
+		t.Fatalf("expected parsed inbound message")
+	}
+	if msg.threadTS != "1234567890.123456" {
+		t.Fatalf("threadTS=%q", msg.threadTS)
+	}
+}
+
+func TestSlackMessageFromAppMentionEventIncludesThreadTS(t *testing.T) {
+	msg := slackMessageFromAppMentionEvent(&slackevents.AppMentionEvent{
+		User:            "U123",
+		Channel:         "C456",
+		Text:            "<@B999> hello",
+		ThreadTimeStamp: "1234567890.123456",
+	})
+	if msg == nil {
+		t.Fatalf("expected parsed inbound mention message")
+	}
+	if msg.threadTS != "1234567890.123456" {
+		t.Fatalf("threadTS=%q", msg.threadTS)
+	}
+}
+
+func TestSlackReplyUsesThreadTSWhenPresent(t *testing.T) {
+	var receivedThreadTS string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		receivedThreadTS = r.FormValue("thread_ts")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C0A8ESWV7D0","ts":"123.456","message":{"text":"thread reply"}}`))
+	}))
+	defer server.Close()
+
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		t.Fatalf("expected reply to use thread API path, got plain sendMessage call")
+		return nil
+	}
+
+	if err := bot.reply(context.Background(), &slackInboundMessage{
+		channelID: "C0A8ESWV7D0",
+		threadTS:  "1234567890.123456",
+	}, "thread reply"); err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+
+	if receivedThreadTS != "1234567890.123456" {
+		t.Fatalf("thread_ts=%q", receivedThreadTS)
+	}
+}
+
+func TestSlackToProtocolMessageIncludesThreadTS(t *testing.T) {
+	bot := &SlackBot{}
+	msg := &slackInboundMessage{
+		userID:      "U123",
+		channelID:   "C456",
+		channelType: "app_mention",
+		threadTS:    "1234567890.123456",
+	}
+
+	protoMsg := bot.toProtocolMessage(msg, "hello", "qa-1", "full", nil)
+	data, ok := protoMsg.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", protoMsg.Data)
+	}
+	if data["thread_ts"] != "1234567890.123456" {
+		t.Fatalf("thread_ts=%v", data["thread_ts"])
+	}
+}
+
 func TestSlackSendMessageWithOptionsUsesThreadTS(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
