@@ -851,6 +851,14 @@ func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text str
 	if b.sendMessageFn == nil {
 		return errors.New("slack sender not configured")
 	}
+	if msg.threadTS != "" {
+		if err := b.sendTextWithOptions(ctx, msg.channelID, TruncateSlackReply(text), SendOptions{ThreadTS: msg.threadTS}); err != nil {
+			b.markError()
+			return err
+		}
+		b.markActivity()
+		return nil
+	}
 	if err := b.sendMessageFn(ctx, msg.channelID, TruncateSlackReply(text)); err != nil {
 		b.markError()
 		return err
@@ -942,6 +950,7 @@ func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trus
 		"chat_id":     msg.channelID,
 		"chatType":    msg.channelType,
 		"trust_level": trustLevel,
+		"thread_ts":   msg.threadTS,
 	}
 	if len(recentMessages) > 0 {
 		data["recent_messages"] = recentMessages
@@ -958,6 +967,7 @@ type slackInboundMessage struct {
 	userID      string
 	channelID   string
 	channelType string
+	threadTS    string
 }
 
 func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage {
@@ -978,6 +988,7 @@ func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage
 		userID:      event.User,
 		channelID:   event.Channel,
 		channelType: event.ChannelType,
+		threadTS:    event.ThreadTimeStamp,
 	}
 }
 
@@ -997,6 +1008,7 @@ func slackMessageFromAppMentionEvent(event *slackevents.AppMentionEvent) *slackI
 		userID:      event.User,
 		channelID:   event.Channel,
 		channelType: "app_mention",
+		threadTS:    event.ThreadTimeStamp,
 	}
 }
 
