@@ -424,6 +424,7 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	userID := promptContextValue(inboundData, "user_id")
 	username := promptContextValue(inboundData, "username")
 	trustLevel := promptContextValue(inboundData, "trust_level")
+	threadTS := promptContextValue(inboundData, "thread_ts")
 
 	var sb strings.Builder
 	sb.WriteString("# Task Assignment\n\n")
@@ -433,9 +434,13 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	sb.WriteString(fmt.Sprintf("- user_id: %s\n", defaultPromptContextValue(userID)))
 	sb.WriteString(fmt.Sprintf("- username: %s\n", defaultPromptContextValue(username)))
 	sb.WriteString(fmt.Sprintf("- selected_agent: %s\n", defaultPromptContextValue(strings.TrimSpace(selectedAgent))))
+	if threadTS != "" {
+		sb.WriteString(fmt.Sprintf("- thread_ts: %s\n", threadTS))
+	}
 	sb.WriteString("\n")
 	sb.WriteString("Routing instructions:\n")
 	sb.WriteString("- selected_agent is the final routing target after default/allowlist resolution.\n")
+	sb.WriteString("- If thread_ts is present, reply in the same thread using `--thread-ts` flag.\n")
 	sb.WriteString("- For outbound messaging intent, prefer `use-fractalbot` skill.\n")
 	sb.WriteString("- Effective available skills:\n")
 	sb.WriteString("  - use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)\n")
