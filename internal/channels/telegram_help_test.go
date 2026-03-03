@@ -30,11 +30,11 @@ func TestTelegramHelpTextIncludesAgentInfo(t *testing.T) {
 	if !strings.Contains(text, "/monitor <name>") {
 		t.Fatalf("expected help text to include /monitor command")
 	}
-	if !strings.Contains(text, "/tool <name> <args") {
-		t.Fatalf("expected help text to include /tool usage")
-	}
 	if !strings.Contains(text, "/tools") {
 		t.Fatalf("expected help text to include /tools usage")
+	}
+	if !strings.Contains(text, "intentionally unavailable") {
+		t.Fatalf("expected help text to mark /tool and /tools unavailable")
 	}
 	if !strings.Contains(text, "Default agent: qa-1") {
 		t.Fatalf("expected help text to include default agent")

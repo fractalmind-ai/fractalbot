@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fractalmind-ai/fractalbot/internal/memory"
 	"gopkg.in/yaml.v3"
 )
 
@@ -146,60 +145,11 @@ type OhMyCodeConfig struct {
 	AssignTimeoutSeconds int `yaml:"assignTimeoutSeconds,omitempty"`
 }
 
-// AgentsConfig contains agent runtime settings.
+// AgentsConfig contains gateway-side agent routing settings.
 type AgentsConfig struct {
 	Workspace     string          `yaml:"workspace"`
 	MaxConcurrent int             `yaml:"maxConcurrent"`
 	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
-	Memory        *MemoryConfig   `yaml:"memory,omitempty"`
-	Runtime       *RuntimeConfig  `yaml:"runtime,omitempty"`
-}
-
-// MemoryConfig controls semantic memory indexing and search.
-type MemoryConfig struct {
-	Enabled bool `yaml:"enabled,omitempty"`
-
-	// SourceRoot is the workspace root for MEMORY.md and memory/**/*.md.
-	SourceRoot string `yaml:"sourceRoot,omitempty"`
-	// CacheDir overrides the default cache dir for models/indexes.
-	CacheDir string `yaml:"cacheDir,omitempty"`
-
-	// ModelID selects the embedding model (default: multilingual-e5-small).
-	ModelID string `yaml:"modelId,omitempty"`
-	// ModelURL overrides the ONNX model download URL.
-	ModelURL string `yaml:"modelUrl,omitempty"`
-	// ModelSHA256 is the expected SHA256 of the ONNX model file.
-	ModelSHA256 string `yaml:"modelSha256,omitempty"`
-	// TokenizerURL overrides the tokenizer.json download URL.
-	TokenizerURL string `yaml:"tokenizerUrl,omitempty"`
-	// TokenizerSHA256 is the expected SHA256 of tokenizer.json.
-	TokenizerSHA256 string `yaml:"tokenizerSha256,omitempty"`
-
-	// ChunkTokens controls approximate tokens per chunk.
-	ChunkTokens int `yaml:"chunkTokens,omitempty"`
-	// ChunkOverlap controls overlap tokens between chunks.
-	ChunkOverlap int `yaml:"chunkOverlap,omitempty"`
-	// TopK controls the number of results returned.
-	TopK int `yaml:"topK,omitempty"`
-	// MaxTokens controls input token limit for embeddings.
-	MaxTokens int `yaml:"maxTokens,omitempty"`
-}
-
-// RuntimeConfig enables the in-process agent runtime.
-type RuntimeConfig struct {
-	Enabled       bool     `yaml:"enabled,omitempty"`
-	Mode          string   `yaml:"mode,omitempty"`
-	AllowedTools  []string `yaml:"allowedTools,omitempty"`
-	MaxReplyChars int      `yaml:"maxReplyChars,omitempty"`
-	// SandboxRoots restricts tool file access to these roots. Empty means deny all.
-	SandboxRoots []string `yaml:"sandboxRoots,omitempty"`
-	// CommandExec controls command.exec allowlist behavior.
-	CommandExec *CommandExecConfig `yaml:"commandExec,omitempty"`
-}
-
-// CommandExecConfig configures command.exec allowlist.
-type CommandExecConfig struct {
-	Allowlist []string `yaml:"allowlist,omitempty"`
 }
 
 // LoadConfig loads configuration from file.
@@ -254,46 +204,10 @@ func DefaultConfig() *Config {
 }
 
 func validateConfig(cfg *Config) error {
-	if err := validateMemoryConfig(cfg); err != nil {
-		return err
-	}
-	if err := validateRuntimeConfig(cfg); err != nil {
-		return err
-	}
 	if err := validateOhMyCodeConfig(cfg); err != nil {
 		return err
 	}
 	return nil
-}
-
-func validateMemoryConfig(cfg *Config) error {
-	if cfg == nil || cfg.Agents == nil || cfg.Agents.Memory == nil {
-		return nil
-	}
-	modelID := strings.TrimSpace(cfg.Agents.Memory.ModelID)
-	if modelID == "" {
-		return nil
-	}
-	if err := memory.ValidateModelID(modelID); err != nil {
-		return fmt.Errorf("agents.memory.modelId: %w", err)
-	}
-	return nil
-}
-
-func validateRuntimeConfig(cfg *Config) error {
-	if cfg == nil || cfg.Agents == nil || cfg.Agents.Runtime == nil {
-		return nil
-	}
-	mode := strings.TrimSpace(cfg.Agents.Runtime.Mode)
-	if mode == "" {
-		return nil
-	}
-	switch mode {
-	case "basic", "loop":
-		return nil
-	default:
-		return fmt.Errorf("agents.runtime.mode: must be \"basic\" or \"loop\"")
-	}
 }
 
 func validateOhMyCodeConfig(cfg *Config) error {

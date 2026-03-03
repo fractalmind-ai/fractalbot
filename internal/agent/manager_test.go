@@ -8,31 +8,8 @@ import (
 	"testing"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
-	agentruntime "github.com/fractalmind-ai/fractalbot/internal/runtime"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
-
-type runtimeStub struct {
-	reply string
-	err   error
-	tasks []agentruntime.Task
-}
-
-func (r *runtimeStub) Start(ctx context.Context) error {
-	_ = ctx
-	return nil
-}
-
-func (r *runtimeStub) Stop(ctx context.Context) error {
-	_ = ctx
-	return nil
-}
-
-func (r *runtimeStub) HandleTask(ctx context.Context, task agentruntime.Task) (string, error) {
-	_ = ctx
-	r.tasks = append(r.tasks, task)
-	return r.reply, r.err
-}
 
 func TestValidateOhMyCodeAgentDefaultOnly(t *testing.T) {
 	manager := NewManager(&config.AgentsConfig{
@@ -187,7 +164,7 @@ func TestBuildPromptTrustLevelChannelHasSecurityTags(t *testing.T) {
 	}
 }
 
-func TestHandleIncomingToolDisabledWhenRuntimeOff(t *testing.T) {
+func TestHandleIncomingToolCommandUnavailableInGatewayMode(t *testing.T) {
 	manager := NewManager(&config.AgentsConfig{
 		OhMyCode: &config.OhMyCodeConfig{
 			Enabled:      true,
@@ -208,73 +185,32 @@ func TestHandleIncomingToolDisabledWhenRuntimeOff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HandleIncoming: %v", err)
 		}
-		if !strings.Contains(out, "runtime tools are disabled") {
-			t.Fatalf("expected disabled message for %q, got %q", input, out)
-		}
-		if !strings.Contains(out, "agents.runtime.enabled") {
-			t.Fatalf("expected enabled config hint for %q, got %q", input, out)
-		}
-		if !strings.Contains(out, "agents.runtime.allowedTools") {
-			t.Fatalf("expected allowedTools config hint for %q, got %q", input, out)
+		if !strings.Contains(out, "/tool and /tools are not available in gateway mode") {
+			t.Fatalf("expected gateway mode message for %q, got %q", input, out)
 		}
 	}
 }
 
-func TestHandleIncomingNormalizesHeartbeatAndNoReplyMarkers(t *testing.T) {
+func TestNormalizeUserReplyMarkers(t *testing.T) {
 	tests := []struct {
-		name    string
-		channel string
-		reply   string
+		name  string
+		reply string
+		want  string
 	}{
-		{name: "heartbeat-slack", channel: "slack", reply: markerHeartbeatOK},
-		{name: "heartbeat-telegram-whitespace", channel: "telegram", reply: "  HEARTBEAT_OK  \n"},
-		{name: "no-reply-slack", channel: "slack", reply: markerNoReply},
-		{name: "no-reply-telegram-whitespace", channel: "telegram", reply: "\nNO_REPLY\n"},
+		{name: "heartbeat", reply: markerHeartbeatOK, want: ""},
+		{name: "heartbeat-whitespace", reply: "  HEARTBEAT_OK  \n", want: ""},
+		{name: "no-reply", reply: markerNoReply, want: ""},
+		{name: "no-reply-whitespace", reply: "\nNO_REPLY\n", want: ""},
+		{name: "normal-text", reply: "ok", want: "ok"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rt := &runtimeStub{reply: tc.reply}
-			manager := NewManager(&config.AgentsConfig{})
-			manager.runtime = rt
-
-			out, err := manager.HandleIncoming(context.Background(), &protocol.Message{
-				Data: map[string]interface{}{
-					"channel": tc.channel,
-					"text":    "hello",
-					"agent":   "qa-1",
-				},
-			})
-			if err != nil {
-				t.Fatalf("HandleIncoming: %v", err)
-			}
-			if out != "" {
-				t.Fatalf("expected empty normalized reply, got %q", out)
-			}
-			if len(rt.tasks) != 1 {
-				t.Fatalf("expected one runtime task, got %d", len(rt.tasks))
+			out := normalizeUserReply(tc.reply)
+			if out != tc.want {
+				t.Fatalf("normalizeUserReply(%q)=%q want %q", tc.reply, out, tc.want)
 			}
 		})
-	}
-}
-
-func TestHandleIncomingKeepsNonMarkerRuntimeReply(t *testing.T) {
-	rt := &runtimeStub{reply: "runtime: received task"}
-	manager := NewManager(&config.AgentsConfig{})
-	manager.runtime = rt
-
-	out, err := manager.HandleIncoming(context.Background(), &protocol.Message{
-		Data: map[string]interface{}{
-			"channel": "slack",
-			"text":    "hello",
-			"agent":   "qa-1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("HandleIncoming: %v", err)
-	}
-	if out != "runtime: received task" {
-		t.Fatalf("expected runtime reply preserved, got %q", out)
 	}
 }
 
