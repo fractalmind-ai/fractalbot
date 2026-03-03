@@ -979,7 +979,7 @@ func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage
 	if event == nil {
 		return nil
 	}
-	if event.SubType != "" {
+	if event.SubType != "" && event.SubType != "file_share" {
 		return nil
 	}
 	if event.BotID != "" {
