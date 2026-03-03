@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -706,7 +707,8 @@ func (b *TelegramBot) handleIncomingMessage(message *TelegramMessage) {
 		}
 	}
 
-	msg := b.convertToProtocolMessage(message, selection.Task, selection.Agent)
+	attachments := b.extractTelegramAttachments(b.ctx, message)
+	msg := b.convertToProtocolMessage(message, selection.Task, selection.Agent, attachments)
 
 	if b.handler != nil {
 		replyText, err := b.handler.HandleIncoming(b.ctx, msg)
@@ -1114,11 +1116,31 @@ func formatUserList(users []int64) string {
 
 // TelegramMessage represents a Telegram message.
 type TelegramMessage struct {
-	MessageID int64         `json:"message_id"`
-	From      *TelegramUser `json:"from"`
-	Chat      *TelegramChat `json:"chat"`
-	Date      int64         `json:"date"`
-	Text      string        `json:"text"`
+	MessageID int64               `json:"message_id"`
+	From      *TelegramUser       `json:"from"`
+	Chat      *TelegramChat       `json:"chat"`
+	Date      int64               `json:"date"`
+	Text      string              `json:"text"`
+	Photo     []TelegramPhotoSize `json:"photo,omitempty"`
+	Document  *TelegramDocument   `json:"document,omitempty"`
+}
+
+// TelegramPhotoSize represents a Telegram photo size object.
+type TelegramPhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int64  `json:"file_size,omitempty"`
+}
+
+// TelegramDocument represents a Telegram document attachment.
+type TelegramDocument struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
 }
 
 // TelegramUser represents a Telegram user.
@@ -1134,19 +1156,185 @@ type TelegramChat struct {
 	Type string `json:"type"`
 }
 
-func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent string) *protocol.Message {
+func (b *TelegramBot) extractTelegramAttachments(ctx context.Context, msg *TelegramMessage) []protocol.Attachment {
+	if msg == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	attachments := make([]protocol.Attachment, 0, 2)
+	if photo := largestTelegramPhoto(msg.Photo); photo != nil {
+		fileURL, err := b.telegramFileURL(ctx, photo.FileID)
+		if err != nil {
+			log.Printf("telegram: failed to resolve photo file URL: %v", err)
+		} else {
+			filename := "photo_" + strings.TrimSpace(photo.FileID)
+			attachments = append(attachments, protocol.Attachment{
+				Type:     "image",
+				Filename: filename,
+				URL:      fileURL,
+				Channel:  "telegram",
+			})
+		}
+	}
+	if msg.Document != nil {
+		fileURL, err := b.telegramFileURL(ctx, msg.Document.FileID)
+		if err != nil {
+			log.Printf("telegram: failed to resolve document file URL: %v", err)
+		} else {
+			filename := strings.TrimSpace(msg.Document.FileName)
+			if filename == "" {
+				filename = "document_" + strings.TrimSpace(msg.Document.FileID)
+			}
+			attachments = append(attachments, protocol.Attachment{
+				Type:     telegramAttachmentType(msg.Document.MimeType, filename),
+				Filename: filename,
+				URL:      fileURL,
+				Channel:  "telegram",
+				MimeType: strings.TrimSpace(msg.Document.MimeType),
+			})
+		}
+	}
+	return attachments
+}
+
+type telegramGetFileResponse struct {
+	OK     bool `json:"ok"`
+	Result struct {
+		FileID   string `json:"file_id"`
+		FilePath string `json:"file_path"`
+	} `json:"result"`
+	ErrorCode   int    `json:"error_code"`
+	Description string `json:"description"`
+}
+
+func (b *TelegramBot) telegramFileURL(ctx context.Context, fileID string) (string, error) {
+	trimmedID := strings.TrimSpace(fileID)
+	if trimmedID == "" {
+		return "", errors.New("telegram file_id is required")
+	}
+
+	apiURL := fmt.Sprintf(
+		"https://api.telegram.org/bot%s/getFile?file_id=%s",
+		b.botToken,
+		url.QueryEscape(trimmedID),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create getFile request: %w", err)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call getFile: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("telegram getFile returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed telegramGetFileResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("failed to parse getFile response: %w", err)
+	}
+	if !parsed.OK {
+		if parsed.Description != "" {
+			return "", fmt.Errorf("telegram getFile failed: %s", parsed.Description)
+		}
+		return "", errors.New("telegram getFile failed")
+	}
+	filePath := strings.TrimSpace(parsed.Result.FilePath)
+	if filePath == "" {
+		return "", errors.New("telegram getFile response missing file_path")
+	}
+	return fmt.Sprintf(
+		"https://api.telegram.org/file/bot%s/%s",
+		b.botToken,
+		strings.TrimLeft(filePath, "/"),
+	), nil
+}
+
+func largestTelegramPhoto(photos []TelegramPhotoSize) *TelegramPhotoSize {
+	if len(photos) == 0 {
+		return nil
+	}
+	bestIdx := 0
+	for i := 1; i < len(photos); i += 1 {
+		current := photos[i]
+		best := photos[bestIdx]
+		currentScore := current.FileSize
+		bestScore := best.FileSize
+		if currentScore == bestScore {
+			currentScore = int64(current.Width * current.Height)
+			bestScore = int64(best.Width * best.Height)
+		}
+		if currentScore > bestScore {
+			bestIdx = i
+		}
+	}
+	return &photos[bestIdx]
+}
+
+func telegramAttachmentType(mimeType, fileName string) string {
+	mime := strings.ToLower(strings.TrimSpace(mimeType))
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "image"
+	case strings.HasPrefix(mime, "video/"):
+		return "video"
+	case strings.HasPrefix(mime, "audio/"):
+		return "audio"
+	}
+
+	lowerName := strings.ToLower(strings.TrimSpace(fileName))
+	switch {
+	case strings.HasSuffix(lowerName, ".png"),
+		strings.HasSuffix(lowerName, ".jpg"),
+		strings.HasSuffix(lowerName, ".jpeg"),
+		strings.HasSuffix(lowerName, ".gif"),
+		strings.HasSuffix(lowerName, ".webp"),
+		strings.HasSuffix(lowerName, ".bmp"),
+		strings.HasSuffix(lowerName, ".svg"):
+		return "image"
+	case strings.HasSuffix(lowerName, ".mp4"),
+		strings.HasSuffix(lowerName, ".mov"),
+		strings.HasSuffix(lowerName, ".avi"),
+		strings.HasSuffix(lowerName, ".mkv"),
+		strings.HasSuffix(lowerName, ".webm"):
+		return "video"
+	case strings.HasSuffix(lowerName, ".mp3"),
+		strings.HasSuffix(lowerName, ".wav"),
+		strings.HasSuffix(lowerName, ".m4a"),
+		strings.HasSuffix(lowerName, ".ogg"),
+		strings.HasSuffix(lowerName, ".flac"),
+		strings.HasSuffix(lowerName, ".aac"):
+		return "audio"
+	default:
+		return "file"
+	}
+}
+
+func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent string, attachments []protocol.Attachment) *protocol.Message {
+	data := map[string]interface{}{
+		"channel":  "telegram",
+		"text":     text,
+		"agent":    agent,
+		"chat_id":  msg.Chat.ID,
+		"chatType": msg.Chat.Type,
+		"user_id":  msg.From.ID,
+		"username": msg.From.UserName,
+	}
+	if len(attachments) > 0 {
+		data["attachments"] = attachments
+	}
 	return &protocol.Message{
-		Kind:   protocol.MessageKindChannel,
-		Action: protocol.ActionCreate,
-		Data: map[string]interface{}{
-			"channel":  "telegram",
-			"text":     text,
-			"agent":    agent,
-			"chat_id":  msg.Chat.ID,
-			"chatType": msg.Chat.Type,
-			"user_id":  msg.From.ID,
-			"username": msg.From.UserName,
-		},
+		Kind:        protocol.MessageKindChannel,
+		Action:      protocol.ActionCreate,
+		Data:        data,
+		Attachments: attachments,
 	}
 }
 

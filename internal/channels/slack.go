@@ -952,13 +952,17 @@ func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trus
 		"trust_level": trustLevel,
 		"thread_ts":   msg.threadTS,
 	}
+	if len(msg.attachments) > 0 {
+		data["attachments"] = msg.attachments
+	}
 	if len(recentMessages) > 0 {
 		data["recent_messages"] = recentMessages
 	}
 	return &protocol.Message{
-		Kind:   protocol.MessageKindChannel,
-		Action: protocol.ActionCreate,
-		Data:   data,
+		Kind:        protocol.MessageKindChannel,
+		Action:      protocol.ActionCreate,
+		Data:        data,
+		Attachments: msg.attachments,
 	}
 }
 
@@ -968,6 +972,7 @@ type slackInboundMessage struct {
 	channelID   string
 	channelType string
 	threadTS    string
+	attachments []protocol.Attachment
 }
 
 func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage {
@@ -989,6 +994,7 @@ func slackMessageFromEvent(event *slackevents.MessageEvent) *slackInboundMessage
 		channelID:   event.Channel,
 		channelType: event.ChannelType,
 		threadTS:    event.ThreadTimeStamp,
+		attachments: slackAttachmentsFromEvent(event),
 	}
 }
 
@@ -1009,6 +1015,61 @@ func slackMessageFromAppMentionEvent(event *slackevents.AppMentionEvent) *slackI
 		channelID:   event.Channel,
 		channelType: "app_mention",
 		threadTS:    event.ThreadTimeStamp,
+	}
+}
+
+func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attachment {
+	if event == nil || event.Message == nil || len(event.Message.Files) == 0 {
+		return nil
+	}
+	attachments := make([]protocol.Attachment, 0, len(event.Message.Files))
+	for _, file := range event.Message.Files {
+		url := strings.TrimSpace(file.URLPrivate)
+		if url == "" {
+			url = strings.TrimSpace(file.URLPrivateDownload)
+		}
+		if url == "" {
+			continue
+		}
+		filename := strings.TrimSpace(file.Name)
+		if filename == "" {
+			filename = strings.TrimSpace(file.Title)
+		}
+		if filename == "" {
+			filename = strings.TrimSpace(file.ID)
+		}
+		attachments = append(attachments, protocol.Attachment{
+			Type:     slackAttachmentType(file.Mimetype, file.Filetype),
+			Filename: filename,
+			URL:      url,
+			Channel:  "slack",
+			MimeType: strings.TrimSpace(file.Mimetype),
+		})
+	}
+	return attachments
+}
+
+func slackAttachmentType(mimeType, fileType string) string {
+	mime := strings.ToLower(strings.TrimSpace(mimeType))
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "image"
+	case strings.HasPrefix(mime, "video/"):
+		return "video"
+	case strings.HasPrefix(mime, "audio/"):
+		return "audio"
+	}
+
+	kind := strings.ToLower(strings.TrimSpace(fileType))
+	switch kind {
+	case "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg":
+		return "image"
+	case "mp4", "mov", "avi", "mkv", "webm":
+		return "video"
+	case "mp3", "wav", "ogg", "m4a", "flac", "aac":
+		return "audio"
+	default:
+		return "file"
 	}
 }
 
