@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 )
 
 var messageSendFn = sendMessageViaGatewayAPI
+var fileDownloadFn = downloadFileViaHTTP
 
 const exitCodeRestartRequested = 75
 
@@ -137,6 +139,8 @@ func runCommand(ctx context.Context, cfg *config.Config, args []string, out io.W
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "message":
 		return runMessageCommand(ctx, cfg, args[1:], out, logger)
+	case "file":
+		return runFileCommand(ctx, cfg, args[1:], out, logger)
 	default:
 		logger.Printf("unknown command: %s", args[0])
 		return 1
@@ -192,6 +196,53 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	}
 
 	fmt.Fprintf(out, "✅ Message sent via %s to %s\n", channelName, toValue)
+	return 0
+}
+
+func runFileCommand(ctx context.Context, cfg *config.Config, args []string, out io.Writer, logger *log.Logger) int {
+	if len(args) == 0 {
+		logger.Printf("file command requires a subcommand (download)")
+		return 1
+	}
+
+	subcmd := strings.ToLower(strings.TrimSpace(args[0]))
+	if subcmd != "download" {
+		logger.Printf("unknown file subcommand: %s", args[0])
+		return 1
+	}
+
+	downloadFS := flag.NewFlagSet("file download", flag.ContinueOnError)
+	downloadFS.SetOutput(out)
+	channel := downloadFS.String("channel", "", "source channel (slack or telegram)")
+	fileURL := downloadFS.String("url", "", "file URL")
+	output := downloadFS.String("output", "", "local output path")
+
+	if err := downloadFS.Parse(args[1:]); err != nil {
+		return 1
+	}
+
+	channelName := strings.ToLower(strings.TrimSpace(*channel))
+	if channelName == "" {
+		logger.Printf("--channel is required")
+		return 1
+	}
+	urlValue := strings.TrimSpace(*fileURL)
+	if urlValue == "" {
+		logger.Printf("--url is required")
+		return 1
+	}
+	outputPath := strings.TrimSpace(*output)
+	if outputPath == "" {
+		logger.Printf("--output is required")
+		return 1
+	}
+
+	if err := fileDownloadFn(ctx, cfg, channelName, urlValue, outputPath); err != nil {
+		logger.Printf("failed to download file: %v", err)
+		return 1
+	}
+
+	fmt.Fprintf(out, "✅ File downloaded via %s to %s\n", channelName, outputPath)
 	return 0
 }
 
@@ -266,4 +317,79 @@ func gatewaySendEndpoint(cfg *config.Config) string {
 	}
 
 	return fmt.Sprintf("http://%s/api/v1/message/send", net.JoinHostPort(bind, strconv.Itoa(port)))
+}
+
+func downloadFileViaHTTP(ctx context.Context, cfg *config.Config, channel, fileURL, outputPath string) error {
+	channelName := strings.ToLower(strings.TrimSpace(channel))
+	if channelName != "slack" && channelName != "telegram" {
+		return fmt.Errorf("unsupported channel %q (expected slack or telegram)", channel)
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(fileURL), nil)
+	if err != nil {
+		return fmt.Errorf("create download request: %w", err)
+	}
+	if channelName == "slack" {
+		token, err := slackBotTokenFromConfig(cfg)
+		if err != nil {
+			return err
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("download request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = http.StatusText(response.StatusCode)
+		}
+		return fmt.Errorf("download failed (%d): %s", response.StatusCode, message)
+	}
+
+	outputPath = strings.TrimSpace(outputPath)
+	outputDir := filepath.Dir(outputPath)
+	if outputDir != "." {
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+	}
+
+	tmpFile, err := os.CreateTemp(outputDir, ".fractalbot-download-*")
+	if err != nil {
+		return fmt.Errorf("create temp output file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+
+	if _, err := io.Copy(tmpFile, response.Body); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write output file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close output file: %w", err)
+	}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		return fmt.Errorf("finalize output file: %w", err)
+	}
+	return nil
+}
+
+func slackBotTokenFromConfig(cfg *config.Config) (string, error) {
+	if cfg == nil || cfg.Channels == nil || cfg.Channels.Slack == nil {
+		return "", fmt.Errorf("channels.slack.botToken is required for Slack file download")
+	}
+	token := strings.TrimSpace(cfg.Channels.Slack.BotToken)
+	if token == "" {
+		return "", fmt.Errorf("channels.slack.botToken is required for Slack file download")
+	}
+	return token, nil
 }

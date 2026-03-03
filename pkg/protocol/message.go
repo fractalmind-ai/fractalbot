@@ -25,10 +25,20 @@ const (
 
 // Message represents a protocol message
 type Message struct {
-	Kind   MessageKind `json:"kind"`
-	Action Action      `json:"action,omitempty"`
-	Data   interface{} `json:"data,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Kind        MessageKind  `json:"kind"`
+	Action      Action       `json:"action,omitempty"`
+	Data        interface{}  `json:"data,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Error       string       `json:"error,omitempty"`
+}
+
+// Attachment represents a file/image/video/audio attachment passed through protocol.
+type Attachment struct {
+	Type     string `json:"type"`
+	Filename string `json:"filename"`
+	URL      string `json:"url"`
+	Channel  string `json:"channel"`
+	MimeType string `json:"mimeType,omitempty"`
 }
 
 // AgentInfo contains information about an agent

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +231,181 @@ func TestRunMessageSend(t *testing.T) {
 			t.Fatalf("unexpected output: %q", buf.String())
 		}
 	})
+}
+
+func TestRunFileDownload(t *testing.T) {
+	configPath := writeMinimalConfig(t)
+	original := fileDownloadFn
+	t.Cleanup(func() { fileDownloadFn = original })
+
+	t.Run("success", func(t *testing.T) {
+		called := false
+		fileDownloadFn = func(ctx context.Context, cfg *config.Config, channel string, fileURL string, output string) error {
+			_ = ctx
+			_ = cfg
+			called = true
+			if channel != "slack" {
+				t.Fatalf("channel=%q", channel)
+			}
+			if fileURL != "https://example.com/file.png" {
+				t.Fatalf("url=%q", fileURL)
+			}
+			if output != "/tmp/file.png" {
+				t.Fatalf("output=%q", output)
+			}
+			return nil
+		}
+
+		var buf bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"file", "download",
+			"--channel", "slack",
+			"--url", "https://example.com/file.png",
+			"--output", "/tmp/file.png",
+		}, &buf)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d output=%q", code, buf.String())
+		}
+		if !called {
+			t.Fatalf("expected file download function to be called")
+		}
+		if !strings.Contains(buf.String(), "File downloaded via slack to /tmp/file.png") {
+			t.Fatalf("unexpected output: %q", buf.String())
+		}
+	})
+
+	t.Run("validation errors", func(t *testing.T) {
+		cases := []struct {
+			name          string
+			args          []string
+			expectedError string
+		}{
+			{
+				name:          "missing channel",
+				args:          []string{"--url", "https://example.com/x", "--output", "/tmp/x"},
+				expectedError: "--channel is required",
+			},
+			{
+				name:          "missing url",
+				args:          []string{"--channel", "slack", "--output", "/tmp/x"},
+				expectedError: "--url is required",
+			},
+			{
+				name:          "missing output",
+				args:          []string{"--channel", "slack", "--url", "https://example.com/x"},
+				expectedError: "--output is required",
+			},
+		}
+
+		for _, testCase := range cases {
+			t.Run(testCase.name, func(t *testing.T) {
+				fileDownloadFn = func(ctx context.Context, cfg *config.Config, channel string, fileURL string, output string) error {
+					_ = ctx
+					_ = cfg
+					_ = channel
+					_ = fileURL
+					_ = output
+					t.Fatalf("fileDownloadFn should not be called for validation error")
+					return nil
+				}
+
+				var buf bytes.Buffer
+				args := append([]string{"--config", configPath, "file", "download"}, testCase.args...)
+				code := runWithContext(context.Background(), args, &buf)
+				if code == 0 {
+					t.Fatalf("expected non-zero exit code for %s", testCase.name)
+				}
+				if !strings.Contains(buf.String(), testCase.expectedError) {
+					t.Fatalf("expected output to contain %q, got %q", testCase.expectedError, buf.String())
+				}
+			})
+		}
+	})
+
+	t.Run("unknown subcommand", func(t *testing.T) {
+		var buf bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"file", "inspect",
+		}, &buf)
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code")
+		}
+		if !strings.Contains(buf.String(), "unknown file subcommand") {
+			t.Fatalf("unexpected output: %q", buf.String())
+		}
+	})
+}
+
+func TestDownloadFileViaHTTPSlackAuth(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("slack-file-data"))
+	}))
+	defer server.Close()
+
+	outputPath := filepath.Join(t.TempDir(), "downloads", "file.bin")
+	cfg := &config.Config{
+		Channels: &config.ChannelsConfig{
+			Slack: &config.SlackConfig{BotToken: "xoxb-secret"},
+		},
+	}
+
+	if err := downloadFileViaHTTP(context.Background(), cfg, "slack", server.URL+"/private/file", outputPath); err != nil {
+		t.Fatalf("downloadFileViaHTTP: %v", err)
+	}
+	if gotAuth != "Bearer xoxb-secret" {
+		t.Fatalf("authorization=%q", gotAuth)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(data) != "slack-file-data" {
+		t.Fatalf("output data=%q", string(data))
+	}
+}
+
+func TestDownloadFileViaHTTPTelegramNoAuthHeader(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("telegram-file-data"))
+	}))
+	defer server.Close()
+
+	outputPath := filepath.Join(t.TempDir(), "tg.bin")
+	if err := downloadFileViaHTTP(context.Background(), &config.Config{}, "telegram", server.URL+"/bot123/file", outputPath); err != nil {
+		t.Fatalf("downloadFileViaHTTP: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("expected empty Authorization header, got %q", gotAuth)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(data) != "telegram-file-data" {
+		t.Fatalf("output data=%q", string(data))
+	}
+}
+
+func TestDownloadFileViaHTTPSlackMissingToken(t *testing.T) {
+	err := downloadFileViaHTTP(
+		context.Background(),
+		&config.Config{},
+		"slack",
+		"https://files.slack.com/files-pri/T/F",
+		filepath.Join(t.TempDir(), "x.bin"),
+	)
+	if err == nil {
+		t.Fatalf("expected missing token error")
+	}
+	if !strings.Contains(err.Error(), "channels.slack.botToken") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func writeMinimalConfig(t *testing.T) string {

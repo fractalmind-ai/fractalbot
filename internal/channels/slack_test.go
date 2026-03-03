@@ -1281,6 +1281,48 @@ func TestSlackMessageFromEventIncludesThreadTS(t *testing.T) {
 	}
 }
 
+func TestSlackMessageFromEventIncludesAttachments(t *testing.T) {
+	msg := slackMessageFromEvent(&slackevents.MessageEvent{
+		User:        "U123",
+		Channel:     "D456",
+		ChannelType: "im",
+		Text:        "hello",
+		Message: &slack.Msg{
+			Files: []slack.File{
+				{
+					ID:         "F_IMAGE",
+					Name:       "image.png",
+					Mimetype:   "image/png",
+					Filetype:   "png",
+					URLPrivate: "https://files.slack.com/files-pri/T/F_IMAGE",
+				},
+				{
+					ID:                 "F_DOC",
+					Name:               "report.pdf",
+					Mimetype:           "application/pdf",
+					Filetype:           "pdf",
+					URLPrivateDownload: "https://files.slack.com/files-pri/T/F_DOC/download",
+				},
+			},
+		},
+	})
+	if msg == nil {
+		t.Fatalf("expected parsed inbound message")
+	}
+	if len(msg.attachments) != 2 {
+		t.Fatalf("attachments=%v", msg.attachments)
+	}
+	if msg.attachments[0].Type != "image" {
+		t.Fatalf("attachment[0].type=%q", msg.attachments[0].Type)
+	}
+	if msg.attachments[1].Type != "file" {
+		t.Fatalf("attachment[1].type=%q", msg.attachments[1].Type)
+	}
+	if msg.attachments[1].URL != "https://files.slack.com/files-pri/T/F_DOC/download" {
+		t.Fatalf("attachment[1].url=%q", msg.attachments[1].URL)
+	}
+}
+
 func TestSlackMessageFromAppMentionEventIncludesThreadTS(t *testing.T) {
 	msg := slackMessageFromAppMentionEvent(&slackevents.AppMentionEvent{
 		User:            "U123",
@@ -1348,6 +1390,41 @@ func TestSlackToProtocolMessageIncludesThreadTS(t *testing.T) {
 	}
 	if data["thread_ts"] != "1234567890.123456" {
 		t.Fatalf("thread_ts=%v", data["thread_ts"])
+	}
+}
+
+func TestSlackToProtocolMessageIncludesAttachments(t *testing.T) {
+	bot := &SlackBot{}
+	attachments := []protocol.Attachment{
+		{
+			Type:     "image",
+			Filename: "image.png",
+			URL:      "https://files.slack.com/files-pri/T/F_IMAGE",
+			Channel:  "slack",
+			MimeType: "image/png",
+		},
+	}
+	msg := &slackInboundMessage{
+		userID:      "U123",
+		channelID:   "C456",
+		channelType: "im",
+		attachments: attachments,
+	}
+
+	protoMsg := bot.toProtocolMessage(msg, "hello", "qa-1", "full", nil)
+	if len(protoMsg.Attachments) != 1 {
+		t.Fatalf("protocol attachments=%v", protoMsg.Attachments)
+	}
+	data, ok := protoMsg.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", protoMsg.Data)
+	}
+	dataAttachments, ok := data["attachments"].([]protocol.Attachment)
+	if !ok {
+		t.Fatalf("expected typed data attachments, got %T", data["attachments"])
+	}
+	if len(dataAttachments) != 1 || dataAttachments[0].URL != attachments[0].URL {
+		t.Fatalf("unexpected data attachments: %v", dataAttachments)
 	}
 }
 
