@@ -369,7 +369,7 @@ func (s *Server) channelStatus() []channelStatus {
 		return nil
 	}
 
-	statuses := make([]channelStatus, 0, 3)
+	statuses := make([]channelStatus, 0, 5)
 	getChannel := func(name string) channels.Channel {
 		if s.agentManager == nil || s.agentManager.ChannelManager == nil {
 			return nil
@@ -442,6 +442,17 @@ func (s *Server) channelStatus() []channelStatus {
 		statuses = append(statuses, channelStatus{
 			Name:         "discord",
 			Enabled:      s.config.Channels.Discord.Enabled,
+			Running:      isRunning(ch),
+			LastError:    lastError,
+			LastActivity: lastActivity,
+		})
+	}
+	if s.config.Channels.IMessage != nil {
+		ch := getChannel("imessage")
+		lastError, lastActivity := telemetry(ch)
+		statuses = append(statuses, channelStatus{
+			Name:         "imessage",
+			Enabled:      s.config.Channels.IMessage.Enabled,
 			Running:      isRunning(ch),
 			LastError:    lastError,
 			LastActivity: lastActivity,

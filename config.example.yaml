@@ -86,6 +86,14 @@ channels:
     allowedUsers:
       - "123456789012345678"
 
+  # iMessage channel configuration (macOS only, optional)
+  imessage:
+    enabled: true
+    recipient: "+1234567890"
+    pollingEnabled: true
+    pollingIntervalSeconds: 5
+    pollingLimit: 20
+
 agents:
   # Workspace directory for agent sessions
   workspace: ./workspace
