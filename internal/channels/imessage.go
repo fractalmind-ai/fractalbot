@@ -68,7 +68,10 @@ type IMessageBot struct {
 	checkPermissionsFn func(ctx context.Context) error
 	isMessagesRunning  func(ctx context.Context) (bool, error)
 	startMessagesApp   func(ctx context.Context) error
+	resolveServiceIDFn func(ctx context.Context) (string, error)
 	sleepFn            func(d time.Duration)
+
+	resolvedServiceID string
 
 	runningMu sync.RWMutex
 	running   bool
@@ -116,6 +119,7 @@ func NewIMessageBot(recipient, defaultMessage, service string) (*IMessageBot, er
 	bot.checkPermissionsFn = bot.checkStartupPermissions
 	bot.isMessagesRunning = bot.defaultIsMessagesRunning
 	bot.startMessagesApp = bot.defaultStartMessagesApp
+	bot.resolveServiceIDFn = bot.defaultResolveServiceID
 
 	return bot, nil
 }
@@ -200,12 +204,22 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
+	if err := b.ensureMessagesRunning(b.ctx); err != nil {
+		b.markError()
+		return err
+	}
+
+	// Resolve iMessage service UUID for outbound sending.
+	serviceID, err := b.resolveServiceIDFn(b.ctx)
+	if err != nil {
+		log.Printf("imessage: failed to resolve service ID, outbound may fail: %v", err)
+	} else {
+		b.resolvedServiceID = serviceID
+		log.Printf("imessage: resolved service ID: %s", serviceID)
+	}
+
 	if b.pollingEnabled {
 		if err := b.checkPermissionsFn(b.ctx); err != nil {
-			b.markError()
-			return err
-		}
-		if err := b.ensureMessagesRunning(b.ctx); err != nil {
 			b.markError()
 			return err
 		}
@@ -528,6 +542,32 @@ func (b *IMessageBot) defaultStartMessagesApp(ctx context.Context) error {
 	return errors.New("messages app did not start in time")
 }
 
+func (b *IMessageBot) defaultResolveServiceID(ctx context.Context) (string, error) {
+	if b.execFn == nil {
+		return "", errors.New("imessage executor not configured")
+	}
+	script := `tell application "Messages"
+	set serviceList to every service
+	repeat with s in serviceList
+		try
+			if (service type of s) as text is "iMessage" then
+				return id of s as text
+			end if
+		end try
+	end repeat
+	return ""
+end tell`
+	output, err := b.execFn(ctx, "osascript", "-e", script)
+	if err != nil {
+		return "", fmt.Errorf("resolve iMessage service ID: %w", err)
+	}
+	serviceID := strings.TrimSpace(string(output))
+	if serviceID == "" {
+		return "", errors.New("no iMessage service found")
+	}
+	return serviceID, nil
+}
+
 func (b *IMessageBot) ensureMessagesRunning(ctx context.Context) error {
 	running, err := b.isMessagesRunning(ctx)
 	if err != nil {
@@ -571,7 +611,7 @@ func (b *IMessageBot) send(ctx context.Context, recipient, text string) error {
 		return errors.New("imessage executor not configured")
 	}
 
-	script := buildIMessageScript(trimmedRecipient, trimmedText, b.service)
+	script := buildIMessageScript(trimmedRecipient, trimmedText, b.resolvedServiceID)
 	output, err := b.execFn(ctx, "osascript", "-e", script)
 	if err != nil {
 		b.markError()
@@ -586,10 +626,12 @@ func (b *IMessageBot) send(ctx context.Context, recipient, text string) error {
 	return nil
 }
 
-func buildIMessageScript(recipient, text, service string) string {
+func buildIMessageScript(recipient, text, serviceID string) string {
 	return fmt.Sprintf(`tell application "Messages"
-	send "%s" to buddy "%s" of service "%s"
-end tell`, escapeAppleScriptString(text), escapeAppleScriptString(recipient), escapeAppleScriptString(service))
+	set targetService to service id "%s"
+	set targetBuddy to buddy "%s" of targetService
+	send "%s" to targetBuddy
+end tell`, escapeAppleScriptString(serviceID), escapeAppleScriptString(recipient), escapeAppleScriptString(text))
 }
 
 func escapeAppleScriptString(value string) string {

@@ -106,6 +106,7 @@ func TestIMessageBotSendMessageUsesAppleScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
+	bot.resolvedServiceID = "TEST-UUID-123"
 
 	var called bool
 	var commandName string
@@ -131,8 +132,11 @@ func TestIMessageBotSendMessageUsesAppleScript(t *testing.T) {
 	if len(commandArgs) != 2 || commandArgs[0] != "-e" {
 		t.Fatalf("unexpected args: %v", commandArgs)
 	}
-	if !strings.Contains(commandArgs[1], `send "hello from test" to buddy "recipient@example.com" of service "E:iMessage"`) {
+	if !strings.Contains(commandArgs[1], `send "hello from test" to targetBuddy`) {
 		t.Fatalf("unexpected script: %s", commandArgs[1])
+	}
+	if !strings.Contains(commandArgs[1], `service id "TEST-UUID-123"`) {
+		t.Fatalf("expected service id in script: %s", commandArgs[1])
 	}
 	if bot.LastActivity().IsZero() {
 		t.Fatalf("expected last activity to be set")
@@ -148,6 +152,7 @@ func TestIMessageBotSendMessageFallsBackToConfiguredMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
+	bot.resolvedServiceID = "TEST-UUID"
 
 	var script string
 	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -236,6 +241,7 @@ func TestIMessageBotPollOnceRoutesInboundAndReplies(t *testing.T) {
 
 	handler := &fakeIMessageHandler{reply: "ack"}
 	bot.SetHandler(handler)
+	bot.resolvedServiceID = "TEST-UUID"
 
 	bot.readMessagesFn = func(ctx context.Context, sinceMessageID int64, limit int) ([]IMessageInbound, error) {
 		_ = ctx
@@ -254,7 +260,7 @@ func TestIMessageBotPollOnceRoutesInboundAndReplies(t *testing.T) {
 	var replySent bool
 	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		_ = ctx
-		if name == "osascript" && len(args) == 2 && strings.Contains(args[1], `send "ack" to buddy "+123"`) {
+		if name == "osascript" && len(args) == 2 && strings.Contains(args[1], `send "ack" to targetBuddy`) {
 			replySent = true
 		}
 		return nil, nil
@@ -307,6 +313,9 @@ func TestIMessageBotStartChecksPermissionsAndStartsMessages(t *testing.T) {
 		running = true
 		return nil
 	}
+	bot.resolveServiceIDFn = func(ctx context.Context) (string, error) {
+		return "TEST-UUID", nil
+	}
 
 	if err := bot.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -346,6 +355,9 @@ func TestIMessageBotStartInitializesLastSeenMessageID(t *testing.T) {
 		_ = ctx
 		return true, nil
 	}
+	bot.resolveServiceIDFn = func(ctx context.Context) (string, error) {
+		return "TEST-UUID", nil
+	}
 
 	if err := bot.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -371,6 +383,13 @@ func TestIMessageBotStartFailsPermissionCheck(t *testing.T) {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
 	bot.ConfigurePolling(true, 60, 10, "/tmp/chat.db")
+	bot.isMessagesRunning = func(ctx context.Context) (bool, error) {
+		_ = ctx
+		return true, nil
+	}
+	bot.resolveServiceIDFn = func(ctx context.Context) (string, error) {
+		return "TEST-UUID", nil
+	}
 	bot.checkPermissionsFn = func(ctx context.Context) error {
 		_ = ctx
 		return errors.New("permission denied")
