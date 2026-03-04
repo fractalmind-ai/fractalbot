@@ -498,8 +498,8 @@ func TestDiscordHelpIncludesToAlias(t *testing.T) {
 	if !strings.Contains(text, "/tools") {
 		t.Fatalf("expected help text to include /tools")
 	}
-	if !strings.Contains(text, "/tool <name>") {
-		t.Fatalf("expected help text to include /tool")
+	if !strings.Contains(text, "/tool are intentionally unavailable") {
+		t.Fatalf("expected help text to mark /tool as unavailable")
 	}
 	if !strings.Contains(text, "allowlist") {
 		t.Fatalf("expected help text to mention allowlist")
@@ -515,7 +515,7 @@ func TestDiscordToolsAllowedWithoutAllowlist(t *testing.T) {
 		t.Fatalf("NewDiscordBot: %v", err)
 	}
 
-	handler := &fakeDiscordHandler{reply: "⚠️ runtime tools are disabled"}
+	handler := &fakeDiscordHandler{reply: "⚠️ /tool and /tools are not available in gateway mode."}
 	bot.SetHandler(handler)
 
 	var sent discordSendCapture
@@ -535,7 +535,7 @@ func TestDiscordToolsAllowedWithoutAllowlist(t *testing.T) {
 	if strings.Contains(sent.text, "Unauthorized") {
 		t.Fatalf("did not expect unauthorized for /tools, got %q", sent.text)
 	}
-	if !strings.Contains(sent.text, "runtime tools are disabled") {
+	if !strings.Contains(sent.text, "not available in gateway mode") {
 		t.Fatalf("expected tools response, got %q", sent.text)
 	}
 }
@@ -591,7 +591,7 @@ func TestDiscordToolHandlerMissing(t *testing.T) {
 		channelType: "dm",
 	})
 
-	if !strings.Contains(sent.text, "runtime tools are disabled") {
+	if !strings.Contains(sent.text, "not available in gateway mode") {
 		t.Fatalf("expected disabled reply, got %q", sent.text)
 	}
 }

@@ -42,7 +42,7 @@ In a Discord DM with the bot:
 - `/whoami` → shows your Discord IDs (add to `allowedUsers` if needed)
 - `/status` → basic bot status (no secrets)
 - `/agents` → list allowed agents or config hints
-- `/tools` → runtime tools list (if runtime enabled; otherwise shows disabled message)
+- `/tools` → returns "not available in gateway mode"
 
 ## Safety
 

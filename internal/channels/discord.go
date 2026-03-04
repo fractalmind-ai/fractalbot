@@ -318,7 +318,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 	}
 	if command == "/tool" || strings.HasPrefix(command, "/tool:") {
 		if b.handler == nil {
-			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
+			return true, b.reply(ctx, msg, "⚠️ /tool and /tools are not available in gateway mode.")
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, ""))
 		if err != nil {
@@ -337,7 +337,7 @@ func (b *DiscordBot) handleCommand(ctx context.Context, msg *discordInboundMessa
 		return true, b.reply(ctx, msg, b.statusText())
 	case "/tools":
 		if b.handler == nil {
-			return true, b.reply(ctx, msg, "⚠️ runtime tools are disabled")
+			return true, b.reply(ctx, msg, "⚠️ /tool and /tools are not available in gateway mode.")
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", ""))
 		if err != nil {
@@ -474,9 +474,8 @@ func (b *DiscordBot) helpText() string {
 		"  /agents - see available agents",
 		"  Note: if an allowlist is configured, only allowlisted agents can be used.",
 		"",
-		"Runtime tools (if enabled):",
-		"  /tools - list enabled tools (same as /tool tools.list)",
-		"  /tool <name> <args...> (try: /tool tools.list)",
+		"Gateway mode:",
+		"  /tools and /tool are intentionally unavailable.",
 	}
 	return strings.Join(lines, "\n")
 }

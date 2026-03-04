@@ -14,7 +14,6 @@ import (
 
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
-	agentruntime "github.com/fractalmind-ai/fractalbot/internal/runtime"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
 
@@ -30,9 +29,9 @@ const (
 	defaultOhMyCodeLifecycleTimeout = 20 * time.Second
 	maxOhMyCodeMonitorLines         = 200
 
-	runtimeToolsDisabledMessage = "⚠️ runtime tools are disabled. Set agents.runtime.enabled and agents.runtime.allowedTools."
-	markerHeartbeatOK           = "HEARTBEAT_OK"
-	markerNoReply               = "NO_REPLY"
+	gatewayToolCommandsUnavailableMessage = "⚠️ /tool and /tools are not available in gateway mode."
+	markerHeartbeatOK                     = "HEARTBEAT_OK"
+	markerNoReply                         = "NO_REPLY"
 )
 
 // Manager is a minimal stub for agent lifecycle management.
@@ -41,7 +40,6 @@ type Manager struct {
 	ChannelManager *channels.Manager
 	mu             sync.RWMutex
 	agents         map[string]protocol.AgentInfo
-	runtime        agentruntime.AgentRuntime
 }
 
 // NewManager creates a new agent manager.
@@ -52,26 +50,15 @@ func NewManager(cfg *config.AgentsConfig) *Manager {
 	}
 }
 
-// Start initializes agent runtime.
+// Start initializes resources required by the manager.
 func (m *Manager) Start(ctx context.Context) error {
-	if m.runtime == nil {
-		rt, err := agentruntime.NewRuntime(m.runtimeConfig(), m.memoryConfig())
-		if err != nil {
-			return err
-		}
-		m.runtime = rt
-	}
-	if m.runtime != nil {
-		return m.runtime.Start(ctx)
-	}
+	_ = ctx
 	return nil
 }
 
-// Stop halts agent runtime.
+// Stop releases resources held by the manager.
 func (m *Manager) Stop(ctx context.Context) error {
-	if m.runtime != nil {
-		return m.runtime.Stop(ctx)
-	}
+	_ = ctx
 	return nil
 }
 
@@ -109,33 +96,11 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		return "", nil
 	}
 
-	if m.runtime == nil && isRuntimeToolInvocation(text) {
+	if isRuntimeToolInvocation(text) {
 		if channel == "telegram" {
-			return channels.TruncateTelegramReply(runtimeToolsDisabledMessage), nil
+			return channels.TruncateTelegramReply(gatewayToolCommandsUnavailableMessage), nil
 		}
-		return runtimeToolsDisabledMessage, nil
-	}
-
-	if m.runtime != nil {
-		agentName, _ := data["agent"].(string)
-		task := agentruntime.Task{
-			Agent:    strings.TrimSpace(agentName),
-			Text:     text,
-			Channel:  channel,
-			Metadata: runtimeMetadata(data),
-		}
-		out, err := m.runtime.HandleTask(ctx, task)
-		if err != nil {
-			return "", err
-		}
-		out = normalizeUserReply(out)
-		if out == "" {
-			return "", nil
-		}
-		if channel == "telegram" {
-			return channels.TruncateTelegramReply(out), nil
-		}
-		return out, nil
+		return gatewayToolCommandsUnavailableMessage, nil
 	}
 
 	if m.isOhMyCodeEnabled() {
@@ -155,31 +120,6 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil
-}
-
-func (m *Manager) runtimeConfig() *config.RuntimeConfig {
-	if m.config == nil {
-		return nil
-	}
-	return m.config.Runtime
-}
-
-func (m *Manager) memoryConfig() *config.MemoryConfig {
-	if m.config == nil {
-		return nil
-	}
-	return m.config.Memory
-}
-
-func runtimeMetadata(data map[string]interface{}) map[string]string {
-	metadata := make(map[string]string)
-	keys := []string{"chat_id", "user_id", "open_id", "channel_id", "chatType", "message"}
-	for _, key := range keys {
-		if value, ok := data[key]; ok {
-			metadata[key] = fmt.Sprint(value)
-		}
-	}
-	return metadata
 }
 
 func isRuntimeToolInvocation(text string) bool {

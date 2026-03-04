@@ -605,7 +605,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 	}
 	if command == "/tool" || strings.HasPrefix(command, "/tool:") {
 		if b.handler == nil {
-			return true, "⚠️ runtime tools are disabled", nil
+			return true, "⚠️ /tool and /tools are not available in gateway mode.", nil
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, msg.text, "", b.authorize(msg), nil))
 		if err != nil {
@@ -621,7 +621,7 @@ func (b *SlackBot) commandResponse(ctx context.Context, msg *slackInboundMessage
 		return true, b.statusText(), nil
 	case "/tools":
 		if b.handler == nil {
-			return true, "⚠️ runtime tools are disabled", nil
+			return true, "⚠️ /tool and /tools are not available in gateway mode.", nil
 		}
 		replyText, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(msg, "/tools", "", b.authorize(msg), nil))
 		if err != nil {
@@ -766,9 +766,8 @@ func (b *SlackBot) helpText() string {
 		"  /agents - see available agents",
 		"  Note: if an allowlist is configured, only allowlisted agents can be used.",
 		"",
-		"Runtime tools (if enabled):",
-		"  /tools - list enabled tools (same as /tool tools.list)",
-		"  /tool <name> <args...> (try: /tool tools.list)",
+		"Gateway mode:",
+		"  /tools and /tool are intentionally unavailable.",
 	}
 	return strings.Join(lines, "\n")
 }

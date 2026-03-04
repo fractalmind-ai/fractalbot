@@ -640,8 +640,8 @@ func TestSlackHelpIncludesToAlias(t *testing.T) {
 	if !strings.Contains(text, "/tools") {
 		t.Fatalf("expected help text to include /tools")
 	}
-	if !strings.Contains(text, "/tool <name>") {
-		t.Fatalf("expected help text to include /tool")
+	if !strings.Contains(text, "/tool are intentionally unavailable") {
+		t.Fatalf("expected help text to mark /tool as unavailable")
 	}
 	if !strings.Contains(text, "allowlist") {
 		t.Fatalf("expected help text to mention allowlist")
@@ -800,7 +800,7 @@ func TestSlackToolsRequiresAllowlist(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 
-	handler := &fakeSlackHandler{reply: "⚠️ runtime tools are disabled"}
+	handler := &fakeSlackHandler{reply: "⚠️ /tool and /tools are not available in gateway mode."}
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
@@ -873,7 +873,7 @@ func TestSlackToolHandlerMissing(t *testing.T) {
 		channelType: "im",
 	})
 
-	if !strings.Contains(sent.text, "runtime tools are disabled") {
+	if !strings.Contains(sent.text, "not available in gateway mode") {
 		t.Fatalf("expected disabled reply, got %q", sent.text)
 	}
 }

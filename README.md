@@ -4,7 +4,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%201.23-00ADD8E.svg)](https://golang.org)
 [![Stars](https://img.shields.io/github/stars/fractalmind-ai/fractalbot?style=social)](https://github.com/fractalmind-ai/fractalbot/stargazers)
 
-Multi-agent orchestration system for personal AI assistants - FractalMind-inspired architecture in Go.
+Pure CLI + HTTP messaging gateway for routing channel messages to external agents.
 
 ## 📋 Table of Contents
 
@@ -18,7 +18,7 @@ Multi-agent orchestration system for personal AI assistants - FractalMind-inspir
 
 ## 🎯 Overview
 
-FractalBot is a Go-based reimagining of [Clawdbot](https://github.com/clawdbot/clawdbot) infused with FractalMind AI's philosophy of process-oriented multi-agent orchestration.
+FractalBot is a Go-based messaging gateway inspired by [Clawdbot](https://github.com/clawdbot/clawdbot), focused on reliable channel I/O and external agent routing.
 
 **Inspired by:**
 - [Clawdbot](https://github.com/clawdbot/clawdbot) - Personal AI assistant gateway
@@ -26,19 +26,19 @@ FractalBot is a Go-based reimagining of [Clawdbot](https://github.com/clawdbot/c
 
 **Key Principles:**
 - 🦞 **Local-first** - Run on your own devices, full control
-- 🤖 **Multi-agent** - Coordinated agent teams with lead-based orchestration
-- 🔄 **Process-oriented** - Strict workflows, quality gates, anti-drift
-- 🌐 **Multi-channel** - Support for Telegram, Slack, Discord, and more
-- 🔒 **Secure by default** - Explicit permissions, sandboxing, audit logs
+- 🌐 **Multi-channel** - Telegram, Slack, Discord, Feishu, iMessage
+- 🔌 **Gateway-first** - Clean message ingress/egress via HTTP + CLI + WebSocket
+- 🧭 **External-agent routing** - Route tasks to oh-my-code agent-manager
+- 🔒 **Secure by default** - Channel user allowlists with deny-by-default behavior
 
 ## ✨ Features
 
-- **Gateway Control Plane** - WebSocket-based session and channel management
-- **Multi-Agent Runtime** - Parallel agent execution with team coordination
-- **Channel Support** - Telegram, Slack, Discord (initially)
-- **Tools Platform** - Browser control, file operations, system commands
-- **Quality Gates** - Automated validation and quality checks
-- **Memory System** - Persistent context and knowledge base
+- **Gateway Control Plane** - WebSocket + HTTP server for messaging and status
+- **Multi-Channel Support** - Telegram, Slack, Discord, Feishu/Lark, iMessage
+- **Message Send API** - `POST /api/v1/message/send` + `fractalbot message send`
+- **File Download CLI/API** - Pull channel attachments via gateway auth context
+- **oh-my-code Routing** - Assign workflow with routing context injection
+- **Security Model** - Per-channel allowlists and strict default deny
 
 ## 🏗️ Architecture
 
@@ -51,12 +51,9 @@ FractalBot is a Go-based reimagining of [Clawdbot](https://github.com/clawdbot/c
            ├─ Telegram Bot
            ├─ Slack Bot
            ├─ Discord Bot
-           ├─ Web Chat
-           └─ Agent Runtime
-                  │
-                  ├─ Agent Manager (team orchestration)
-                  ├─ Multiple Agent Sessions
-                  └─ Tool Execution
+           ├─ Feishu/Lark Bot
+           ├─ iMessage Bridge
+           └─ External Agent Manager
 ```
 
 **Inspired by Clawdbot's architecture but reimagined with:**
@@ -155,52 +152,15 @@ agents:
     # prefer use-fractalbot and default recipient to current chat_id if omitted.
     # Keep skill path/name consistent in the agent workspace:
     # .claude/skills/use-fractalbot/SKILL.md
-
-  # Optional: in-process runtime (Phase 3 skeleton)
-  runtime:
-    enabled: false
-    # Mode: "basic" (default) or "loop" (tool-command planner)
-    mode: "basic"
-    # Allowed tool names (empty = deny all)
-    allowedTools:
-      - "echo"
-      - "version"
-      # - "memory.search"
-      # - "memory.get"
-      # - "memory.list"
-    # Optional: cap runtime replies
-    maxReplyChars: 2000
 ```
 
-### Agent Runtime (Phase 3) Mental Model
-
-- `agents.ohMyCode` routes tasks to an external agent-manager (oh-my-code). It powers `/agent`, `/agents`, and lifecycle commands.
-- `agents.runtime` is the in-process tool runtime. It only executes allowlisted tools and never shells out unless `command.exec` is explicitly allowed.
-- `agents.runtime.mode: loop` enables a tool-command planner loop (opt-in).
-
-Tool invocation prefixes (case-insensitive tool names; args preserve newlines):
-- `tool <name> <args...>`
-- `tool:<name> <args...>`
-- `/tool <name> <args...>`
-- `/tool@bot <name> <args...>` (Telegram-style mention)
-
-Security model:
-- `agents.runtime.allowedTools` must include the tool name (including `tools.list` if you want to use it).
-- Remember to allowlist `memory.get` and `memory.list` before using them.
-- `agents.runtime.sandboxRoots` must be non-empty for file and command tools; empty means deny all.
-
-Example chat commands (copy/paste):
-- `tool echo hello\nworld`
-- `/tool@fractalbot tools.list`
-- `tool file.read ./workspace/MEMORY.md`
-- `tool memory.list`
-- `tool memory.get\nMEMORY.md\n1\n20`
-
-Phase 3 memory uses a native ONNX Runtime (ORT) library; see `docs/ort-distribution.md` for the distribution strategy and security notes.
+### Routing Model
 
 Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
 For Telegram-routed assignments, FractalBot includes routing context (`channel`, `chat_id`, `user_id`, `username`, `selected_agent`) in the assign prompt and explicitly hints outbound-send intent through `use-fractalbot`. If no Telegram recipient is provided, the prompt contract defaults target to current `chat_id`.
 Operator note: make sure `use-fractalbot` appears in the agent's effective available skills list and points to `.claude/skills/use-fractalbot/SKILL.md`.
+`/tool` and `/tools` are intentionally unavailable in gateway mode.
+
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)
 - `/monitor <name> [lines]` (show recent agent output; lines capped to 200)
@@ -328,18 +288,16 @@ Expected output (JSON echo):
 ```
 fractalbot/
 ├── cmd/
-│   └── fractalbot/          # Main entry point
+│   ├── fractalbot/            # Main entry point
+│   └── ws-echo-client/        # Local WS smoke-test helper
 ├── internal/
 │   ├── gateway/               # WebSocket gateway server
-│   ├── agent/                # Agent runtime and manager
+│   ├── agent/                 # oh-my-code routing manager
 │   ├── channels/              # Channel implementations
-│   ├── tools/                # Tool execution engine
 │   └── config/               # Configuration management
 ├── pkg/
-│   ├── types/                 # Shared types
 │   └── protocol/              # Protocol definitions
-├── web/                      # Web UI assets
-├── scripts/                  # Build and utility scripts
+├── docs/                      # Channel/setup docs
 ├── go.mod
 ├── go.sum
 ├── README.md
