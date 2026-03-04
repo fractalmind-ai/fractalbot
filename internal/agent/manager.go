@@ -99,7 +99,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	channel, _ := data["channel"].(string)
-	if channel != "telegram" && channel != "feishu" && channel != "slack" && channel != "discord" {
+	if channel != "telegram" && channel != "feishu" && channel != "slack" && channel != "discord" && channel != "imessage" {
 		return "", nil
 	}
 

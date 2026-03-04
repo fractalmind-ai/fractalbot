@@ -327,6 +327,8 @@ func (b *IMessageBot) toProtocolMessage(inbound IMessageInbound) *protocol.Messa
 			"channel":     "imessage",
 			"text":        inbound.Text,
 			"agent":       "",
+			"chat_id":     inbound.Sender,
+			"user_id":     inbound.Sender,
 			"sender":      inbound.Sender,
 			"message_id":  inbound.MessageID,
 			"timestamp":   inbound.Timestamp.UTC().Format(time.RFC3339),
