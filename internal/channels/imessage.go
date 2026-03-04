@@ -2,7 +2,7 @@ package channels
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -208,6 +209,13 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 			b.markError()
 			return err
 		}
+		maxID, err := b.getMaxMessageID(b.ctx)
+		if err != nil {
+			log.Printf("imessage: failed to get max message ID, starting from 0: %v", err)
+		} else {
+			b.setLastSeenMessageID(maxID)
+			log.Printf("imessage: initialized lastSeenMessageID to %d", maxID)
+		}
 
 		b.wg.Add(1)
 		go b.pollLoop(b.ctx)
@@ -339,9 +347,6 @@ func (b *IMessageBot) toProtocolMessage(inbound IMessageInbound) *protocol.Messa
 }
 
 func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID int64, limit int) ([]IMessageInbound, error) {
-	if b.execFn == nil {
-		return nil, errors.New("imessage executor not configured")
-	}
 	if limit <= 0 {
 		limit = defaultIMessagePollingLimit
 	}
@@ -357,39 +362,43 @@ func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID
 		return nil, err
 	}
 
-	query := fmt.Sprintf(`SELECT
-    m.ROWID AS message_id,
-    COALESCE(h.id, '') AS sender,
-    COALESCE(m.text, '') AS text,
-    m.date AS date
-FROM message m
-LEFT JOIN handle h ON m.handle_id = h.ROWID
-WHERE m.is_from_me = 0
-  AND m.ROWID > %d
-ORDER BY m.ROWID ASC
-LIMIT %d;`, sinceMessageID, limit)
+	// Open database using Go's database/sql with modernc.org/sqlite driver
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite db: %w", err)
+	}
+	defer db.Close()
 
-	output, execErr := b.execFn(ctx, "sqlite3", "-json", dbPath, query)
-	if execErr != nil {
-		trimmedOutput := strings.TrimSpace(string(output))
-		if trimmedOutput != "" {
-			return nil, fmt.Errorf("imessage sqlite polling failed: %w: %s", execErr, trimmedOutput)
+	// Set busy timeout for concurrent access
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	// Query for new messages
+	query := `SELECT
+		m.ROWID AS message_id,
+		COALESCE(h.id, '') AS sender,
+		COALESCE(m.text, '') AS text,
+		m.date AS date
+	FROM message m
+	LEFT JOIN handle h ON m.handle_id = h.ROWID
+	WHERE m.is_from_me = 0
+	  AND m.ROWID > ?
+	ORDER BY m.ROWID ASC
+	LIMIT ?`
+
+	rows, err := db.QueryContext(ctx, query, sinceMessageID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query sqlite: %w", err)
+	}
+	defer rows.Close()
+
+	messages := []IMessageInbound{}
+	for rows.Next() {
+		var row iMessageSQLiteRow
+		if err := rows.Scan(&row.MessageID, &row.Sender, &row.Text, &row.Date); err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
 		}
-		return nil, fmt.Errorf("imessage sqlite polling failed: %w", execErr)
-	}
 
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" || trimmed == "[]" {
-		return nil, nil
-	}
-
-	var rows []iMessageSQLiteRow
-	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil {
-		return nil, fmt.Errorf("parse sqlite messages: %w", err)
-	}
-
-	messages := make([]IMessageInbound, 0, len(rows))
-	for _, row := range rows {
 		text := strings.TrimSpace(row.Text)
 		if text == "" {
 			continue
@@ -404,14 +413,41 @@ LIMIT %d;`, sinceMessageID, limit)
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
+	}
+
 	return messages, nil
 }
 
-func (b *IMessageBot) checkStartupPermissions(ctx context.Context) error {
-	if b.execFn == nil {
-		return errors.New("imessage executor not configured")
+func (b *IMessageBot) getMaxMessageID(ctx context.Context) (int64, error) {
+	dbPath, err := expandHomePath(b.databasePath)
+	if err != nil {
+		return 0, err
 	}
 
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return 0, fmt.Errorf("open sqlite db: %w", err)
+	}
+	defer db.Close()
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	var maxID int64
+	err = db.QueryRowContext(ctx, `SELECT COALESCE(MAX(ROWID), 0) FROM message WHERE is_from_me = 0`).Scan(&maxID)
+	if err != nil {
+		return 0, fmt.Errorf("query max message id: %w", err)
+	}
+
+	if maxID < 0 {
+		return 0, nil
+	}
+	return maxID, nil
+}
+
+func (b *IMessageBot) checkStartupPermissions(ctx context.Context) error {
 	dbPath, err := expandHomePath(b.databasePath)
 	if err != nil {
 		return err
@@ -420,17 +456,28 @@ func (b *IMessageBot) checkStartupPermissions(ctx context.Context) error {
 		return fmt.Errorf("imessage database not accessible (%s): %w", dbPath, err)
 	}
 
-	output, err := b.execFn(ctx, "sqlite3", dbPath, "SELECT 1;")
+	// Try to open database with Go's sqlite driver to verify FDA
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		trimmedOutput := strings.TrimSpace(string(output))
-		if trimmedOutput != "" {
-			return fmt.Errorf("imessage database permission check failed: %w: %s", err, trimmedOutput)
-		}
+		return fmt.Errorf("open sqlite db: %w", err)
+	}
+	defer db.Close()
+
+	// Set reasonable connection limits
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	// Try a simple query
+	var result int
+	if err := db.QueryRow("SELECT 1").Scan(&result); err != nil {
 		return fmt.Errorf("imessage database permission check failed: %w", err)
 	}
 
 	// Verify AppleScript access to Messages application.
-	output, err = b.execFn(ctx, "osascript", "-e", `tell application "Messages" to get name`)
+	if b.execFn == nil {
+		return errors.New("imessage executor not configured")
+	}
+	output, err := b.execFn(ctx, "osascript", "-e", `tell application "Messages" to get name`)
 	if err != nil {
 		trimmedOutput := strings.TrimSpace(string(output))
 		if trimmedOutput != "" {
