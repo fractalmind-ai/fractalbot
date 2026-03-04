@@ -204,12 +204,7 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
-	if err := b.ensureMessagesRunning(b.ctx); err != nil {
-		b.markError()
-		return err
-	}
-
-	// Resolve iMessage service UUID for outbound sending.
+	// Resolve iMessage service UUID for outbound sending (best-effort).
 	serviceID, err := b.resolveServiceIDFn(b.ctx)
 	if err != nil {
 		log.Printf("imessage: failed to resolve service ID, outbound may fail: %v", err)
@@ -219,6 +214,10 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 	}
 
 	if b.pollingEnabled {
+		if err := b.ensureMessagesRunning(b.ctx); err != nil {
+			b.markError()
+			return err
+		}
 		if err := b.checkPermissionsFn(b.ctx); err != nil {
 			b.markError()
 			return err
