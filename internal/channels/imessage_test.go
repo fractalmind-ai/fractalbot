@@ -27,12 +27,13 @@ func (f *fakeIMessageHandler) HandleIncoming(ctx context.Context, msg *protocol.
 }
 
 type testIMessageRow struct {
-	rowID    int64
-	handleID int64
-	sender   string
-	isFromMe int
-	text     string
-	date     int64
+	rowID          int64
+	handleID       int64
+	sender         string
+	isFromMe       int
+	text           string
+	attributedBody []byte
+	date           int64
 }
 
 func createTestIMessageDB(t *testing.T, rows []testIMessageRow) string {
@@ -57,6 +58,7 @@ func createTestIMessageDB(t *testing.T, rows []testIMessageRow) string {
 		handle_id INTEGER,
 		is_from_me INTEGER,
 		text TEXT,
+		attributedBody BLOB,
 		date INTEGER
 	)`); err != nil {
 		t.Fatalf("create message table: %v", err)
@@ -69,11 +71,12 @@ func createTestIMessageDB(t *testing.T, rows []testIMessageRow) string {
 			}
 		}
 		if _, err := db.Exec(
-			`INSERT INTO message (ROWID, handle_id, is_from_me, text, date) VALUES (?, ?, ?, ?, ?)`,
+			`INSERT INTO message (ROWID, handle_id, is_from_me, text, attributedBody, date) VALUES (?, ?, ?, ?, ?, ?)`,
 			row.rowID,
 			row.handleID,
 			row.isFromMe,
 			row.text,
+			row.attributedBody,
 			row.date,
 		); err != nil {
 			t.Fatalf("insert message row: %v", err)
@@ -200,6 +203,85 @@ func TestIMessageBotPollMessagesFromSQLite(t *testing.T) {
 	}
 	if bot.getLastSeenMessageID() != 11 {
 		t.Fatalf("lastSeenMessageID=%d want 11", bot.getLastSeenMessageID())
+	}
+}
+
+func TestIMessageBotPollMessagesAppendsURLsFromAttributedBody(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("recipient@example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	dbPath := createTestIMessageDB(t, []testIMessageRow{
+		{
+			rowID:          21,
+			handleID:       1,
+			sender:         "+123",
+			isFromMe:       0,
+			text:           "install this skill:",
+			attributedBody: []byte("binary\x00blob\x00https://github.com/fractalmind-ai/fractalbot"),
+			date:           785000000000000001,
+		},
+	})
+	bot.ConfigurePolling(true, 5, 10, dbPath)
+
+	msgs, err := bot.PollMessages(context.Background())
+	if err != nil {
+		t.Fatalf("PollMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len(msgs)=%d want 1", len(msgs))
+	}
+	if !strings.Contains(msgs[0].Text, "install this skill:") {
+		t.Fatalf("expected original text, got %q", msgs[0].Text)
+	}
+	if !strings.Contains(msgs[0].Text, "https://github.com/fractalmind-ai/fractalbot") {
+		t.Fatalf("expected url in text, got %q", msgs[0].Text)
+	}
+	if len(msgs[0].URLs) != 1 || msgs[0].URLs[0] != "https://github.com/fractalmind-ai/fractalbot" {
+		t.Fatalf("unexpected urls: %v", msgs[0].URLs)
+	}
+}
+
+func TestIMessageBotPollMessagesFromURLOnlyAttributedBody(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("recipient@example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	dbPath := createTestIMessageDB(t, []testIMessageRow{
+		{
+			rowID:          31,
+			handleID:       1,
+			sender:         "+999",
+			isFromMe:       0,
+			text:           "",
+			attributedBody: []byte("streamtyped\x00\x00https://example.com/tasks/314"),
+			date:           785000000000000001,
+		},
+	})
+	bot.ConfigurePolling(true, 5, 10, dbPath)
+
+	msgs, err := bot.PollMessages(context.Background())
+	if err != nil {
+		t.Fatalf("PollMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len(msgs)=%d want 1", len(msgs))
+	}
+	if msgs[0].Text != "https://example.com/tasks/314" {
+		t.Fatalf("unexpected text: %q", msgs[0].Text)
+	}
+	if len(msgs[0].URLs) != 1 || msgs[0].URLs[0] != "https://example.com/tasks/314" {
+		t.Fatalf("unexpected urls: %v", msgs[0].URLs)
 	}
 }
 
