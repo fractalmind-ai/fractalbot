@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -9,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 	_ "modernc.org/sqlite"
@@ -30,12 +33,14 @@ const (
 )
 
 var currentGOOS = runtime.GOOS
+var iMessageURLRegexp = regexp.MustCompile(`https?://[^\s<>"'\\]+`)
 
 type iMessageSQLiteRow struct {
-	MessageID int64   `json:"message_id"`
-	Sender    string  `json:"sender"`
-	Text      string  `json:"text"`
-	Date      float64 `json:"date"`
+	MessageID      int64   `json:"message_id"`
+	Sender         string  `json:"sender"`
+	Text           string  `json:"text"`
+	AttributedBody []byte  `json:"attributed_body"`
+	Date           float64 `json:"date"`
 }
 
 // IMessageInbound represents a single inbound iMessage entry.
@@ -43,6 +48,7 @@ type IMessageInbound struct {
 	MessageID    int64
 	Sender       string
 	Text         string
+	URLs         []string
 	Timestamp    time.Time
 	RawTimestamp int64
 }
@@ -341,21 +347,26 @@ func (b *IMessageBot) pollOnce(ctx context.Context) {
 }
 
 func (b *IMessageBot) toProtocolMessage(inbound IMessageInbound) *protocol.Message {
+	data := map[string]interface{}{
+		"channel":     "imessage",
+		"text":        inbound.Text,
+		"agent":       "",
+		"chat_id":     inbound.Sender,
+		"user_id":     inbound.Sender,
+		"sender":      inbound.Sender,
+		"message_id":  inbound.MessageID,
+		"timestamp":   inbound.Timestamp.UTC().Format(time.RFC3339),
+		"chatType":    "dm",
+		"raw_message": inbound.RawTimestamp,
+	}
+	if len(inbound.URLs) > 0 {
+		data["urls"] = append([]string(nil), inbound.URLs...)
+	}
+
 	return &protocol.Message{
 		Kind:   protocol.MessageKindChannel,
 		Action: protocol.ActionCreate,
-		Data: map[string]interface{}{
-			"channel":     "imessage",
-			"text":        inbound.Text,
-			"agent":       "",
-			"chat_id":     inbound.Sender,
-			"user_id":     inbound.Sender,
-			"sender":      inbound.Sender,
-			"message_id":  inbound.MessageID,
-			"timestamp":   inbound.Timestamp.UTC().Format(time.RFC3339),
-			"chatType":    "dm",
-			"raw_message": inbound.RawTimestamp,
-		},
+		Data:   data,
 	}
 }
 
@@ -391,6 +402,7 @@ func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID
 		m.ROWID AS message_id,
 		COALESCE(h.id, '') AS sender,
 		COALESCE(m.text, '') AS text,
+		m.attributedBody AS attributed_body,
 		m.date AS date
 	FROM message m
 	LEFT JOIN handle h ON m.handle_id = h.ROWID
@@ -408,11 +420,18 @@ func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID
 	messages := []IMessageInbound{}
 	for rows.Next() {
 		var row iMessageSQLiteRow
-		if err := rows.Scan(&row.MessageID, &row.Sender, &row.Text, &row.Date); err != nil {
+		if err := rows.Scan(&row.MessageID, &row.Sender, &row.Text, &row.AttributedBody, &row.Date); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 
 		text := strings.TrimSpace(row.Text)
+		attributedText, attributedURLs := extractTextAndURLsFromAttributedBody(row.AttributedBody)
+		if text == "" {
+			text = attributedText
+		} else if !containsURL(text) && len(attributedURLs) > 0 {
+			text = mergeURLsIntoText(text, attributedURLs)
+		}
+		text = strings.TrimSpace(text)
 		if text == "" {
 			continue
 		}
@@ -421,6 +440,7 @@ func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID
 			MessageID:    row.MessageID,
 			Sender:       strings.TrimSpace(row.Sender),
 			Text:         text,
+			URLs:         attributedURLs,
 			Timestamp:    appleTimestampToTime(rawTimestamp),
 			RawTimestamp: rawTimestamp,
 		})
@@ -641,6 +661,147 @@ func escapeAppleScriptString(value string) string {
 		"\r", ``,
 	)
 	return replacer.Replace(value)
+}
+
+func extractTextAndURLsFromAttributedBody(blob []byte) (string, []string) {
+	urls := extractURLsFromAttributedBody(blob)
+	text := extractReadableTextFromAttributedBody(blob)
+
+	if len(urls) > 0 {
+		if text == "" || looksLikeAttributedArchiveText(text) {
+			text = strings.Join(urls, "\n")
+		} else {
+			text = mergeURLsIntoText(text, urls)
+		}
+	}
+
+	return strings.TrimSpace(text), urls
+}
+
+func extractURLsFromAttributedBody(blob []byte) []string {
+	if len(blob) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	urls := make([]string, 0, 2)
+	collect := func(input []byte) {
+		for _, match := range iMessageURLRegexp.FindAll(input, -1) {
+			normalized := normalizeExtractedURL(string(match))
+			if normalized == "" {
+				continue
+			}
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			urls = append(urls, normalized)
+		}
+	}
+
+	collect(blob)
+	if bytes.IndexByte(blob, 0x00) >= 0 {
+		collect(bytes.ReplaceAll(blob, []byte{0x00}, nil))
+	}
+
+	return urls
+}
+
+func normalizeExtractedURL(url string) string {
+	trimmed := strings.TrimSpace(url)
+	trimmed = strings.TrimRight(trimmed, ".,;:!?)]}\"'")
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		return trimmed
+	}
+	return ""
+}
+
+func extractReadableTextFromAttributedBody(blob []byte) string {
+	if len(blob) == 0 {
+		return ""
+	}
+
+	withoutNulls := bytes.ReplaceAll(blob, []byte{0x00}, nil)
+	return normalizeAttributedText(string(withoutNulls))
+}
+
+func normalizeAttributedText(input string) string {
+	if input == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(input))
+	lastWasSpace := false
+	for _, r := range input {
+		switch {
+		case unicode.IsPrint(r):
+			builder.WriteRune(r)
+			lastWasSpace = false
+		case unicode.IsSpace(r):
+			if !lastWasSpace {
+				builder.WriteByte(' ')
+				lastWasSpace = true
+			}
+		}
+	}
+
+	normalized := strings.Join(strings.Fields(builder.String()), " ")
+	if len(normalized) < 3 {
+		return ""
+	}
+	return strings.TrimSpace(normalized)
+}
+
+func containsURL(text string) bool {
+	return iMessageURLRegexp.MatchString(text)
+}
+
+func mergeURLsIntoText(text string, urls []string) string {
+	trimmed := strings.TrimSpace(text)
+	if len(urls) == 0 {
+		return trimmed
+	}
+
+	merged := trimmed
+	for _, url := range urls {
+		if containsURLWithValue(merged, url) {
+			continue
+		}
+		if merged == "" {
+			merged = url
+		} else {
+			merged += "\n" + url
+		}
+	}
+
+	return strings.TrimSpace(merged)
+}
+
+func containsURLWithValue(text string, url string) bool {
+	for _, match := range iMessageURLRegexp.FindAllString(text, -1) {
+		if normalizeExtractedURL(match) == url {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeAttributedArchiveText(text string) bool {
+	lower := strings.ToLower(text)
+	markers := []string{
+		"streamtyped",
+		"nskeyedarchiver",
+		"nsdictionary",
+		"nsstring",
+		"__kimmessage",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func expandHomePath(path string) (string, error) {
