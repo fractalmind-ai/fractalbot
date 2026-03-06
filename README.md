@@ -12,6 +12,7 @@ Pure CLI + HTTP messaging gateway for routing channel messages to external agent
 - [Features](#features)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
+- [Troubleshooting](#-troubleshooting)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -251,6 +252,12 @@ If the bot is silent, verify the allowlist, and confirm `agents.ohMyCode.enabled
 ```bash
 ./fractalbot --config ./config.yaml --verbose
 ```
+
+## 🩺 Troubleshooting
+
+If you hit startup/runtime issues (config validation, token revocation, webhook failures, channel send errors, systemd restart loops, or agent-manager timeouts), use:
+
+- [Troubleshooting: Failure Handling and Rollback](docs/troubleshooting.md)
 
 ### Smoke Test (WebSocket Echo)
 
