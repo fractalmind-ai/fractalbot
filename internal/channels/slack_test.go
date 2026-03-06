@@ -1321,6 +1321,115 @@ func TestSlackMessageFromEventIncludesAttachments(t *testing.T) {
 	if msg.attachments[1].URL != "https://files.slack.com/files-pri/T/F_DOC/download" {
 		t.Fatalf("attachment[1].url=%q", msg.attachments[1].URL)
 	}
+	if msg.attachments[1].Filename != "report.pdf" {
+		t.Fatalf("attachment[1].filename=%q", msg.attachments[1].Filename)
+	}
+	if msg.attachments[1].MimeType != "application/pdf" {
+		t.Fatalf("attachment[1].mimeType=%q", msg.attachments[1].MimeType)
+	}
+}
+
+func TestSlackMessageFromEventIncludesLegacyAttachmentLinks(t *testing.T) {
+	msg := slackMessageFromEvent(&slackevents.MessageEvent{
+		User:        "U123",
+		Channel:     "D456",
+		ChannelType: "im",
+		Text:        "please check this file",
+		Message: &slack.Msg{
+			Attachments: []slack.Attachment{
+				{
+					Title:     "product-spec.docx",
+					TitleLink: "https://files.slack.com/files-pri/T/F_DOC/product-spec.docx?download=1",
+				},
+			},
+		},
+	})
+	if msg == nil {
+		t.Fatalf("expected parsed inbound message")
+	}
+	if len(msg.attachments) != 1 {
+		t.Fatalf("attachments=%v", msg.attachments)
+	}
+	if msg.attachments[0].Filename != "product-spec.docx" {
+		t.Fatalf("attachment.filename=%q", msg.attachments[0].Filename)
+	}
+	if msg.attachments[0].URL != "https://files.slack.com/files-pri/T/F_DOC/product-spec.docx?download=1" {
+		t.Fatalf("attachment.url=%q", msg.attachments[0].URL)
+	}
+	if msg.attachments[0].MimeType != "" {
+		t.Fatalf("attachment.mimeType=%q", msg.attachments[0].MimeType)
+	}
+}
+
+func TestSlackHandleMessageEventForwardsAttachmentsToHandler(t *testing.T) {
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+
+	var sent slackSendCapture
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		_ = ctx
+		sent = slackSendCapture{channelID: channelID, text: text}
+		return nil
+	}
+
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	msg := slackMessageFromEvent(&slackevents.MessageEvent{
+		User:        "U123",
+		Channel:     "D456",
+		ChannelType: "im",
+		Text:        "please read attachment",
+		Message: &slack.Msg{
+			Files: []slack.File{
+				{
+					ID:         "F_DOC",
+					Name:       "requirements.docx",
+					Mimetype:   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+					Filetype:   "docx",
+					URLPrivate: "https://files.slack.com/files-pri/T/F_DOC",
+				},
+			},
+		},
+	})
+	if msg == nil {
+		t.Fatalf("expected parsed inbound message")
+	}
+
+	bot.handleMessageEvent(context.Background(), msg)
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if sent.text != "ok" {
+		t.Fatalf("expected reply ok, got %q", sent.text)
+	}
+	if len(handler.last.Attachments) != 1 {
+		t.Fatalf("protocol attachments=%v", handler.last.Attachments)
+	}
+	if handler.last.Attachments[0].Filename != "requirements.docx" {
+		t.Fatalf("protocol attachment filename=%q", handler.last.Attachments[0].Filename)
+	}
+	if handler.last.Attachments[0].URL != "https://files.slack.com/files-pri/T/F_DOC" {
+		t.Fatalf("protocol attachment url=%q", handler.last.Attachments[0].URL)
+	}
+	if handler.last.Attachments[0].MimeType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
+		t.Fatalf("protocol attachment mimeType=%q", handler.last.Attachments[0].MimeType)
+	}
+
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	dataAttachments, ok := data["attachments"].([]protocol.Attachment)
+	if !ok {
+		t.Fatalf("expected typed data attachments, got %T", data["attachments"])
+	}
+	if len(dataAttachments) != 1 {
+		t.Fatalf("data attachments=%v", dataAttachments)
+	}
 }
 
 func TestSlackMessageFromAppMentionEventIncludesThreadTS(t *testing.T) {

@@ -1018,10 +1018,22 @@ func slackMessageFromAppMentionEvent(event *slackevents.AppMentionEvent) *slackI
 }
 
 func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attachment {
-	if event == nil || event.Message == nil || len(event.Message.Files) == 0 {
+	if event == nil || event.Message == nil {
 		return nil
 	}
-	attachments := make([]protocol.Attachment, 0, len(event.Message.Files))
+	attachments := make([]protocol.Attachment, 0, len(event.Message.Files)+len(event.Message.Attachments))
+	seenURL := make(map[string]struct{})
+	appendAttachment := func(attachment protocol.Attachment) {
+		if attachment.URL == "" {
+			return
+		}
+		if _, exists := seenURL[attachment.URL]; exists {
+			return
+		}
+		seenURL[attachment.URL] = struct{}{}
+		attachments = append(attachments, attachment)
+	}
+
 	for _, file := range event.Message.Files {
 		url := strings.TrimSpace(file.URLPrivate)
 		if url == "" {
@@ -1037,7 +1049,7 @@ func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attac
 		if filename == "" {
 			filename = strings.TrimSpace(file.ID)
 		}
-		attachments = append(attachments, protocol.Attachment{
+		appendAttachment(protocol.Attachment{
 			Type:     slackAttachmentType(file.Mimetype, file.Filetype),
 			Filename: filename,
 			URL:      url,
@@ -1045,7 +1057,75 @@ func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attac
 			MimeType: strings.TrimSpace(file.Mimetype),
 		})
 	}
+
+	for _, legacy := range event.Message.Attachments {
+		url := slackLegacyAttachmentURL(legacy)
+		if url == "" {
+			continue
+		}
+		filename := strings.TrimSpace(legacy.Title)
+		if filename == "" {
+			filename = slackFilenameFromURL(url)
+		}
+		appendAttachment(protocol.Attachment{
+			Type:     slackAttachmentType("", slackFileTypeFromFilename(filename)),
+			Filename: filename,
+			URL:      url,
+			Channel:  "slack",
+		})
+	}
+
+	if len(attachments) == 0 {
+		return nil
+	}
 	return attachments
+}
+
+func slackLegacyAttachmentURL(attachment slack.Attachment) string {
+	candidates := []string{
+		attachment.TitleLink,
+		attachment.OriginalURL,
+		attachment.FromURL,
+		attachment.ImageURL,
+		attachment.ThumbURL,
+	}
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(candidate); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func slackFilenameFromURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.Index(trimmed, "?"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return ""
+	}
+	slash := strings.LastIndex(trimmed, "/")
+	if slash < 0 || slash == len(trimmed)-1 {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[slash+1:])
+}
+
+func slackFileTypeFromFilename(filename string) string {
+	trimmed := strings.TrimSpace(filename)
+	if trimmed == "" {
+		return ""
+	}
+	dot := strings.LastIndex(trimmed, ".")
+	if dot < 0 || dot == len(trimmed)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(trimmed[dot+1:]))
 }
 
 func slackAttachmentType(mimeType, fileType string) string {
