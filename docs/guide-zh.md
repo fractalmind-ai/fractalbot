@@ -15,6 +15,7 @@ FractalBot 是一个用 Go 编写的**多渠道 AI Agent 网关**，支持 Teleg
 - [环境准备](#环境准备)
 - [安装](#安装)
 - [5 分钟快速入门](#5-分钟快速入门)
+- [Slack 10 分钟直通（推荐新手）](#slack-10-分钟直通推荐新手)
 - [渠道配置详解](#渠道配置详解)
 - [多 Agent 架构](#多-agent-架构agent-manager-详解)
 - [启动与验证](#启动与验证)
@@ -96,6 +97,8 @@ cd fractalbot
 go build -o fractalbot ./cmd/fractalbot
 ./fractalbot --help   # 验证安装成功
 ```
+
+> **命令约定：** 一键安装使用 `fractalbot`；手动编译并在当前目录运行时使用 `./fractalbot`。下文默认写 `fractalbot`，手动编译用户可按需替换。
 
 ---
 
@@ -182,11 +185,56 @@ fractalbot --config ~/.config/fractalbot/config.yaml
 
 | 发送 | 预期结果 |
 |------|----------|
-| `/whoami` | 回复你的 User ID 和 Channel ID |
+| `/whoami` | 回复你的 User ID 和 Channel ID（示例：`User: U08XXXXXX`） |
 | `/agents` | 显示 `dev` |
-| `说 hello world` | Agent 接收任务并回复 |
+| `说 hello world` | Agent 接收任务并回复（示例：`[dev] hello world`） |
 
 **成功标准：** Bot 启动无报错 + `/whoami` 回复正常 + 普通消息被路由到 dev Agent。
+
+---
+
+## Slack 10 分钟直通（推荐新手）
+
+> 目标：只配置最小权限，先跑通 Slack DM 单链路（消息能进、回复能出）。
+
+1. 在 [Slack API](https://api.slack.com/apps) 创建 App（推荐用 **From an app manifest**）
+2. 在 **Settings → Socket Mode** 启用 Socket Mode
+3. 在 **Basic Information → App-Level Tokens** 创建 `xapp-` token（scope: `connections:write`）
+4. 在 **OAuth & Permissions** 确认 Bot Scopes 仅包含：`chat:write`、`im:history`、`im:read`
+5. 在 **Event Subscriptions** 添加 Bot Event：`message.im`
+6. 点 **Install App / Reinstall to Workspace**，获取 `xoxb-` token
+7. 写入 `config.yaml` 并启动，依次测试：`/whoami` → `/ping` → `hello`
+
+> **必须重装：** 只要改了 scopes 或 events，必须执行 **Reinstall to Workspace**。
+
+<details>
+<summary><b>Slack Manifest（最小可用）</b></summary>
+
+```yaml
+display_information:
+  name: fractalbot
+features:
+  bot_user:
+    display_name: Neo
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:history
+      - im:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+```
+
+> 导入 Manifest 后，仍需手动创建 App-Level Token（`connections:write`）。
+
+</details>
 
 ---
 
@@ -229,12 +277,13 @@ channels:
 
 ### Slack（Socket Mode，无需公网端口）
 
-1. 前往 [Slack API](https://api.slack.com/apps) 创建 App
-2. 开启 **Socket Mode**（Settings → Socket Mode → Enable），创建 App-Level Token（`connections:write` scope），获取 `xapp-` 开头的 token
-3. 在 OAuth & Permissions 添加 Bot Token Scopes：`chat:write`、`im:history`、`im:read`
-4. 安装 App 到 Workspace，获取 `xoxb-` 开头的 Bot Token
-5. 在 Event Subscriptions → Subscribe to bot events，添加 `message.im` 事件
-6. **重要：** 修改 scopes 或 events 后，必须重新安装 App（Reinstall to Workspace）
+1. 前往 [Slack API](https://api.slack.com/apps) 创建 App（推荐 Manifest 导入）
+2. 开启 **Socket Mode**（Settings → Socket Mode → Enable）
+3. 创建 App-Level Token（`connections:write`），获取 `xapp-` token
+4. 在 OAuth & Permissions 配置 Bot Scopes（见下方“权限分层建议”）
+5. 在 Event Subscriptions → Subscribe to bot events，添加 `message.im`
+6. 安装 App 到 Workspace，获取 `xoxb-` token
+7. **重要：** 修改 scopes 或 events 后，必须执行 Reinstall to Workspace
 
 ```yaml
 channels:
@@ -245,6 +294,13 @@ channels:
     allowedUsers:
       - "U08C93FU222"                    # Slack User ID
 ```
+
+**权限分层建议：**
+
+| 档位 | Bot Scopes | Bot Events | 适用场景 |
+|------|------------|------------|----------|
+| 最小可用（推荐起步） | `chat:write`, `im:history`, `im:read` | `message.im` | 仅 DM 对话 |
+| 增强能力（按需添加） | `channels:history`, `groups:history`, `mpim:history`, `users:read`, `users:read.email` 等 | `app_mention`, `message.channels` 等 | 群聊、@提及、用户信息查询 |
 
 <details>
 <summary><b>Slack 配置检查清单</b></summary>
@@ -257,7 +313,7 @@ channels:
 - [ ] 修改 scopes/events 后已重新安装 App 到 Workspace
 - [ ] `allowedUsers` 中填入了你的 Slack User ID
 
-> **常见失败原因：** scopes 或 events 修改后忘记重新安装 App。
+> **常见失败原因：** scopes 或 events 修改后忘记重新安装 App（Reinstall）。
 
 </details>
 
@@ -469,23 +525,23 @@ Agent 运行在 tmux session `agent-dev` 中，可用 `tmux attach -t agent-dev`
 
 ```bash
 # 前台运行（开发调试）
-./fractalbot --config ./config.yaml
+fractalbot --config ./config.yaml
 
 # 带详细日志
-./fractalbot --config ./config.yaml --verbose
+fractalbot --config ./config.yaml --verbose
 
 # 在 tmux 中后台运行
-tmux new-session -d -s fractalbot './fractalbot --config config.yaml'
+tmux new-session -d -s fractalbot 'fractalbot --config config.yaml'
 ```
 
 ### 端到端验证
 
 | 步骤 | 发送 | 预期结果 |
 |------|------|----------|
-| 1 | `/whoami` | 回复你的 User ID |
+| 1 | `/whoami` | 回复 User ID（示例：`U08XXXXXX`） |
 | 2 | `/ping` | 回复 `pong` |
-| 3 | `/agents` | 列出可用 Agent |
-| 4 | `Hello` | Agent 接收任务并回复 |
+| 3 | `/agents` | 列出可用 Agent（示例：`dev`） |
+| 4 | `Hello` | Agent 接收任务并回复（示例含 `[dev]`） |
 | 5 | `/agent dev 写个 hello world` | 指定 Agent 执行任务 |
 
 ### HTTP 健康检查
@@ -549,6 +605,20 @@ tmux attach -t agent-dev     # 查看 Agent 日志
 
 Slack 渠道未在配置中启用。确认 `channels.slack.enabled: true`，且 `botToken` 和 `appToken` 均已填写。
 
+### Q: Slack 报 `missing_scope` / `not_authed`
+
+通常是权限不足或 token 不匹配：
+
+1. 检查 `botToken` 是否为 `xoxb-`、`appToken` 是否为 `xapp-`
+2. 确认 Bot Scopes 至少包含：`chat:write`、`im:history`、`im:read`
+3. 重新安装 App：**Reinstall to Workspace**
+
+### Q: Slack 一直连不上（Socket Mode not enabled / connection failed）
+
+1. 在 Slack App 设置确认 **Socket Mode = Enable**
+2. 确认 App-Level Token 有 `connections:write`
+3. 修改后重新启动 FractalBot，再测 `/ping`
+
 ### Q: 飞书/Discord 配置后没反应
 
 1. 确认对应渠道 `enabled: true`
@@ -577,7 +647,7 @@ Slack 渠道未在配置中启用。确认 `channels.slack.enabled: true`，且 
 1. 安装 FractalBot（见上方「安装」）
 2. 把 `.env` 中的 token 搬到 `config.yaml`（如 `TELEGRAM_BOT_TOKEN` → `channels.telegram.botToken`）
 3. 安装 skills：`npx openskills install agent-manager && npx openskills install use-fractalbot`
-4. 启动并测试：`./fractalbot --config config.yaml`，发送 `/ping` 和 `/whoami` 验证
+4. 启动并测试：`fractalbot --config config.yaml`，发送 `/ping` 和 `/whoami` 验证
 5. 确认正常后停用旧服务
 
 ---
