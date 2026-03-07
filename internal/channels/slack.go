@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -379,6 +380,7 @@ func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.E
 	}
 	switch ev := event.InnerEvent.Data.(type) {
 	case *slackevents.MessageEvent:
+		fixupSlackMessageEventFiles(ev, event)
 		msg := slackMessageFromEvent(ev)
 		if msg == nil {
 			return
@@ -1014,6 +1016,37 @@ func slackMessageFromAppMentionEvent(event *slackevents.AppMentionEvent) *slackI
 		channelID:   event.Channel,
 		channelType: "app_mention",
 		threadTS:    event.ThreadTimeStamp,
+	}
+}
+
+// fixupSlackMessageEventFiles works around a bug in the slack-go library's
+// custom UnmarshalJSON for MessageEvent. When Slack sends a message event with
+// files at the top level AND a "message" key (even if empty), the custom
+// unmarshaller sees Message != nil and skips populating Files from the top
+// level. This function re-parses files from the raw inner event JSON when
+// Message.Files is empty.
+func fixupSlackMessageEventFiles(ev *slackevents.MessageEvent, apiEvent slackevents.EventsAPIEvent) {
+	if ev == nil || ev.Message == nil {
+		return
+	}
+	if len(ev.Message.Files) > 0 || len(ev.Message.Attachments) > 0 {
+		return // already has file data
+	}
+
+	cbEvent, ok := apiEvent.Data.(*slackevents.EventsAPICallbackEvent)
+	if !ok || cbEvent == nil || cbEvent.InnerEvent == nil {
+		return
+	}
+
+	var msg slack.Msg
+	if err := json.Unmarshal(*cbEvent.InnerEvent, &msg); err != nil {
+		return
+	}
+	if len(msg.Files) > 0 {
+		ev.Message.Files = msg.Files
+	}
+	if len(msg.Attachments) > 0 {
+		ev.Message.Attachments = msg.Attachments
 	}
 }
 

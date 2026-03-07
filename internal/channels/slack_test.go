@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -1612,5 +1613,186 @@ func TestSlackSendTextWithOptionsPostsThreadTS(t *testing.T) {
 	}
 	if receivedThreadTS != "1234567890.123456" {
 		t.Fatalf("thread_ts=%q", receivedThreadTS)
+	}
+}
+
+func TestSlackEventsParseMessageWithFilesViaJSON(t *testing.T) {
+	// This test simulates the actual parsing path that socket mode uses.
+	// It verifies that files at the top level of a message event are correctly
+	// populated into event.Message.Files by the custom UnmarshalJSON.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "message",
+			"text": "check this doc",
+			"user": "U123",
+			"channel": "D456",
+			"channel_type": "im",
+			"ts": "1234567890.123456",
+			"files": [
+				{
+					"id": "F123",
+					"name": "report.docx",
+					"mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+					"filetype": "docx",
+					"url_private": "https://files.slack.com/files-pri/T123-F123/report.docx"
+				}
+			]
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	msgEvent, ok := event.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok {
+		t.Fatalf("expected *MessageEvent, got %T", event.InnerEvent.Data)
+	}
+
+	// Check if custom unmarshaller populated Message
+	if msgEvent.Message == nil {
+		t.Fatalf("Message is nil — custom UnmarshalJSON did not populate it")
+	}
+
+	// Check if files were extracted from top-level JSON into Message.Files
+	if len(msgEvent.Message.Files) == 0 {
+		t.Fatalf("Message.Files is empty — files not parsed from event JSON")
+	}
+
+	if msgEvent.Message.Files[0].URLPrivate != "https://files.slack.com/files-pri/T123-F123/report.docx" {
+		t.Fatalf("URLPrivate=%q", msgEvent.Message.Files[0].URLPrivate)
+	}
+
+	// Verify our slackAttachmentsFromEvent function works end-to-end
+	attachments := slackAttachmentsFromEvent(msgEvent)
+	if len(attachments) == 0 {
+		t.Fatalf("slackAttachmentsFromEvent returned no attachments")
+	}
+	if attachments[0].URL != "https://files.slack.com/files-pri/T123-F123/report.docx" {
+		t.Fatalf("attachment.URL=%q", attachments[0].URL)
+	}
+	if attachments[0].Filename != "report.docx" {
+		t.Fatalf("attachment.Filename=%q", attachments[0].Filename)
+	}
+}
+
+func TestSlackEventsParseMessageWithFilesAndEmptyMessageField(t *testing.T) {
+	// This test reproduces a scenario where Slack sends a message event with
+	// files at the top level AND an empty "message" field. The custom
+	// UnmarshalJSON on MessageEvent sees Message != nil and skips populating
+	// Files from the top level. fixupSlackMessageEventFiles corrects this.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "message",
+			"text": "check this doc",
+			"user": "U123",
+			"channel": "D456",
+			"channel_type": "im",
+			"ts": "1234567890.123456",
+			"files": [
+				{
+					"id": "F123",
+					"name": "report.docx",
+					"mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+					"filetype": "docx",
+					"url_private": "https://files.slack.com/files-pri/T123-F123/report.docx"
+				}
+			],
+			"message": {}
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	msgEvent, ok := event.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok {
+		t.Fatalf("expected *MessageEvent, got %T", event.InnerEvent.Data)
+	}
+
+	// Before fixup: Message.Files should be empty due to UnmarshalJSON behavior
+	if len(msgEvent.Message.Files) != 0 {
+		t.Fatalf("expected empty Files before fixup, got %d", len(msgEvent.Message.Files))
+	}
+
+	// Apply the fixup
+	fixupSlackMessageEventFiles(msgEvent, event)
+
+	// After fixup: Message.Files should be populated from raw JSON
+	if len(msgEvent.Message.Files) == 0 {
+		t.Fatalf("expected Files to be populated after fixup")
+	}
+	if msgEvent.Message.Files[0].URLPrivate != "https://files.slack.com/files-pri/T123-F123/report.docx" {
+		t.Fatalf("URLPrivate=%q", msgEvent.Message.Files[0].URLPrivate)
+	}
+
+	// Verify slackAttachmentsFromEvent works after fixup
+	attachments := slackAttachmentsFromEvent(msgEvent)
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(attachments))
+	}
+	if attachments[0].Filename != "report.docx" {
+		t.Fatalf("attachment.Filename=%q", attachments[0].Filename)
+	}
+	if attachments[0].URL != "https://files.slack.com/files-pri/T123-F123/report.docx" {
+		t.Fatalf("attachment.URL=%q", attachments[0].URL)
+	}
+}
+
+func TestSlackFixupDoesNotOverrideExistingFiles(t *testing.T) {
+	// When Message.Files already has data, fixup should not replace it.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "message",
+			"text": "hello",
+			"user": "U123",
+			"channel": "D456",
+			"channel_type": "im",
+			"ts": "1234567890.123456",
+			"files": [
+				{
+					"id": "F_TOP",
+					"name": "top-level.docx",
+					"url_private": "https://files.slack.com/top"
+				}
+			]
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	msgEvent := event.InnerEvent.Data.(*slackevents.MessageEvent)
+
+	// For a message without "message" key, custom unmarshaller copies files correctly
+	if len(msgEvent.Message.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(msgEvent.Message.Files))
+	}
+
+	// Fixup should be a no-op since files already exist
+	fixupSlackMessageEventFiles(msgEvent, event)
+
+	if len(msgEvent.Message.Files) != 1 {
+		t.Fatalf("expected 1 file after fixup, got %d", len(msgEvent.Message.Files))
+	}
+	if msgEvent.Message.Files[0].ID != "F_TOP" {
+		t.Fatalf("file ID=%q, expected F_TOP", msgEvent.Message.Files[0].ID)
 	}
 }
