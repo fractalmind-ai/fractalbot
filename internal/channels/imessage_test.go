@@ -2,9 +2,8 @@ package channels
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"path/filepath"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -24,66 +23,6 @@ func (f *fakeIMessageHandler) HandleIncoming(ctx context.Context, msg *protocol.
 	f.calls++
 	f.msgs = append(f.msgs, msg)
 	return f.reply, f.err
-}
-
-type testIMessageRow struct {
-	rowID          int64
-	handleID       int64
-	sender         string
-	isFromMe       int
-	text           string
-	attributedBody []byte
-	date           int64
-}
-
-func createTestIMessageDB(t *testing.T, rows []testIMessageRow) string {
-	t.Helper()
-
-	dbPath := filepath.Join(t.TempDir(), "chat.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	defer db.Close()
-
-	if _, err := db.Exec(`CREATE TABLE handle (
-		ROWID INTEGER PRIMARY KEY,
-		id TEXT
-	)`); err != nil {
-		t.Fatalf("create handle table: %v", err)
-	}
-
-	if _, err := db.Exec(`CREATE TABLE message (
-		ROWID INTEGER PRIMARY KEY,
-		handle_id INTEGER,
-		is_from_me INTEGER,
-		text TEXT,
-		attributedBody BLOB,
-		date INTEGER
-	)`); err != nil {
-		t.Fatalf("create message table: %v", err)
-	}
-
-	for _, row := range rows {
-		if row.handleID > 0 && strings.TrimSpace(row.sender) != "" {
-			if _, err := db.Exec(`INSERT OR IGNORE INTO handle (ROWID, id) VALUES (?, ?)`, row.handleID, row.sender); err != nil {
-				t.Fatalf("insert handle row: %v", err)
-			}
-		}
-		if _, err := db.Exec(
-			`INSERT INTO message (ROWID, handle_id, is_from_me, text, attributedBody, date) VALUES (?, ?, ?, ?, ?, ?)`,
-			row.rowID,
-			row.handleID,
-			row.isFromMe,
-			row.text,
-			row.attributedBody,
-			row.date,
-		); err != nil {
-			t.Fatalf("insert message row: %v", err)
-		}
-	}
-
-	return dbPath
 }
 
 func TestNewIMessageBotRejectsNonDarwin(t *testing.T) {
@@ -175,189 +114,212 @@ func TestIMessageBotSendMessageFallsBackToConfiguredMessage(t *testing.T) {
 	}
 }
 
-func TestIMessageBotPollMessagesFromSQLite(t *testing.T) {
+func TestImsgWatchStreamProcessing(t *testing.T) {
 	originalGOOS := currentGOOS
 	currentGOOS = "darwin"
 	defer func() { currentGOOS = originalGOOS }()
 
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
+	bot, err := NewIMessageBot("+123", "", "")
 	if err != nil {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
 
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{rowID: 10, handleID: 1, sender: "+123", isFromMe: 1, text: "outbound", date: 785000000000000000},
-		{rowID: 11, handleID: 1, sender: "+123", isFromMe: 0, text: "hello", date: 785000000000000001},
-	})
-	bot.ConfigurePolling(true, 5, 10, dbPath)
-
-	msgs, err := bot.PollMessages(context.Background())
-	if err != nil {
-		t.Fatalf("PollMessages: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("len(msgs)=%d want 1", len(msgs))
-	}
-	if msgs[0].MessageID != 11 || msgs[0].Sender != "+123" || msgs[0].Text != "hello" {
-		t.Fatalf("unexpected message: %+v", msgs[0])
-	}
-	if bot.getLastSeenMessageID() != 11 {
-		t.Fatalf("lastSeenMessageID=%d want 11", bot.getLastSeenMessageID())
-	}
-}
-
-func TestIMessageBotPollMessagesAppendsURLsFromAttributedBody(t *testing.T) {
-	originalGOOS := currentGOOS
-	currentGOOS = "darwin"
-	defer func() { currentGOOS = originalGOOS }()
-
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
-	if err != nil {
-		t.Fatalf("NewIMessageBot: %v", err)
-	}
-
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{
-			rowID:          21,
-			handleID:       1,
-			sender:         "+123",
-			isFromMe:       0,
-			text:           "install this skill:",
-			attributedBody: []byte("binary\x00blob\x00https://github.com/fractalmind-ai/fractalbot"),
-			date:           785000000000000001,
-		},
-	})
-	bot.ConfigurePolling(true, 5, 10, dbPath)
-
-	msgs, err := bot.PollMessages(context.Background())
-	if err != nil {
-		t.Fatalf("PollMessages: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("len(msgs)=%d want 1", len(msgs))
-	}
-	if !strings.Contains(msgs[0].Text, "install this skill:") {
-		t.Fatalf("expected original text, got %q", msgs[0].Text)
-	}
-	if !strings.Contains(msgs[0].Text, "https://github.com/fractalmind-ai/fractalbot") {
-		t.Fatalf("expected url in text, got %q", msgs[0].Text)
-	}
-	if len(msgs[0].URLs) != 1 || msgs[0].URLs[0] != "https://github.com/fractalmind-ai/fractalbot" {
-		t.Fatalf("unexpected urls: %v", msgs[0].URLs)
-	}
-}
-
-func TestIMessageBotPollMessagesFromURLOnlyAttributedBody(t *testing.T) {
-	originalGOOS := currentGOOS
-	currentGOOS = "darwin"
-	defer func() { currentGOOS = originalGOOS }()
-
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
-	if err != nil {
-		t.Fatalf("NewIMessageBot: %v", err)
-	}
-
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{
-			rowID:          31,
-			handleID:       1,
-			sender:         "+999",
-			isFromMe:       0,
-			text:           "",
-			attributedBody: []byte("streamtyped\x00\x00https://example.com/tasks/314"),
-			date:           785000000000000001,
-		},
-	})
-	bot.ConfigurePolling(true, 5, 10, dbPath)
-
-	msgs, err := bot.PollMessages(context.Background())
-	if err != nil {
-		t.Fatalf("PollMessages: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("len(msgs)=%d want 1", len(msgs))
-	}
-	if msgs[0].Text != "https://example.com/tasks/314" {
-		t.Fatalf("unexpected text: %q", msgs[0].Text)
-	}
-	if len(msgs[0].URLs) != 1 || msgs[0].URLs[0] != "https://example.com/tasks/314" {
-		t.Fatalf("unexpected urls: %v", msgs[0].URLs)
-	}
-}
-
-func TestIMessageBotGetMaxMessageID(t *testing.T) {
-	originalGOOS := currentGOOS
-	currentGOOS = "darwin"
-	defer func() { currentGOOS = originalGOOS }()
-
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
-	if err != nil {
-		t.Fatalf("NewIMessageBot: %v", err)
-	}
-
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{rowID: 2, handleID: 1, sender: "+111", isFromMe: 0, text: "a", date: 1},
-		{rowID: 5, handleID: 1, sender: "+111", isFromMe: 1, text: "b", date: 2},
-		{rowID: 9, handleID: 2, sender: "+222", isFromMe: 0, text: "c", date: 3},
-	})
-	bot.ConfigurePolling(true, 5, 10, dbPath)
-
-	maxID, err := bot.getMaxMessageID(context.Background())
-	if err != nil {
-		t.Fatalf("getMaxMessageID: %v", err)
-	}
-	if maxID != 9 {
-		t.Fatalf("maxID=%d want 9", maxID)
-	}
-}
-
-func TestIMessageBotPollOnceRoutesInboundAndReplies(t *testing.T) {
-	originalGOOS := currentGOOS
-	currentGOOS = "darwin"
-	defer func() { currentGOOS = originalGOOS }()
-
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
-	if err != nil {
-		t.Fatalf("NewIMessageBot: %v", err)
-	}
-
-	handler := &fakeIMessageHandler{reply: "ack"}
+	handler := &fakeIMessageHandler{reply: "got it"}
 	bot.SetHandler(handler)
 	bot.resolvedServiceID = "TEST-UUID"
 
-	bot.readMessagesFn = func(ctx context.Context, sinceMessageID int64, limit int) ([]IMessageInbound, error) {
-		_ = ctx
-		_ = sinceMessageID
-		_ = limit
-		return []IMessageInbound{
-			{
-				MessageID: 1,
-				Sender:    "+123",
-				Text:      "ping",
-				Timestamp: time.Now().UTC(),
-			},
-		}, nil
-	}
-
-	var replySent bool
+	var replySenders []string
 	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		_ = ctx
-		if name == "osascript" && len(args) == 2 && strings.Contains(args[1], `send "ack" to targetBuddy`) {
-			replySent = true
+		if name == "osascript" && len(args) == 2 {
+			replySenders = append(replySenders, args[1])
 		}
 		return nil, nil
 	}
 
-	bot.pollOnce(context.Background())
+	events := strings.Join([]string{
+		`{"rowid":1,"text":"hello","sender":"+999","timestamp":"2026-03-04T13:00:00Z","attachments":[]}`,
+		`{"rowid":2,"text":"world","sender":"+888","timestamp":"2026-03-04T13:01:00Z","attachments":[]}`,
+	}, "\n")
+
+	reader := io.NopCloser(strings.NewReader(events))
+	bot.processImsgStream(context.Background(), reader)
+
+	if handler.calls != 2 {
+		t.Fatalf("handler calls=%d want 2", handler.calls)
+	}
+	data0 := handler.msgs[0].Data.(map[string]interface{})
+	if data0["text"] != "hello" {
+		t.Fatalf("first msg text=%q want hello", data0["text"])
+	}
+	if data0["sender"] != "+999" {
+		t.Fatalf("first msg sender=%q want +999", data0["sender"])
+	}
+	data1 := handler.msgs[1].Data.(map[string]interface{})
+	if data1["text"] != "world" {
+		t.Fatalf("second msg text=%q want world", data1["text"])
+	}
+	if len(replySenders) != 2 {
+		t.Fatalf("expected 2 replies, got %d", len(replySenders))
+	}
+	if bot.getLastSeenMessageID() != 2 {
+		t.Fatalf("lastSeenMessageID=%d want 2", bot.getLastSeenMessageID())
+	}
+}
+
+func TestImsgWatchStreamSkipsEmptyText(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+123", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	handler := &fakeIMessageHandler{reply: "ok"}
+	bot.SetHandler(handler)
+	bot.resolvedServiceID = "TEST-UUID"
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, nil
+	}
+
+	events := strings.Join([]string{
+		`{"rowid":1,"text":"","sender":"+999","timestamp":"2026-03-04T13:00:00Z","attachments":[]}`,
+		`{"rowid":2,"text":"  ","sender":"+999","timestamp":"2026-03-04T13:00:01Z","attachments":[]}`,
+		`{"rowid":3,"text":"real message","sender":"+999","timestamp":"2026-03-04T13:00:02Z","attachments":[]}`,
+	}, "\n")
+
+	reader := io.NopCloser(strings.NewReader(events))
+	bot.processImsgStream(context.Background(), reader)
 
 	if handler.calls != 1 {
-		t.Fatalf("handler calls=%d want 1", handler.calls)
+		t.Fatalf("handler calls=%d want 1 (empty text should be skipped)", handler.calls)
 	}
-	if !replySent {
-		t.Fatalf("expected reply to be sent to inbound sender")
+	data := handler.msgs[0].Data.(map[string]interface{})
+	if data["text"] != "real message" {
+		t.Fatalf("msg text=%q want 'real message'", data["text"])
 	}
-	if bot.LastActivity().IsZero() {
-		t.Fatalf("expected last activity to be set")
+}
+
+func TestImsgWatchStreamHandlesInvalidJSON(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+123", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	handler := &fakeIMessageHandler{reply: "ok"}
+	bot.SetHandler(handler)
+	bot.resolvedServiceID = "TEST-UUID"
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, nil
+	}
+
+	events := strings.Join([]string{
+		`not-json-at-all`,
+		`{"rowid":1,"text":"valid","sender":"+999","timestamp":"2026-03-04T13:00:00Z","attachments":[]}`,
+		`{"broken json`,
+		`{"rowid":2,"text":"also valid","sender":"+888","timestamp":"2026-03-04T13:01:00Z","attachments":[]}`,
+	}, "\n")
+
+	reader := io.NopCloser(strings.NewReader(events))
+	bot.processImsgStream(context.Background(), reader)
+
+	if handler.calls != 2 {
+		t.Fatalf("handler calls=%d want 2 (invalid JSON should be skipped)", handler.calls)
+	}
+}
+
+func TestImsgEventToInbound(t *testing.T) {
+	event := imsgWatchEvent{
+		RowID:     42,
+		Text:      "  hello world  ",
+		Sender:    " +123 ",
+		Timestamp: "2026-03-04T13:00:00Z",
+	}
+
+	inbound := imsgEventToInbound(event)
+
+	if inbound.MessageID != 42 {
+		t.Fatalf("MessageID=%d want 42", inbound.MessageID)
+	}
+	if inbound.Text != "hello world" {
+		t.Fatalf("Text=%q want 'hello world'", inbound.Text)
+	}
+	if inbound.Sender != "+123" {
+		t.Fatalf("Sender=%q want '+123'", inbound.Sender)
+	}
+	expected := time.Date(2026, 3, 4, 13, 0, 0, 0, time.UTC)
+	if !inbound.Timestamp.Equal(expected) {
+		t.Fatalf("Timestamp=%v want %v", inbound.Timestamp, expected)
+	}
+}
+
+func TestImsgWatchReconnectsOnProcessExit(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+123", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	handler := &fakeIMessageHandler{reply: ""}
+	bot.SetHandler(handler)
+	bot.resolvedServiceID = "TEST-UUID"
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, nil
+	}
+
+	startCount := 0
+	bot.startWatchFn = func(ctx context.Context, recipient string) (io.ReadCloser, func() error, error) {
+		startCount++
+		if startCount == 1 {
+			// First call: return a single message then EOF (simulates process exit)
+			events := `{"rowid":1,"text":"first","sender":"+999","timestamp":"2026-03-04T13:00:00Z","attachments":[]}`
+			return io.NopCloser(strings.NewReader(events)), func() error { return nil }, nil
+		}
+		// Second call: block until context cancelled (simulates stable process)
+		pr, pw := io.Pipe()
+		go func() {
+			<-ctx.Done()
+			pw.Close()
+		}()
+		return pr, func() error { return nil }, nil
+	}
+
+	bot.ConfigurePolling(true, 60, 10, "")
+	bot.checkPermissionsFn = func(ctx context.Context) error { return nil }
+	bot.isMessagesRunning = func(ctx context.Context) (bool, error) { return true, nil }
+	bot.resolveServiceIDFn = func(ctx context.Context) (string, error) { return "TEST-UUID", nil }
+
+	if err := bot.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Wait for the first message to be processed and reconnection to happen
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if handler.calls >= 1 && startCount >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err := bot.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if handler.calls < 1 {
+		t.Fatalf("handler calls=%d want >= 1", handler.calls)
+	}
+	if startCount < 2 {
+		t.Fatalf("startCount=%d want >= 2 (reconnect)", startCount)
 	}
 }
 
@@ -370,10 +332,7 @@ func TestIMessageBotStartChecksPermissionsAndStartsMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{rowID: 3, handleID: 1, sender: "+123", isFromMe: 0, text: "hello", date: 1},
-	})
-	bot.ConfigurePolling(true, 60, 10, dbPath)
+	bot.ConfigurePolling(true, 60, 10, "")
 
 	var permissionChecked bool
 	bot.checkPermissionsFn = func(ctx context.Context) error {
@@ -399,6 +358,16 @@ func TestIMessageBotStartChecksPermissionsAndStartsMessages(t *testing.T) {
 		return "TEST-UUID", nil
 	}
 
+	// Mock imsg watch: block until context cancelled
+	bot.startWatchFn = func(ctx context.Context, recipient string) (io.ReadCloser, func() error, error) {
+		pr, pw := io.Pipe()
+		go func() {
+			<-ctx.Done()
+			pw.Close()
+		}()
+		return pr, func() error { return nil }, nil
+	}
+
 	if err := bot.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -413,48 +382,6 @@ func TestIMessageBotStartChecksPermissionsAndStartsMessages(t *testing.T) {
 	}
 }
 
-func TestIMessageBotStartInitializesLastSeenMessageID(t *testing.T) {
-	originalGOOS := currentGOOS
-	currentGOOS = "darwin"
-	defer func() { currentGOOS = originalGOOS }()
-
-	bot, err := NewIMessageBot("recipient@example.com", "", "")
-	if err != nil {
-		t.Fatalf("NewIMessageBot: %v", err)
-	}
-	dbPath := createTestIMessageDB(t, []testIMessageRow{
-		{rowID: 41, handleID: 1, sender: "+123", isFromMe: 0, text: "a", date: 1},
-		{rowID: 42, handleID: 1, sender: "+123", isFromMe: 1, text: "b", date: 2},
-		{rowID: 43, handleID: 2, sender: "+456", isFromMe: 0, text: "c", date: 3},
-	})
-	bot.ConfigurePolling(true, 60, 10, dbPath)
-
-	bot.checkPermissionsFn = func(ctx context.Context) error {
-		_ = ctx
-		return nil
-	}
-	bot.isMessagesRunning = func(ctx context.Context) (bool, error) {
-		_ = ctx
-		return true, nil
-	}
-	bot.resolveServiceIDFn = func(ctx context.Context) (string, error) {
-		return "TEST-UUID", nil
-	}
-
-	if err := bot.Start(context.Background()); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() {
-		if err := bot.Stop(); err != nil {
-			t.Fatalf("Stop: %v", err)
-		}
-	}()
-
-	if got := bot.getLastSeenMessageID(); got != 43 {
-		t.Fatalf("lastSeenMessageID=%d want 43", got)
-	}
-}
-
 func TestIMessageBotStartFailsPermissionCheck(t *testing.T) {
 	originalGOOS := currentGOOS
 	currentGOOS = "darwin"
@@ -464,7 +391,7 @@ func TestIMessageBotStartFailsPermissionCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIMessageBot: %v", err)
 	}
-	bot.ConfigurePolling(true, 60, 10, "/tmp/chat.db")
+	bot.ConfigurePolling(true, 60, 10, "")
 	bot.isMessagesRunning = func(ctx context.Context) (bool, error) {
 		_ = ctx
 		return true, nil
@@ -483,5 +410,112 @@ func TestIMessageBotStartFailsPermissionCheck(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckStartupPermissionsVerifiesImsgCLI(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("recipient@example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	var cmds []string
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := name
+		if len(args) > 0 {
+			cmd += " " + strings.Join(args, " ")
+		}
+		cmds = append(cmds, cmd)
+		if name == "imsg" {
+			return []byte("imsg v1.0.0"), nil
+		}
+		return []byte("Messages"), nil
+	}
+
+	if err := bot.checkStartupPermissions(context.Background()); err != nil {
+		t.Fatalf("checkStartupPermissions: %v", err)
+	}
+
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 commands, got %d: %v", len(cmds), cmds)
+	}
+	if !strings.Contains(cmds[0], "imsg --version") {
+		t.Fatalf("first command should be imsg --version, got %q", cmds[0])
+	}
+	if !strings.Contains(cmds[1], "osascript") {
+		t.Fatalf("second command should be osascript, got %q", cmds[1])
+	}
+}
+
+func TestCheckStartupPermissionsFailsWithoutImsg(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("recipient@example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "imsg" {
+			return nil, errors.New("not found")
+		}
+		return nil, nil
+	}
+
+	err = bot.checkStartupPermissions(context.Background())
+	if err == nil {
+		t.Fatalf("expected error when imsg not available")
+	}
+	if !strings.Contains(err.Error(), "imsg CLI not found") {
+		t.Fatalf("expected imsg not found error, got: %v", err)
+	}
+}
+
+func TestHandleSingleInboundDispatchesAndReplies(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+123", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	handler := &fakeIMessageHandler{reply: "ack"}
+	bot.SetHandler(handler)
+	bot.resolvedServiceID = "TEST-UUID"
+
+	var replySent bool
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_ = ctx
+		if name == "osascript" && len(args) == 2 && strings.Contains(args[1], `send "ack" to targetBuddy`) {
+			replySent = true
+		}
+		return nil, nil
+	}
+
+	inbound := IMessageInbound{
+		MessageID: 1,
+		Sender:    "+999",
+		Text:      "ping",
+		Timestamp: time.Now().UTC(),
+	}
+
+	bot.handleSingleInbound(context.Background(), inbound)
+
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1", handler.calls)
+	}
+	if !replySent {
+		t.Fatalf("expected reply to be sent to inbound sender")
+	}
+	if bot.LastActivity().IsZero() {
+		t.Fatalf("expected last activity to be set")
 	}
 }
