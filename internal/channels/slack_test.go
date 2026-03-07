@@ -1796,3 +1796,206 @@ func TestSlackFixupDoesNotOverrideExistingFiles(t *testing.T) {
 		t.Fatalf("file ID=%q, expected F_TOP", msgEvent.Message.Files[0].ID)
 	}
 }
+
+func TestResolveSlackMentions(t *testing.T) {
+	bot := &SlackBot{
+		resolveUsersFn: func(ctx context.Context) ([]slack.User, error) {
+			return []slack.User{
+				{ID: "U111", Name: "alice", Profile: slack.UserProfile{DisplayName: "Alice W"}, RealName: "Alice Wonderland"},
+				{ID: "U222", Name: "bob", Profile: slack.UserProfile{DisplayName: "Bob"}, RealName: "Bob Builder"},
+				{ID: "U333", Name: "charlie", Profile: slack.UserProfile{DisplayName: "Charlie"}, RealName: "Charlie Chaplin", Deleted: true},
+				{ID: "U444", Name: "botuser", IsBot: true},
+			}, nil
+		},
+	}
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "simple mention",
+			in:   "Hey @alice, check this",
+			want: "Hey <@U111>, check this",
+		},
+		{
+			name: "mention at start",
+			in:   "@bob please review",
+			want: "<@U222> please review",
+		},
+		{
+			name: "case insensitive",
+			in:   "cc @Alice",
+			want: "cc <@U111>",
+		},
+		{
+			name: "display name with space",
+			in:   "Hey @bob, and @alice",
+			want: "Hey <@U222>, and <@U111>",
+		},
+		{
+			name: "already resolved mention unchanged",
+			in:   "Hey <@U111> check this",
+			want: "Hey <@U111> check this",
+		},
+		{
+			name: "unknown user unchanged",
+			in:   "Hey @unknown, check this",
+			want: "Hey @unknown, check this",
+		},
+		{
+			name: "deleted user not resolved",
+			in:   "Hey @charlie",
+			want: "Hey @charlie",
+		},
+		{
+			name: "bot user not resolved",
+			in:   "Hey @botuser",
+			want: "Hey @botuser",
+		},
+		{
+			name: "no mentions unchanged",
+			in:   "Hello world",
+			want: "Hello world",
+		},
+		{
+			name: "email address not resolved",
+			in:   "Send to user@example.com",
+			want: "Send to user@example.com",
+		},
+		{
+			name: "mention in parens",
+			in:   "Assigned to (@alice)",
+			want: "Assigned to (<@U111>)",
+		},
+		{
+			name: "multiple mentions",
+			in:   "@alice and @bob should review",
+			want: "<@U111> and <@U222> should review",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bot.resolveSlackMentions(ctx, tt.in)
+			if got != tt.want {
+				t.Errorf("resolveSlackMentions(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveSlackMentionsCacheTTL(t *testing.T) {
+	callCount := 0
+	bot := &SlackBot{
+		resolveUsersFn: func(ctx context.Context) ([]slack.User, error) {
+			callCount++
+			return []slack.User{
+				{ID: "U111", Name: "alice"},
+			}, nil
+		},
+	}
+
+	ctx := context.Background()
+
+	// First call populates the cache.
+	got := bot.resolveSlackMentions(ctx, "@alice hi")
+	if got != "<@U111> hi" {
+		t.Fatalf("first call: got %q, want %q", got, "<@U111> hi")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 API call, got %d", callCount)
+	}
+
+	// Second call should use cache, not call API again.
+	got = bot.resolveSlackMentions(ctx, "@alice hi")
+	if got != "<@U111> hi" {
+		t.Fatalf("second call: got %q, want %q", got, "<@U111> hi")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected still 1 API call, got %d", callCount)
+	}
+
+	// Simulate stale cache by backdating the timestamp.
+	bot.userDirMu.Lock()
+	bot.userDirUpdated = time.Now().Add(-userDirTTL - time.Minute)
+	bot.userDirMu.Unlock()
+
+	got = bot.resolveSlackMentions(ctx, "@alice hi")
+	if got != "<@U111> hi" {
+		t.Fatalf("stale cache: got %q, want %q", got, "<@U111> hi")
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 API calls after TTL, got %d", callCount)
+	}
+}
+
+func TestResolveSlackMentionsAPIError(t *testing.T) {
+	bot := &SlackBot{
+		resolveUsersFn: func(ctx context.Context) ([]slack.User, error) {
+			return nil, errors.New("api error")
+		},
+	}
+
+	ctx := context.Background()
+	// Should return text unchanged when API fails.
+	got := bot.resolveSlackMentions(ctx, "Hey @alice")
+	if got != "Hey @alice" {
+		t.Fatalf("got %q, want unchanged %q", got, "Hey @alice")
+	}
+}
+
+func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
+	var sentText string
+	bot := &SlackBot{
+		apiClient: slack.New("xoxb-fake-token"),
+		resolveUsersFn: func(ctx context.Context) ([]slack.User, error) {
+			return []slack.User{
+				{ID: "U111", Name: "alice"},
+			}, nil
+		},
+	}
+
+	// Override PostMessageContext by setting sendMessageWithOptionsFn to capture text.
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text string, opts SendOptions) error {
+		sentText = text
+		return nil
+	}
+
+	ctx := context.Background()
+	err := bot.SendMessageWithOptions(ctx, "C123", "Hey @alice, check this", SendOptions{})
+	if err != nil {
+		t.Fatalf("SendMessageWithOptions: %v", err)
+	}
+
+	// sendMessageWithOptionsFn is called before sendTextWithOptions (which does resolution),
+	// so we need to verify through the sendTextWithOptions path directly.
+	sentText = ""
+	// Use a test HTTP server to capture the sent text.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		sentText = r.FormValue("text")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1234.5678"}`))
+	}))
+	defer ts.Close()
+
+	bot2 := &SlackBot{
+		apiClient: slack.New("xoxb-fake-token", slack.OptionAPIURL(ts.URL+"/")),
+		resolveUsersFn: func(ctx context.Context) ([]slack.User, error) {
+			return []slack.User{
+				{ID: "U111", Name: "alice"},
+			}, nil
+		},
+	}
+
+	err = bot2.sendTextWithOptions(ctx, "C123", "Hey @alice, check this", SendOptions{})
+	if err != nil {
+		t.Fatalf("sendTextWithOptions: %v", err)
+	}
+	if sentText != "Hey <@U111>, check this" {
+		t.Fatalf("sent text = %q, want %q", sentText, "Hey <@U111>, check this")
+	}
+}

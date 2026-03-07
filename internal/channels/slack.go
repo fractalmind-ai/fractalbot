@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,11 @@ type SlackBot struct {
 	telemetryMu  sync.RWMutex
 	lastActivity time.Time
 	lastError    time.Time
+
+	userDirMu      sync.RWMutex
+	userDir        map[string]string // lowercase name → user ID
+	userDirUpdated time.Time
+	resolveUsersFn func(ctx context.Context) ([]slack.User, error)
 }
 
 func NewSlackBot(botToken, appToken string, allowedUsers []string, allowedChannels []string, defaultAgent string, allowedAgents []string) (*SlackBot, error) {
@@ -881,8 +887,9 @@ func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text stri
 		b.markError()
 		return errors.New("slack channel ID is required")
 	}
+	resolved := b.resolveSlackMentions(ctx, text)
 	msgOptions := []slack.MsgOption{
-		slack.MsgOptionText(text, false),
+		slack.MsgOptionText(resolved, false),
 	}
 	if strings.TrimSpace(opts.ThreadTS) != "" {
 		msgOptions = append(msgOptions, slack.MsgOptionTS(strings.TrimSpace(opts.ThreadTS)))
@@ -1183,6 +1190,97 @@ func slackAttachmentType(mimeType, fileType string) string {
 	default:
 		return "file"
 	}
+}
+
+// slackMentionRe matches @username patterns that are NOT already inside <@...>
+// brackets and NOT part of an email address (preceded by a non-whitespace char).
+var slackMentionRe = regexp.MustCompile(`(^|[\s(])@(\w[\w.-]*)`)
+
+const userDirTTL = 30 * time.Minute
+
+// refreshUserDirectory populates the user directory cache from the Slack API.
+func (b *SlackBot) refreshUserDirectory(ctx context.Context) {
+	fetchFn := b.resolveUsersFn
+	if fetchFn == nil {
+		if b.apiClient == nil {
+			return
+		}
+		fetchFn = func(ctx context.Context) ([]slack.User, error) {
+			return b.apiClient.GetUsersContext(ctx)
+		}
+	}
+
+	users, err := fetchFn(ctx)
+	if err != nil {
+		log.Printf("slack: failed to fetch user directory: %v", err)
+		return
+	}
+
+	dir := make(map[string]string, len(users))
+	for _, u := range users {
+		if u.Deleted || u.IsBot {
+			continue
+		}
+		id := u.ID
+		if name := strings.ToLower(strings.TrimSpace(u.Name)); name != "" {
+			dir[name] = id
+		}
+		if dn := strings.ToLower(strings.TrimSpace(u.Profile.DisplayName)); dn != "" {
+			dir[dn] = id
+		}
+		if dn := strings.ToLower(strings.TrimSpace(u.Profile.DisplayNameNormalized)); dn != "" {
+			dir[dn] = id
+		}
+		if rn := strings.ToLower(strings.TrimSpace(u.RealName)); rn != "" {
+			dir[rn] = id
+		}
+	}
+
+	b.userDirMu.Lock()
+	b.userDir = dir
+	b.userDirUpdated = time.Now()
+	b.userDirMu.Unlock()
+}
+
+// lookupUserID returns the Slack user ID for a given name, if cached.
+func (b *SlackBot) lookupUserID(name string) (string, bool) {
+	b.userDirMu.RLock()
+	defer b.userDirMu.RUnlock()
+	id, ok := b.userDir[strings.ToLower(name)]
+	return id, ok
+}
+
+// userDirStale returns true if the user directory needs refreshing.
+func (b *SlackBot) userDirStale() bool {
+	b.userDirMu.RLock()
+	defer b.userDirMu.RUnlock()
+	return b.userDir == nil || time.Since(b.userDirUpdated) > userDirTTL
+}
+
+// resolveSlackMentions converts @name patterns in outbound text to <@USERID> format.
+func (b *SlackBot) resolveSlackMentions(ctx context.Context, text string) string {
+	if !strings.Contains(text, "@") {
+		return text
+	}
+
+	if b.userDirStale() {
+		b.refreshUserDirectory(ctx)
+	}
+
+	return slackMentionRe.ReplaceAllStringFunc(text, func(match string) string {
+		sub := slackMentionRe.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		prefix := sub[1]
+		name := sub[2]
+
+		id, ok := b.lookupUserID(name)
+		if !ok {
+			return match
+		}
+		return prefix + "<@" + id + ">"
+	})
 }
 
 func stripLeadingSlackMentions(text string) string {
