@@ -186,3 +186,135 @@ func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
 	}
 	t.Fatalf("condition not met before timeout (%s)", timeout)
 }
+
+func TestManagerStartUsesIndependentContexts(t *testing.T) {
+	// When the parent context is canceled, channels with independent contexts
+	// should NOT have their contexts canceled automatically. They should only
+	// stop when Stop() is called explicitly.
+	manager := NewManager(nil, nil)
+	ctxObserved := make(chan struct{})
+	ch := &contextObservingChannel{
+		name:       "observer",
+		ctxDoneCh:  ctxObserved,
+		startedCh:  make(chan struct{}),
+	}
+
+	if err := manager.Register(ch); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	if err := manager.Start(parentCtx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Wait for the channel to start
+	select {
+	case <-ch.startedCh:
+	case <-time.After(time.Second):
+		t.Fatalf("channel did not start in time")
+	}
+
+	// Cancel the parent context — channel should NOT be affected
+	parentCancel()
+
+	// Give it a moment to propagate (if it were a child, it would be canceled)
+	select {
+	case <-ctxObserved:
+		t.Fatalf("channel context was canceled when parent was canceled — contexts are not isolated")
+	case <-time.After(100 * time.Millisecond):
+		// Good — channel context was NOT canceled
+	}
+
+	// Now explicitly stop — this should cancel the channel
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+}
+
+func TestManagerStartChannelPanicRecovery(t *testing.T) {
+	manager := NewManager(nil, nil)
+	good := &fakeChannel{name: "good"}
+	panicking := &panickingChannel{name: "panicky", panicDone: make(chan struct{})}
+
+	if err := manager.Register(good); err != nil {
+		t.Fatalf("register good: %v", err)
+	}
+	if err := manager.Register(panicking); err != nil {
+		t.Fatalf("register panicky: %v", err)
+	}
+
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Wait for both channels to attempt start
+	waitForCondition(t, time.Second, func() bool {
+		return good.started == 1
+	})
+
+	select {
+	case <-panicking.panicDone:
+	case <-time.After(time.Second):
+		t.Fatalf("panicking channel did not run")
+	}
+
+	// Good channel should still be running despite the other panicking
+	if !good.running {
+		t.Fatalf("expected good channel to be running after sibling panic")
+	}
+
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+}
+
+// contextObservingChannel blocks on Start until its context is canceled,
+// and signals on ctxDoneCh when that happens.
+type contextObservingChannel struct {
+	name      string
+	ctxDoneCh chan struct{}
+	startedCh chan struct{}
+	running   bool
+}
+
+func (c *contextObservingChannel) Name() string { return c.name }
+
+func (c *contextObservingChannel) Start(ctx context.Context) error {
+	c.running = true
+	close(c.startedCh)
+	<-ctx.Done()
+	close(c.ctxDoneCh)
+	c.running = false
+	return ctx.Err()
+}
+
+func (c *contextObservingChannel) Stop() error {
+	c.running = false
+	return nil
+}
+
+func (c *contextObservingChannel) SendMessage(ctx context.Context, target string, text string) error {
+	return nil
+}
+
+func (c *contextObservingChannel) IsRunning() bool { return c.running }
+
+// panickingChannel panics during Start to test panic recovery.
+type panickingChannel struct {
+	name      string
+	panicDone chan struct{}
+}
+
+func (p *panickingChannel) Name() string { return p.name }
+
+func (p *panickingChannel) Start(ctx context.Context) error {
+	defer close(p.panicDone)
+	panic("test panic in channel start")
+}
+
+func (p *panickingChannel) Stop() error              { return nil }
+func (p *panickingChannel) IsRunning() bool           { return false }
+func (p *panickingChannel) SendMessage(ctx context.Context, target string, text string) error {
+	return nil
+}
