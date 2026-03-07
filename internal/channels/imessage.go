@@ -1,11 +1,13 @@
 package channels
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,7 +20,6 @@ import (
 	"unicode"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -35,12 +36,13 @@ const (
 var currentGOOS = runtime.GOOS
 var iMessageURLRegexp = regexp.MustCompile(`https?://[^\s<>"'\\]+`)
 
-type iMessageSQLiteRow struct {
-	MessageID      int64   `json:"message_id"`
-	Sender         string  `json:"sender"`
-	Text           string  `json:"text"`
-	AttributedBody []byte  `json:"attributed_body"`
-	Date           float64 `json:"date"`
+// imsgWatchEvent represents a JSON line from `imsg watch --json`.
+type imsgWatchEvent struct {
+	RowID       int64           `json:"rowid"`
+	Text        string          `json:"text"`
+	Sender      string          `json:"sender"`
+	Timestamp   string          `json:"timestamp"`
+	Attachments json.RawMessage `json:"attachments"`
 }
 
 // IMessageInbound represents a single inbound iMessage entry.
@@ -70,7 +72,7 @@ type IMessageBot struct {
 	lastSeenMessageID int64
 
 	execFn             func(ctx context.Context, name string, args ...string) ([]byte, error)
-	readMessagesFn     func(ctx context.Context, sinceMessageID int64, limit int) ([]IMessageInbound, error)
+	startWatchFn       func(ctx context.Context, recipient string) (io.ReadCloser, func() error, error)
 	checkPermissionsFn func(ctx context.Context) error
 	isMessagesRunning  func(ctx context.Context) (bool, error)
 	startMessagesApp   func(ctx context.Context) error
@@ -121,7 +123,7 @@ func NewIMessageBot(recipient, defaultMessage, service string) (*IMessageBot, er
 	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).CombinedOutput()
 	}
-	bot.readMessagesFn = bot.readMessagesFromSQLite
+	bot.startWatchFn = bot.defaultStartImsgWatch
 	bot.checkPermissionsFn = bot.checkStartupPermissions
 	bot.isMessagesRunning = bot.defaultIsMessagesRunning
 	bot.startMessagesApp = bot.defaultStartMessagesApp
@@ -228,16 +230,9 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 			b.markError()
 			return err
 		}
-		maxID, err := b.getMaxMessageID(b.ctx)
-		if err != nil {
-			log.Printf("imessage: failed to get max message ID, starting from 0: %v", err)
-		} else {
-			b.setLastSeenMessageID(maxID)
-			log.Printf("imessage: initialized lastSeenMessageID to %d", maxID)
-		}
 
 		b.wg.Add(1)
-		go b.pollLoop(b.ctx)
+		go b.watchLoop(b.ctx)
 	}
 
 	b.setRunning(true)
@@ -274,74 +269,128 @@ func (b *IMessageBot) Send(text string) error {
 	return b.send(ctx, b.recipient, text)
 }
 
-// PollMessages reads new inbound messages from Messages database.
-func (b *IMessageBot) PollMessages(ctx context.Context) ([]IMessageInbound, error) {
-	since := b.getLastSeenMessageID()
-	msgs, err := b.readMessagesFn(ctx, since, b.pollingLimit)
-	if err != nil {
-		return nil, err
-	}
-
-	maxSeen := since
-	for _, msg := range msgs {
-		if msg.MessageID > maxSeen {
-			maxSeen = msg.MessageID
-		}
-	}
-	if maxSeen > since {
-		b.setLastSeenMessageID(maxSeen)
-	}
-
-	return msgs, nil
-}
-
-func (b *IMessageBot) pollLoop(ctx context.Context) {
+func (b *IMessageBot) watchLoop(ctx context.Context) {
 	defer b.wg.Done()
 
-	b.pollOnce(ctx)
-	ticker := time.NewTicker(b.pollingInterval)
-	defer ticker.Stop()
-
 	for {
+		startWatch := b.startWatchFn
+		if startWatch == nil {
+			startWatch = b.defaultStartImsgWatch
+		}
+
+		reader, waitFn, err := startWatch(ctx, b.recipient)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("imessage: failed to start imsg watch: %v", err)
+			b.markError()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+
+		b.processImsgStream(ctx, reader)
+
+		if waitFn != nil {
+			_ = waitFn()
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		log.Printf("imessage: imsg watch exited, restarting...")
+		b.markError()
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			b.pollOnce(ctx)
+		case <-time.After(time.Second):
 		}
 	}
 }
 
-func (b *IMessageBot) pollOnce(ctx context.Context) {
+func (b *IMessageBot) processImsgStream(ctx context.Context, reader io.ReadCloser) {
+	defer reader.Close()
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return
+		}
+
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event imsgWatchEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			log.Printf("imessage: failed to parse imsg event: %v", err)
+			continue
+		}
+
+		inbound := imsgEventToInbound(event)
+		if strings.TrimSpace(inbound.Text) == "" {
+			continue
+		}
+
+		if inbound.MessageID > 0 {
+			b.setLastSeenMessageID(inbound.MessageID)
+		}
+
+		b.handleSingleInbound(ctx, inbound)
+	}
+
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		log.Printf("imessage: imsg stream read error: %v", err)
+	}
+}
+
+func (b *IMessageBot) defaultStartImsgWatch(ctx context.Context, recipient string) (io.ReadCloser, func() error, error) {
+	cmd := exec.CommandContext(ctx, "imsg", "watch", "--json", "--participants", recipient)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("imsg stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, fmt.Errorf("start imsg watch: %w", err)
+	}
+	return stdout, cmd.Wait, nil
+}
+
+func imsgEventToInbound(event imsgWatchEvent) IMessageInbound {
+	ts, _ := time.Parse(time.RFC3339, event.Timestamp)
+	return IMessageInbound{
+		MessageID:   event.RowID,
+		Sender:      strings.TrimSpace(event.Sender),
+		Text:        strings.TrimSpace(event.Text),
+		Timestamp:   ts,
+		RawTimestamp: ts.UnixNano(),
+	}
+}
+
+func (b *IMessageBot) handleSingleInbound(ctx context.Context, inbound IMessageInbound) {
 	if b.handler == nil {
 		return
 	}
 
-	msgs, err := b.PollMessages(ctx)
+	reply, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(inbound))
 	if err != nil {
 		b.markError()
-		log.Printf("imessage polling failed: %v", err)
+		log.Printf("imessage inbound handler failed: %v", err)
 		return
 	}
 
-	for _, inbound := range msgs {
-		if strings.TrimSpace(inbound.Text) == "" {
-			continue
-		}
-		reply, err := b.handler.HandleIncoming(ctx, b.toProtocolMessage(inbound))
-		if err != nil {
-			b.markError()
-			log.Printf("imessage inbound handler failed: %v", err)
-			continue
-		}
+	b.markActivity()
 
-		b.markActivity()
-
-		trimmedReply := strings.TrimSpace(reply)
-		if trimmedReply != "" && strings.TrimSpace(inbound.Sender) != "" {
-			if err := b.send(ctx, inbound.Sender, trimmedReply); err != nil {
-				log.Printf("imessage reply send failed: %v", err)
-			}
+	trimmedReply := strings.TrimSpace(reply)
+	if trimmedReply != "" && strings.TrimSpace(inbound.Sender) != "" {
+		if err := b.send(ctx, inbound.Sender, trimmedReply); err != nil {
+			log.Printf("imessage reply send failed: %v", err)
 		}
 	}
 }
@@ -370,147 +419,20 @@ func (b *IMessageBot) toProtocolMessage(inbound IMessageInbound) *protocol.Messa
 	}
 }
 
-func (b *IMessageBot) readMessagesFromSQLite(ctx context.Context, sinceMessageID int64, limit int) ([]IMessageInbound, error) {
-	if limit <= 0 {
-		limit = defaultIMessagePollingLimit
-	}
-	if limit > maxIMessagePollingLimit {
-		limit = maxIMessagePollingLimit
-	}
-	if sinceMessageID < 0 {
-		sinceMessageID = 0
-	}
-
-	dbPath, err := expandHomePath(b.databasePath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Open database using Go's database/sql with modernc.org/sqlite driver
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
-	}
-	defer db.Close()
-
-	// Set busy timeout for concurrent access
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	// Query for new messages
-	query := `SELECT
-		m.ROWID AS message_id,
-		COALESCE(h.id, '') AS sender,
-		COALESCE(m.text, '') AS text,
-		m.attributedBody AS attributed_body,
-		m.date AS date
-	FROM message m
-	LEFT JOIN handle h ON m.handle_id = h.ROWID
-	WHERE m.is_from_me = 0
-	  AND m.ROWID > ?
-	ORDER BY m.ROWID ASC
-	LIMIT ?`
-
-	rows, err := db.QueryContext(ctx, query, sinceMessageID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("query sqlite: %w", err)
-	}
-	defer rows.Close()
-
-	messages := []IMessageInbound{}
-	for rows.Next() {
-		var row iMessageSQLiteRow
-		if err := rows.Scan(&row.MessageID, &row.Sender, &row.Text, &row.AttributedBody, &row.Date); err != nil {
-			return nil, fmt.Errorf("scan row: %w", err)
-		}
-
-		text := strings.TrimSpace(row.Text)
-		attributedText, attributedURLs := extractTextAndURLsFromAttributedBody(row.AttributedBody)
-		if text == "" {
-			text = attributedText
-		} else if !containsURL(text) && len(attributedURLs) > 0 {
-			text = mergeURLsIntoText(text, attributedURLs)
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
-		}
-		rawTimestamp := int64(row.Date)
-		messages = append(messages, IMessageInbound{
-			MessageID:    row.MessageID,
-			Sender:       strings.TrimSpace(row.Sender),
-			Text:         text,
-			URLs:         attributedURLs,
-			Timestamp:    appleTimestampToTime(rawTimestamp),
-			RawTimestamp: rawTimestamp,
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	return messages, nil
-}
-
-func (b *IMessageBot) getMaxMessageID(ctx context.Context) (int64, error) {
-	dbPath, err := expandHomePath(b.databasePath)
-	if err != nil {
-		return 0, err
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return 0, fmt.Errorf("open sqlite db: %w", err)
-	}
-	defer db.Close()
-
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	var maxID int64
-	err = db.QueryRowContext(ctx, `SELECT COALESCE(MAX(ROWID), 0) FROM message WHERE is_from_me = 0`).Scan(&maxID)
-	if err != nil {
-		return 0, fmt.Errorf("query max message id: %w", err)
-	}
-
-	if maxID < 0 {
-		return 0, nil
-	}
-	return maxID, nil
-}
-
 func (b *IMessageBot) checkStartupPermissions(ctx context.Context) error {
-	dbPath, err := expandHomePath(b.databasePath)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return fmt.Errorf("imessage database not accessible (%s): %w", dbPath, err)
-	}
-
-	// Try to open database with Go's sqlite driver to verify FDA
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return fmt.Errorf("open sqlite db: %w", err)
-	}
-	defer db.Close()
-
-	// Set reasonable connection limits
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	// Try a simple query
-	var result int
-	if err := db.QueryRow("SELECT 1").Scan(&result); err != nil {
-		return fmt.Errorf("imessage database permission check failed: %w", err)
-	}
-
-	// Verify AppleScript access to Messages application.
 	if b.execFn == nil {
 		return errors.New("imessage executor not configured")
 	}
-	output, err := b.execFn(ctx, "osascript", "-e", `tell application "Messages" to get name`)
+
+	// Verify imsg CLI is available.
+	output, err := b.execFn(ctx, "imsg", "--version")
+	if err != nil {
+		return fmt.Errorf("imsg CLI not found (install: brew install steipete/tap/imsg): %w", err)
+	}
+	log.Printf("imessage: imsg available: %s", strings.TrimSpace(string(output)))
+
+	// Verify AppleScript access to Messages application (needed for sending).
+	output, err = b.execFn(ctx, "osascript", "-e", `tell application "Messages" to get name`)
 	if err != nil {
 		trimmedOutput := strings.TrimSpace(string(output))
 		if trimmedOutput != "" {
