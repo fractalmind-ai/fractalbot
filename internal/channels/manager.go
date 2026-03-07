@@ -86,6 +86,9 @@ func (m *Manager) List() []Channel {
 }
 
 // Start starts configured channels.
+// Each channel gets an independent context (not derived from the parent) so
+// that a crash or context cancellation in one channel cannot cascade to others.
+// The parent ctx is only used to trigger graceful shutdown of all channels.
 func (m *Manager) Start(ctx context.Context) error {
 	if err := m.registerConfiguredChannels(); err != nil {
 		return err
@@ -99,7 +102,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		if m.hasInFlightStart(name) {
 			continue
 		}
-		channelCtx, cancel := context.WithCancel(ctx)
+		// Independent context per channel — isolates crash/cancel from other channels.
+		channelCtx, cancel := context.WithCancel(context.Background())
 		m.trackInFlightStart(name, cancel)
 		go m.startChannel(name, channel, channelCtx)
 	}
@@ -130,6 +134,11 @@ func (m *Manager) Stop() error {
 
 func (m *Manager) startChannel(name string, channel Channel, ctx context.Context) {
 	defer m.clearInFlightStart(name)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("channel %s panicked: %v", name, r)
+		}
+	}()
 	if err := channel.Start(ctx); err != nil {
 		log.Printf("channel %s failed to start: %v", name, err)
 	}
