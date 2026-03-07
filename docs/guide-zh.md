@@ -37,6 +37,103 @@ FractalBot 是一个用 Go 编写的**多渠道 AI Agent 网关**，支持 Teleg
     └─────────────────────┘
 ```
 
+## 5分钟快速入门
+
+> 只想尽快跑起来？按下面 5 步操作，用 **Slack + 一个 Agent** 搭出最小可用系统。
+> 已有经验或想用 Telegram / Discord 的用户可跳到下方「环境准备」部分。
+
+### Step 1 — 安装 FractalBot
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fractalmind-ai/fractalbot/main/install.sh | bash
+```
+
+### Step 2 — 创建最小 config.yaml
+
+```bash
+mkdir -p ~/.config/fractalbot && cat > ~/.config/fractalbot/config.yaml << 'EOF'
+gateway:
+  port: 18789
+  bind: 127.0.0.1
+
+channels:
+  slack:
+    enabled: true
+    botToken: "xoxb-your-bot-token"      # 替换为你的 Bot Token
+    appToken: "xapp-your-app-token"      # 替换为你的 App-Level Token
+    allowedUsers:
+      - "U0YOUR_ID"                      # 替换为你的 Slack User ID
+
+agents:
+  workspace: ./workspace
+  maxConcurrent: 2
+  ohMyCode:
+    enabled: true
+    workspace: "/path/to/your/workspace" # 替换为你的工作仓库路径
+    defaultAgent: "dev"
+    allowedAgents:
+      - "dev"
+    assignTimeoutSeconds: 90
+EOF
+```
+
+> 获取 Slack token 的方法见下方「Slack 配置检查清单」。
+> 不知道自己的 Slack User ID？先随便填，启动后给 Bot 发 `/whoami` 获取后再改。
+
+### Step 3 — 创建最小 Agent
+
+在你的工作仓库中：
+
+```bash
+cd /path/to/your/workspace
+
+# 安装 agent-manager 和 use-fractalbot skills
+npx openskills install agent-manager
+npx openskills install use-fractalbot
+
+# 创建 Agent 定义
+mkdir -p agents
+cat > agents/EMP_0001.md << 'EOF'
+---
+name: dev
+role: developer
+description: "dev — 开发 Agent"
+working_directory: ${REPO_ROOT}
+launcher: claude
+launcher_args:
+  - --dangerously-skip-permissions
+skills:
+  - agent-manager
+  - use-fractalbot
+---
+
+# DEV AGENT
+- 接收任务，完成开发
+EOF
+```
+
+> **`--dangerously-skip-permissions` 安全提示：** 此参数让 Agent 无需用户确认即可执行任意命令（包括文件读写、shell 命令等）。仅在你信任 Agent 运行环境时使用。生产环境建议去掉此参数，改用交互式权限确认。
+
+### Step 4 — 启动
+
+```bash
+fractalbot --config ~/.config/fractalbot/config.yaml
+```
+
+### Step 5 — 测试
+
+在 Slack 中 DM 你的 Bot：
+
+| 发送 | 预期结果 |
+|------|----------|
+| `/whoami` | 回复你的 User ID 和 Channel ID |
+| `/agents` | 显示 `dev` |
+| `说 hello world` | Agent 接收任务并回复 |
+
+**成功标准：** Bot 启动无报错 + `/whoami` 回复正常 + 普通消息被路由到 dev Agent。
+
+---
+
 ## 环境准备
 
 | 依赖 | 版本要求 | 用途 |
@@ -90,6 +187,10 @@ go build -o fractalbot ./cmd/fractalbot
 ./fractalbot --help
 ```
 
+**安装成功标准：** 运行 `fractalbot --help` 能看到用法说明。
+
+---
+
 ## 配置 config.yaml
 
 从模板开始：
@@ -99,6 +200,21 @@ cp config.example.yaml config.yaml
 ```
 
 下面按渠道分别说明**必填**字段。
+
+> 如果你只想快速开始，选择**一个渠道**配置即可。推荐从 Slack 或 Telegram 开始。
+
+### 如何获取 User ID
+
+各渠道的 `allowedUsers` 需要填入你的用户 ID。获取方式：
+
+| 渠道 | 获取方式 |
+|------|----------|
+| Telegram | 给 Bot 发 `/whoami`；或使用 [@userinfobot](https://t.me/userinfobot) |
+| Slack | 给 Bot 发 `/whoami`；或在 Slack 中点击自己头像 → Profile → 更多 → Copy member ID |
+| Discord | 开启开发者模式（Settings → Advanced → Developer Mode），右键你的头像 → Copy User ID |
+| 飞书 | 在飞书管理后台查看，或给 Bot 发 `/whoami` |
+
+> 第一次配置时可以先任意填写 `allowedUsers`，启动后用 `/whoami` 获取真实 ID 再更新配置。
 
 ### Telegram（Polling 模式，本地开发推荐）
 
@@ -125,10 +241,11 @@ channels:
 ### Slack（Socket Mode，无需公网端口）
 
 1. 前往 [Slack API](https://api.slack.com/apps) 创建 App
-2. 开启 **Socket Mode**，获取 `xapp-` 开头的 App-Level Token
+2. 开启 **Socket Mode**（Settings → Socket Mode → Enable），创建一个 App-Level Token（`connections:write` scope），获取 `xapp-` 开头的 token
 3. 在 OAuth & Permissions 添加 Bot Token Scopes：`chat:write`、`im:history`、`im:read`
-4. 安装 App 到 Workspace，获取 `xoxb-` 开头的 Bot Token
-5. 在 Event Subscriptions 订阅 `message.im` 事件
+4. 安装 App 到 Workspace（OAuth & Permissions → Install to Workspace），获取 `xoxb-` 开头的 Bot Token
+5. 在 Event Subscriptions → Subscribe to bot events，添加 `message.im` 事件
+6. **重要：** 如果你在安装后修改了 scopes 或 events，必须重新安装 App（OAuth & Permissions → Reinstall to Workspace）
 
 ```yaml
 channels:
@@ -141,6 +258,22 @@ channels:
 ```
 
 > Slack User ID 可在 Slack DM 中发 `/whoami` 给 Bot 获取。
+
+#### Slack 配置检查清单
+
+配置完成后，逐项检查：
+
+- [ ] `botToken` 以 `xoxb-` 开头
+- [ ] `appToken` 以 `xapp-` 开头
+- [ ] Socket Mode 已在 Slack App 设置中启用
+- [ ] Bot Token Scopes 包含：`chat:write`、`im:history`、`im:read`
+- [ ] Event Subscriptions 中已添加 `message.im`
+- [ ] 修改 scopes/events 后已重新安装 App 到 Workspace
+- [ ] `allowedUsers` 中填入了你的 Slack User ID
+
+> **常见失败原因：** scopes 或 events 修改后忘记重新安装 App。Slack 要求每次修改权限后都重新 Install/Reinstall。
+
+**配置成功标准：** FractalBot 启动日志中无 Slack 相关错误 + 向 Bot 发 DM 能收到回复。
 
 ### Discord
 
@@ -175,6 +308,8 @@ channels:
 ```
 
 ## 对接 agent-manager
+
+> 以下内容面向需要完整多 Agent 架构的用户。如果你已通过上方「5分钟快速入门」跑通了单 Agent 设置，可以在需要时再回来参考。
 
 FractalBot 通过 `agents.ohMyCode` 配置将消息路由到 [agent-manager](https://github.com/fractalmind-ai/agent-manager-skill)（基于 tmux + Claude Code 的 Agent 管理系统）。每个 Agent 跑在独立的 tmux session 里，收到消息后自动执行任务。
 
@@ -225,8 +360,16 @@ skills:
   - agent-manager
   - use-fractalbot
 ---
+```
 
-# AGENTS.md - 工作规范
+> **`--dangerously-skip-permissions` 安全提示：** 此参数跳过 Claude Code 的所有权限确认（文件操作、命令执行等）。这在自动化场景中是必需的（Agent 无人值守运行），但意味着 Agent 可以不受限制地执行操作。请确保：
+> - Agent 运行在隔离环境（容器或专用用户）
+> - 工作目录不包含敏感凭据
+> - 你了解并接受这个风险
+
+在同一个文件的 frontmatter 下方添加工作规范：
+
+```markdown
 
 ## 安全规则
 - 不外泄私有数据
@@ -341,10 +484,14 @@ skills:
 **常见 launcher 配置：**
 
 ```yaml
-# Claude Code
+# Claude Code（自动化模式 — Agent 无需确认即可执行命令）
 launcher: claude
 launcher_args:
   - --dangerously-skip-permissions
+
+# Claude Code（安全模式 — 每个操作需要确认，适合测试）
+launcher: claude
+# 不带 --dangerously-skip-permissions
 
 # OpenAI Codex CLI
 launcher: codex
@@ -380,6 +527,8 @@ python3 .claude/skills/agent-manager/scripts/main.py monitor dev
 ```
 
 Agent 启动后会运行在 tmux session `agent-dev` 中，可以用 `tmux attach -t agent-dev` 直接查看。
+
+**Agent 配置成功标准：** `list` 命令显示你的 Agent + `start` 成功 + `assign` 后 `monitor` 能看到 Agent 输出。
 
 ### 第四步：配置 FractalBot 路由
 
@@ -457,6 +606,13 @@ curl -s http://127.0.0.1:18789/health
 # 查看状态
 curl -s http://127.0.0.1:18789/status | python3 -m json.tool
 ```
+
+**端到端成功标准：**
+1. FractalBot 启动无报错，日志中显示渠道已连接
+2. `/whoami` 返回你的 User ID
+3. `/agents` 列出配置的 Agent
+4. 发送普通消息后，Agent 接收并回复
+5. `curl http://127.0.0.1:18789/health` 返回 `OK`
 
 ## 常用命令速查
 
