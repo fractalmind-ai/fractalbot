@@ -307,14 +307,11 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if threaded, ok := channel.(channels.ThreadedSender); ok {
-		if err := threaded.SendMessageWithOptions(r.Context(), request.To, request.Text, channels.SendOptions{
-			ThreadTS: request.ThreadTS,
-		}); err != nil {
-			writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
-			return
-		}
-	} else if err := channel.SendMessage(r.Context(), request.To, request.Text); err != nil {
+	if err := channel.Send(r.Context(), channels.OutboundMessage{
+		To:       request.To,
+		Text:     request.Text,
+		ThreadTS: request.ThreadTS,
+	}); err != nil {
 		writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
 		return
 	}

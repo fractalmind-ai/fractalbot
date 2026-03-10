@@ -142,7 +142,8 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 	return nil
 }
 
-func (b *FeishuBot) Stop() error {
+func (b *FeishuBot) Stop(ctx context.Context) error {
+	_ = ctx
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -155,19 +156,24 @@ func (b *FeishuBot) Stop() error {
 	return nil
 }
 
-func (b *FeishuBot) SendMessage(ctx context.Context, target string, text string) error {
+func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) error {
 	if b.sendMessageFn == nil {
 		return errors.New("feishu sender not configured")
 	}
-	if strings.TrimSpace(target) == "" {
+	if strings.TrimSpace(msg.To) == "" {
 		return errors.New("feishu receive_id is required")
 	}
-	if err := b.sendMessageFn(ctx, "open_id", target, text); err != nil {
+	if err := b.sendMessageFn(ctx, "open_id", msg.To, msg.Text); err != nil {
 		b.markError()
 		return err
 	}
 	b.markActivity()
 	return nil
+}
+
+// IsAllowed reports whether senderID is on the allowlist.
+func (b *FeishuBot) IsAllowed(senderID string) bool {
+	return b.allowlist.Allowed(senderID, senderID)
 }
 
 func (b *FeishuBot) initClients() {

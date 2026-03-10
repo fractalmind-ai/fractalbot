@@ -30,20 +30,23 @@ func (f *fakeChannel) Start(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeChannel) Stop() error {
+func (f *fakeChannel) Stop(ctx context.Context) error {
+	_ = ctx
 	f.stopped++
 	f.running = false
 	return f.stopErr
 }
 
-func (f *fakeChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (f *fakeChannel) Send(ctx context.Context, msg OutboundMessage) error {
 	_ = ctx
-	f.lastChat = target
-	f.lastText = text
+	f.lastChat = msg.To
+	f.lastText = msg.Text
 	return nil
 }
 
 func (f *fakeChannel) IsRunning() bool { return f.running }
+
+func (f *fakeChannel) IsAllowed(senderID string) bool { return true }
 
 func TestManagerStartStop(t *testing.T) {
 	manager := NewManager(nil, nil)
@@ -164,16 +167,16 @@ func (b *blockingStartChannel) Start(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (b *blockingStartChannel) Stop() error { return nil }
+func (b *blockingStartChannel) Stop(ctx context.Context) error { _ = ctx; return nil }
 
-func (b *blockingStartChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (b *blockingStartChannel) Send(ctx context.Context, msg OutboundMessage) error {
 	_ = ctx
-	_ = target
-	_ = text
 	return nil
 }
 
 func (b *blockingStartChannel) IsRunning() bool { return false }
+
+func (b *blockingStartChannel) IsAllowed(senderID string) bool { return true }
 
 func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
 	t.Helper()
@@ -289,16 +292,19 @@ func (c *contextObservingChannel) Start(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (c *contextObservingChannel) Stop() error {
+func (c *contextObservingChannel) Stop(ctx context.Context) error {
+	_ = ctx
 	c.running = false
 	return nil
 }
 
-func (c *contextObservingChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (c *contextObservingChannel) Send(ctx context.Context, msg OutboundMessage) error {
 	return nil
 }
 
 func (c *contextObservingChannel) IsRunning() bool { return c.running }
+
+func (c *contextObservingChannel) IsAllowed(senderID string) bool { return true }
 
 // panickingChannel panics during Start to test panic recovery.
 type panickingChannel struct {
@@ -313,8 +319,9 @@ func (p *panickingChannel) Start(ctx context.Context) error {
 	panic("test panic in channel start")
 }
 
-func (p *panickingChannel) Stop() error              { return nil }
+func (p *panickingChannel) Stop(ctx context.Context) error              { _ = ctx; return nil }
 func (p *panickingChannel) IsRunning() bool           { return false }
-func (p *panickingChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (p *panickingChannel) IsAllowed(senderID string) bool { return true }
+func (p *panickingChannel) Send(ctx context.Context, msg OutboundMessage) error {
 	return nil
 }

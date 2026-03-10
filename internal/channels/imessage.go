@@ -239,7 +239,8 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 	return nil
 }
 
-func (b *IMessageBot) Stop() error {
+func (b *IMessageBot) Stop(ctx context.Context) error {
+	_ = ctx
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -248,25 +249,21 @@ func (b *IMessageBot) Stop() error {
 	return nil
 }
 
-func (b *IMessageBot) SendMessage(ctx context.Context, target string, text string) error {
-	recipient := strings.TrimSpace(target)
+func (b *IMessageBot) Send(ctx context.Context, msg OutboundMessage) error {
+	recipient := strings.TrimSpace(msg.To)
 	if recipient == "" {
 		recipient = b.recipient
 	}
-	message := strings.TrimSpace(text)
+	message := strings.TrimSpace(msg.Text)
 	if message == "" {
 		message = b.defaultMessage
 	}
 	return b.send(ctx, recipient, message)
 }
 
-// Send sends a message to the configured recipient using osascript.
-func (b *IMessageBot) Send(text string) error {
-	ctx := b.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return b.send(ctx, b.recipient, text)
+// IsAllowed always returns true for iMessage (single-recipient channel).
+func (b *IMessageBot) IsAllowed(senderID string) bool {
+	return true
 }
 
 func (b *IMessageBot) watchLoop(ctx context.Context) {

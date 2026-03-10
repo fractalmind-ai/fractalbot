@@ -42,7 +42,7 @@ type SlackBot struct {
 	startFn                  func(ctx context.Context) error
 	stopFn                   func() error
 	sendMessageFn            func(ctx context.Context, channelID, text string) error
-	sendMessageWithOptionsFn func(ctx context.Context, channelID, text string, opts SendOptions) error
+	sendMessageWithOptionsFn func(ctx context.Context, channelID, text, threadTS string) error
 	fetchHistoryFn           func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
 
 	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
@@ -148,7 +148,8 @@ func (b *SlackBot) Start(ctx context.Context) error {
 	return nil
 }
 
-func (b *SlackBot) Stop() error {
+func (b *SlackBot) Stop(ctx context.Context) error {
+	_ = ctx
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -161,34 +162,35 @@ func (b *SlackBot) Stop() error {
 	return nil
 }
 
-func (b *SlackBot) SendMessage(ctx context.Context, target string, text string) error {
-	return b.SendMessageWithOptions(ctx, target, text, SendOptions{})
-}
-
-func (b *SlackBot) SendMessageWithOptions(ctx context.Context, target string, text string, opts SendOptions) error {
-	if strings.TrimSpace(target) == "" {
+func (b *SlackBot) Send(ctx context.Context, msg OutboundMessage) error {
+	if strings.TrimSpace(msg.To) == "" {
 		return errors.New("slack channel ID is required")
 	}
 	if b.sendMessageWithOptionsFn != nil {
-		if err := b.sendMessageWithOptionsFn(ctx, target, text, opts); err != nil {
+		if err := b.sendMessageWithOptionsFn(ctx, msg.To, msg.Text, msg.ThreadTS); err != nil {
 			b.markError()
 			return err
 		}
 		b.markActivity()
 		return nil
 	}
-	if strings.TrimSpace(opts.ThreadTS) != "" {
+	if strings.TrimSpace(msg.ThreadTS) != "" {
 		return errors.New("slack threaded sender not configured")
 	}
 	if b.sendMessageFn == nil {
 		return errors.New("slack sender not configured")
 	}
-	if err := b.sendMessageFn(ctx, target, text); err != nil {
+	if err := b.sendMessageFn(ctx, msg.To, msg.Text); err != nil {
 		b.markError()
 		return err
 	}
 	b.markActivity()
 	return nil
+}
+
+// IsAllowed reports whether senderID is on the allowlist.
+func (b *SlackBot) IsAllowed(senderID string) bool {
+	return b.allowlist.Allowed(senderID) || b.channelAllowlist.Allowed(senderID)
 }
 
 func (b *SlackBot) initClients() {
@@ -855,30 +857,18 @@ func (b *SlackBot) ack(req socketmode.Request, payload ...interface{}) {
 }
 
 func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text string) error {
-	if b.sendMessageFn == nil {
-		return errors.New("slack sender not configured")
-	}
-	if msg.threadTS != "" {
-		if err := b.sendTextWithOptions(ctx, msg.channelID, TruncateSlackReply(text), SendOptions{ThreadTS: msg.threadTS}); err != nil {
-			b.markError()
-			return err
-		}
-		b.markActivity()
-		return nil
-	}
-	if err := b.sendMessageFn(ctx, msg.channelID, TruncateSlackReply(text)); err != nil {
-		b.markError()
-		return err
-	}
-	b.markActivity()
-	return nil
+	return b.Send(ctx, OutboundMessage{
+		To:       msg.channelID,
+		Text:     TruncateSlackReply(text),
+		ThreadTS: msg.threadTS,
+	})
 }
 
 func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
-	return b.sendTextWithOptions(ctx, channelID, text, SendOptions{})
+	return b.sendTextWithOptions(ctx, channelID, text, "")
 }
 
-func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text string, opts SendOptions) error {
+func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text, threadTS string) error {
 	if b.apiClient == nil {
 		b.markError()
 		return errors.New("slack api client not initialized")
@@ -891,8 +881,8 @@ func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text stri
 	msgOptions := []slack.MsgOption{
 		slack.MsgOptionText(resolved, false),
 	}
-	if strings.TrimSpace(opts.ThreadTS) != "" {
-		msgOptions = append(msgOptions, slack.MsgOptionTS(strings.TrimSpace(opts.ThreadTS)))
+	if strings.TrimSpace(threadTS) != "" {
+		msgOptions = append(msgOptions, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
 	}
 	_, _, err := b.apiClient.PostMessageContext(ctx, channelID, msgOptions...)
 	if err != nil {

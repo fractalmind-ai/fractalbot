@@ -61,8 +61,8 @@ func TestIMessageBotSendMessageUsesAppleScript(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	if err := bot.SendMessage(context.Background(), "", "hello from test"); err != nil {
-		t.Fatalf("SendMessage: %v", err)
+	if err := bot.Send(context.Background(), OutboundMessage{Text: "hello from test"}); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
 
 	if !called {
@@ -85,7 +85,7 @@ func TestIMessageBotSendMessageUsesAppleScript(t *testing.T) {
 	}
 }
 
-func TestIMessageBotSendMessageFallsBackToConfiguredMessage(t *testing.T) {
+func TestIMessageBotSendFallsBackToConfiguredMessage(t *testing.T) {
 	originalGOOS := currentGOOS
 	currentGOOS = "darwin"
 	defer func() { currentGOOS = originalGOOS }()
@@ -106,8 +106,8 @@ func TestIMessageBotSendMessageFallsBackToConfiguredMessage(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := bot.SendMessage(context.Background(), "", ""); err != nil {
-		t.Fatalf("SendMessage: %v", err)
+	if err := bot.Send(context.Background(), OutboundMessage{}); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
 	if !strings.Contains(script, `send "configured default"`) {
 		t.Fatalf("expected configured default message in script, got: %s", script)
@@ -311,7 +311,7 @@ func TestImsgWatchReconnectsOnProcessExit(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if err := bot.Stop(); err != nil {
+	if err := bot.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
@@ -377,7 +377,7 @@ func TestIMessageBotStartChecksPermissionsAndStartsMessages(t *testing.T) {
 	if !startCalled {
 		t.Fatalf("expected Messages app start")
 	}
-	if err := bot.Stop(); err != nil {
+	if err := bot.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 }
