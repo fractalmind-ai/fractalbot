@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fractalmind-ai/fractalbot/internal/agent"
+	"github.com/fractalmind-ai/fractalbot/internal/bus"
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/gorilla/websocket"
@@ -28,6 +29,7 @@ type Server struct {
 	clientsMutex sync.RWMutex
 	httpServer   *http.Server
 	agentManager *agent.Manager
+	messageBus   *bus.MessageBus
 	startTime    time.Time
 }
 
@@ -43,7 +45,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Initialize agent manager
 	agentManager := agent.NewManager(cfg.Agents)
 	agentManager.ChannelManager = channelManager
-	channelManager.SetHandler(agentManager)
+
+	// Initialize message bus — decouples channels from agent router
+	messageBus := bus.New(agentManager, channelManager, 64, 64)
+	messageBus.Start()
+
+	// Wire bus as the inbound handler (bus implements IncomingMessageHandler)
+	channelManager.SetHandler(messageBus)
 
 	return &Server{
 		config: cfg,
@@ -54,6 +62,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		},
 		clients:      make(map[string]*Client),
 		agentManager: agentManager,
+		messageBus:   messageBus,
 	}, nil
 }
 
@@ -114,6 +123,12 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Close bus first — drain pending messages while channels still run
+	if s.messageBus != nil {
+		s.messageBus.Close()
+		s.messageBus.Wait()
+	}
 
 	if s.agentManager != nil {
 		if s.agentManager.ChannelManager != nil {
@@ -296,12 +311,12 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.agentManager == nil || s.agentManager.ChannelManager == nil {
-		writeJSON(w, http.StatusServiceUnavailable, messageSendResponse{Status: "error", Error: "channel manager unavailable"})
+	if s.messageBus == nil {
+		writeJSON(w, http.StatusServiceUnavailable, messageSendResponse{Status: "error", Error: "message bus unavailable"})
 		return
 	}
 
-	if err := s.agentManager.ChannelManager.Send(r.Context(), request.Channel, channels.OutboundMessage{
+	if err := s.messageBus.PublishOutbound(r.Context(), request.Channel, channels.OutboundMessage{
 		To:       request.To,
 		Text:     request.Text,
 		ThreadTS: request.ThreadTS,
