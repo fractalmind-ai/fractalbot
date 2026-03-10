@@ -301,18 +301,16 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channel := s.agentManager.ChannelManager.Get(request.Channel)
-	if channel == nil {
-		writeJSON(w, http.StatusNotFound, messageSendResponse{Status: "error", Error: fmt.Sprintf("channel %q not found", request.Channel)})
-		return
-	}
-
-	if err := channel.Send(r.Context(), channels.OutboundMessage{
+	if err := s.agentManager.ChannelManager.Send(r.Context(), request.Channel, channels.OutboundMessage{
 		To:       request.To,
 		Text:     request.Text,
 		ThreadTS: request.ThreadTS,
 	}); err != nil {
-		writeJSON(w, http.StatusBadGateway, messageSendResponse{Status: "error", Error: err.Error()})
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, messageSendResponse{Status: "error", Error: err.Error()})
 		return
 	}
 
