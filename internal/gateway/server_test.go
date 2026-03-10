@@ -401,6 +401,80 @@ func TestStatusDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
+func TestHealthEndpointReturnsJSON(t *testing.T) {
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			Bind: "127.0.0.1",
+			Port: 0,
+		},
+		Channels: &config.ChannelsConfig{
+			Telegram: &config.TelegramConfig{Enabled: true},
+		},
+		Agents: &config.AgentsConfig{},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	server.startTime = time.Now().Add(-5 * time.Second)
+
+	fake := &fakeSendChannel{name: "telegram", running: true}
+	if err := server.agentManager.ChannelManager.Register(fake); err != nil {
+		t.Fatalf("register fake channel: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", server.handleHealth)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json, got %q", ct)
+	}
+
+	var payload struct {
+		Status   string `json:"status"`
+		Uptime   string `json:"uptime"`
+		Channels []struct {
+			Name    string `json:"name"`
+			Running bool   `json:"running"`
+		} `json:"channels"`
+		MessagesProcessed int64 `json:"messages_processed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected status=ok, got %q", payload.Status)
+	}
+	if payload.Uptime == "" || payload.Uptime == "0s" {
+		t.Fatalf("expected non-zero uptime, got %q", payload.Uptime)
+	}
+	if len(payload.Channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(payload.Channels))
+	}
+	if payload.Channels[0].Name != "telegram" {
+		t.Fatalf("expected channel name=telegram, got %q", payload.Channels[0].Name)
+	}
+	if !payload.Channels[0].Running {
+		t.Fatalf("expected channel running=true")
+	}
+	if payload.MessagesProcessed != 0 {
+		t.Fatalf("expected messages_processed=0, got %d", payload.MessagesProcessed)
+	}
+}
+
 type fakeSendChannel struct {
 	name       string
 	running    bool

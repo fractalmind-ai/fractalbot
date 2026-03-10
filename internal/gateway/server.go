@@ -74,10 +74,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
 	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	mux.HandleFunc("/health", s.handleHealth)
 
 	// Status endpoint
 	mux.HandleFunc("/status", s.handleStatus)
@@ -235,6 +232,48 @@ func generateClientID() string {
 // GetAgentManager returns the agent manager
 func (s *Server) GetAgentManager() *agent.Manager {
 	return s.agentManager
+}
+
+type healthResponse struct {
+	Status            string               `json:"status"`
+	Uptime            string               `json:"uptime"`
+	Channels          []healthChannelEntry `json:"channels"`
+	MessagesProcessed int64                `json:"messages_processed"`
+}
+
+type healthChannelEntry struct {
+	Name    string `json:"name"`
+	Running bool   `json:"running"`
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	uptime := time.Duration(0)
+	if !s.startTime.IsZero() {
+		uptime = time.Since(s.startTime)
+	}
+
+	var messagesProcessed int64
+	if s.messageBus != nil {
+		stats := s.messageBus.Stats()
+		messagesProcessed = stats.InboundProcessed + stats.OutboundProcessed
+	}
+
+	chEntries := make([]healthChannelEntry, 0)
+	if s.agentManager != nil && s.agentManager.ChannelManager != nil {
+		for _, ch := range s.agentManager.ChannelManager.List() {
+			chEntries = append(chEntries, healthChannelEntry{
+				Name:    ch.Name(),
+				Running: ch.IsRunning(),
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, healthResponse{
+		Status:            "ok",
+		Uptime:            uptime.String(),
+		Channels:          chEntries,
+		MessagesProcessed: messagesProcessed,
+	})
 }
 
 type statusResponse struct {
