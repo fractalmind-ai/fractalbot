@@ -19,6 +19,7 @@ type Manager struct {
 	handler   IncomingMessageHandler
 
 	channels map[string]Channel
+	workers  map[string]*channelWorker
 
 	startMu      sync.Mutex
 	startCancels map[string]context.CancelFunc
@@ -30,6 +31,7 @@ func NewManager(cfg *config.ChannelsConfig, agentsCfg *config.AgentsConfig) *Man
 		cfg:       cfg,
 		agentsCfg: agentsCfg,
 		channels:  make(map[string]Channel),
+		workers:   make(map[string]*channelWorker),
 
 		startCancels: make(map[string]context.CancelFunc),
 	}
@@ -105,15 +107,27 @@ func (m *Manager) Start(ctx context.Context) error {
 		// Independent context per channel — isolates crash/cancel from other channels.
 		channelCtx, cancel := context.WithCancel(context.Background())
 		m.trackInFlightStart(name, cancel)
+
+		// Create and start per-channel worker
+		w := newChannelWorker(channel)
+		m.workers[name] = w
+		w.start(channelCtx)
+
 		go m.startChannel(name, channel, channelCtx)
 	}
 
 	return nil
 }
 
-// Stop stops configured channels.
+// Stop stops configured channels and their workers.
 func (m *Manager) Stop() error {
 	m.cancelInFlightStarts()
+
+	// Stop workers first so no new sends are attempted
+	for name, w := range m.workers {
+		w.stop()
+		delete(m.workers, name)
+	}
 
 	var errs []error
 	for _, channel := range m.List() {
@@ -130,6 +144,21 @@ func (m *Manager) Stop() error {
 	}
 
 	return nil
+}
+
+// Send routes an outbound message through the channel's worker queue.
+// Returns error if the channel is not found or the queue is full.
+func (m *Manager) Send(ctx context.Context, channelName string, msg OutboundMessage) error {
+	w, ok := m.workers[channelName]
+	if !ok {
+		// Fallback to direct send if worker not started yet
+		ch := m.Get(channelName)
+		if ch == nil {
+			return fmt.Errorf("channel %q not found", channelName)
+		}
+		return ch.Send(ctx, msg)
+	}
+	return w.enqueue(msg)
 }
 
 func (m *Manager) startChannel(name string, channel Channel, ctx context.Context) {
