@@ -39,6 +39,12 @@ type OutboundEnvelope struct {
 	errCh       chan error
 }
 
+// Stats holds message processing counters.
+type Stats struct {
+	InboundProcessed  int64
+	OutboundProcessed int64
+}
+
 // MessageBus provides async in-process message routing between channels and
 // the agent system. It decouples channel adapters from the agent router
 // using buffered channels for both inbound and outbound message flows.
@@ -47,6 +53,9 @@ type MessageBus struct {
 	outbound chan *OutboundEnvelope
 	closed   atomic.Bool
 	wg       sync.WaitGroup
+
+	inboundProcessed  atomic.Int64
+	outboundProcessed atomic.Int64
 
 	handler channels.IncomingMessageHandler
 	sender  ChannelSender
@@ -149,11 +158,20 @@ func (b *MessageBus) Wait() {
 	b.wg.Wait()
 }
 
+// Stats returns message processing counters.
+func (b *MessageBus) Stats() Stats {
+	return Stats{
+		InboundProcessed:  b.inboundProcessed.Load(),
+		OutboundProcessed: b.outboundProcessed.Load(),
+	}
+}
+
 func (b *MessageBus) consumeInbound() {
 	defer b.wg.Done()
 	for msg := range b.inbound {
 		text, err := b.handler.HandleIncoming(msg.Ctx, msg.Message)
 		msg.replyCh <- inboundReply{Text: text, Err: err}
+		b.inboundProcessed.Add(1)
 	}
 }
 
@@ -162,6 +180,7 @@ func (b *MessageBus) consumeOutbound() {
 	for env := range b.outbound {
 		err := b.sender.Send(env.Ctx, env.ChannelName, env.Message)
 		env.errCh <- err
+		b.outboundProcessed.Add(1)
 	}
 }
 

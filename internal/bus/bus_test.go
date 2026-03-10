@@ -444,3 +444,38 @@ func containsAll(s string, substrs ...string) bool {
 	}
 	return true
 }
+
+func TestStatsCountsMessages(t *testing.T) {
+	handler := &fakeHandler{}
+	sender := &fakeSender{}
+	b := New(handler, sender, 8, 8)
+	b.Start()
+	defer func() { b.Close(); b.Wait() }()
+
+	stats := b.Stats()
+	if stats.InboundProcessed != 0 || stats.OutboundProcessed != 0 {
+		t.Fatalf("expected zero counts initially, got in=%d out=%d", stats.InboundProcessed, stats.OutboundProcessed)
+	}
+
+	// Send 3 inbound messages
+	for i := 0; i < 3; i++ {
+		if _, err := b.HandleIncoming(context.Background(), makeProtocolMsg("telegram", "msg")); err != nil {
+			t.Fatalf("HandleIncoming: %v", err)
+		}
+	}
+
+	// Send 2 outbound messages
+	for i := 0; i < 2; i++ {
+		if err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"}); err != nil {
+			t.Fatalf("PublishOutbound: %v", err)
+		}
+	}
+
+	stats = b.Stats()
+	if stats.InboundProcessed != 3 {
+		t.Fatalf("expected 3 inbound processed, got %d", stats.InboundProcessed)
+	}
+	if stats.OutboundProcessed != 2 {
+		t.Fatalf("expected 2 outbound processed, got %d", stats.OutboundProcessed)
+	}
+}
