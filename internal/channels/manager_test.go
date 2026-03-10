@@ -197,9 +197,9 @@ func TestManagerStartUsesIndependentContexts(t *testing.T) {
 	manager := NewManager(nil, nil)
 	ctxObserved := make(chan struct{})
 	ch := &contextObservingChannel{
-		name:       "observer",
-		ctxDoneCh:  ctxObserved,
-		startedCh:  make(chan struct{}),
+		name:      "observer",
+		ctxDoneCh: ctxObserved,
+		startedCh: make(chan struct{}),
 	}
 
 	if err := manager.Register(ch); err != nil {
@@ -319,8 +319,8 @@ func (p *panickingChannel) Start(ctx context.Context) error {
 	panic("test panic in channel start")
 }
 
-func (p *panickingChannel) Stop(ctx context.Context) error              { _ = ctx; return nil }
-func (p *panickingChannel) IsRunning() bool           { return false }
+func (p *panickingChannel) Stop(ctx context.Context) error { _ = ctx; return nil }
+func (p *panickingChannel) IsRunning() bool                { return false }
 func (p *panickingChannel) IsAllowed(senderID string) bool { return true }
 func (p *panickingChannel) Send(ctx context.Context, msg OutboundMessage) error {
 	return nil

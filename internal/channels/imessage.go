@@ -362,10 +362,10 @@ func (b *IMessageBot) defaultStartImsgWatch(ctx context.Context, recipient strin
 func imsgEventToInbound(event imsgWatchEvent) IMessageInbound {
 	ts, _ := time.Parse(time.RFC3339, event.Timestamp)
 	return IMessageInbound{
-		MessageID:   event.RowID,
-		Sender:      strings.TrimSpace(event.Sender),
-		Text:        strings.TrimSpace(event.Text),
-		Timestamp:   ts,
+		MessageID:    event.RowID,
+		Sender:       strings.TrimSpace(event.Sender),
+		Text:         strings.TrimSpace(event.Text),
+		Timestamp:    ts,
 		RawTimestamp: ts.UnixNano(),
 	}
 }
