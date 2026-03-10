@@ -178,6 +178,79 @@ func TestLoadConfigAcceptsOhMyCodeAbsoluteWorkspaceWithRelativeScript(t *testing
 	}
 }
 
+func TestResolveConfigPathExplicitFlag(t *testing.T) {
+	got := ResolveConfigPath("/custom/path.yaml")
+	if got != "/custom/path.yaml" {
+		t.Fatalf("expected /custom/path.yaml, got %s", got)
+	}
+}
+
+func TestResolveConfigPathEnvVar(t *testing.T) {
+	t.Setenv("FRACTALBOT_CONFIG", "/from/env.yaml")
+	got := ResolveConfigPath("")
+	if got != "/from/env.yaml" {
+		t.Fatalf("expected /from/env.yaml, got %s", got)
+	}
+}
+
+func TestResolveConfigPathXDGDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("FRACTALBOT_CONFIG", "")
+
+	xdgDir := filepath.Join(dir, ".config", "fractalbot")
+	if err := os.MkdirAll(xdgDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	xdgPath := filepath.Join(xdgDir, "config.yaml")
+	if err := os.WriteFile(xdgPath, []byte("gateway:\n  port: 1\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := ResolveConfigPath("")
+	if got != xdgPath {
+		t.Fatalf("expected %s, got %s", xdgPath, got)
+	}
+}
+
+func TestResolveConfigPathFallbackCWD(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("FRACTALBOT_CONFIG", "")
+	// No XDG file exists, should fall back to ./config.yaml
+	got := ResolveConfigPath("")
+	if got != "./config.yaml" {
+		t.Fatalf("expected ./config.yaml, got %s", got)
+	}
+}
+
+func TestResolveConfigPathFlagTakesPriorityOverEnv(t *testing.T) {
+	t.Setenv("FRACTALBOT_CONFIG", "/from/env.yaml")
+	got := ResolveConfigPath("/flag/path.yaml")
+	if got != "/flag/path.yaml" {
+		t.Fatalf("expected /flag/path.yaml, got %s", got)
+	}
+}
+
+func TestResolveConfigPathEnvTakesPriorityOverXDG(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("FRACTALBOT_CONFIG", "/from/env.yaml")
+
+	xdgDir := filepath.Join(dir, ".config", "fractalbot")
+	if err := os.MkdirAll(xdgDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"), []byte("gateway:\n  port: 1\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := ResolveConfigPath("")
+	if got != "/from/env.yaml" {
+		t.Fatalf("expected /from/env.yaml, got %s", got)
+	}
+}
+
 func TestLoadConfigAcceptsIMessagePollingConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := []byte(`channels:
