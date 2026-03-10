@@ -289,7 +289,8 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the bot.
-func (b *TelegramBot) Stop() error {
+func (b *TelegramBot) Stop(ctx context.Context) error {
+	_ = ctx
 	log.Println("🛑 Stopping Telegram bot...")
 
 	if b.cancel != nil {
@@ -1335,13 +1336,22 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent
 	}
 }
 
-// SendMessage sends a message to Telegram.
-func (b *TelegramBot) SendMessage(ctx context.Context, target string, text string) error {
-	chatID, err := strconv.ParseInt(strings.TrimSpace(target), 10, 64)
+// Send sends a message to Telegram.
+func (b *TelegramBot) Send(ctx context.Context, msg OutboundMessage) error {
+	chatID, err := strconv.ParseInt(strings.TrimSpace(msg.To), 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid telegram chat ID %q: %w", target, err)
+		return fmt.Errorf("invalid telegram chat ID %q: %w", msg.To, err)
 	}
-	return b.sendToChat(ctx, chatID, text)
+	return b.sendToChat(ctx, chatID, msg.Text)
+}
+
+// IsAllowed reports whether senderID is on the allowlist.
+func (b *TelegramBot) IsAllowed(senderID string) bool {
+	id, err := strconv.ParseInt(strings.TrimSpace(senderID), 10, 64)
+	if err != nil {
+		return false
+	}
+	return b.userManager.Authorize(id)
 }
 
 // sendToChat is the internal implementation for sending a Telegram message.

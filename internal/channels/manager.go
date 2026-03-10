@@ -120,7 +120,7 @@ func (m *Manager) Stop() error {
 		if !channel.IsRunning() {
 			continue
 		}
-		if err := channel.Stop(); err != nil {
+		if err := channel.Stop(context.Background()); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", channel.Name(), err))
 		}
 	}

@@ -1466,6 +1466,7 @@ func TestSlackReplyUsesThreadTSWhenPresent(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.sendMessageWithOptionsFn = bot.sendTextWithOptions
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
 		_ = ctx
 		t.Fatalf("expected reply to use thread API path, got plain sendMessage call")
@@ -1538,28 +1539,30 @@ func TestSlackToProtocolMessageIncludesAttachments(t *testing.T) {
 	}
 }
 
-func TestSlackSendMessageWithOptionsUsesThreadTS(t *testing.T) {
+func TestSlackSendUsesThreadTS(t *testing.T) {
 	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 
 	var captured slackSendCapture
-	var capturedOpts SendOptions
-	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text string, opts SendOptions) error {
+	var capturedThreadTS string
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) error {
 		_ = ctx
 		captured = slackSendCapture{channelID: channelID, text: text}
-		capturedOpts = opts
+		capturedThreadTS = threadTS
 		return nil
 	}
 
-	if err := bot.SendMessageWithOptions(
+	if err := bot.Send(
 		context.Background(),
-		"C0A8ESWV7D0",
-		"thread reply",
-		SendOptions{ThreadTS: "1234567890.123456"},
+		OutboundMessage{
+			To:       "C0A8ESWV7D0",
+			Text:     "thread reply",
+			ThreadTS: "1234567890.123456",
+		},
 	); err != nil {
-		t.Fatalf("SendMessageWithOptions: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
 
 	if captured.channelID != "C0A8ESWV7D0" {
@@ -1568,8 +1571,8 @@ func TestSlackSendMessageWithOptionsUsesThreadTS(t *testing.T) {
 	if captured.text != "thread reply" {
 		t.Fatalf("text=%q", captured.text)
 	}
-	if capturedOpts.ThreadTS != "1234567890.123456" {
-		t.Fatalf("threadTS=%q", capturedOpts.ThreadTS)
+	if capturedThreadTS != "1234567890.123456" {
+		t.Fatalf("threadTS=%q", capturedThreadTS)
 	}
 }
 
@@ -1600,7 +1603,7 @@ func TestSlackSendTextWithOptionsPostsThreadTS(t *testing.T) {
 		context.Background(),
 		"C0A8ESWV7D0",
 		"thread reply",
-		SendOptions{ThreadTS: "1234567890.123456"},
+		"1234567890.123456",
 	); err != nil {
 		t.Fatalf("sendTextWithOptions: %v", err)
 	}
@@ -1959,15 +1962,15 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 	}
 
 	// Override PostMessageContext by setting sendMessageWithOptionsFn to capture text.
-	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text string, opts SendOptions) error {
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) error {
 		sentText = text
 		return nil
 	}
 
 	ctx := context.Background()
-	err := bot.SendMessageWithOptions(ctx, "C123", "Hey @alice, check this", SendOptions{})
+	err := bot.Send(ctx, OutboundMessage{To: "C123", Text: "Hey @alice, check this"})
 	if err != nil {
-		t.Fatalf("SendMessageWithOptions: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
 
 	// sendMessageWithOptionsFn is called before sendTextWithOptions (which does resolution),
@@ -1991,7 +1994,7 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 		},
 	}
 
-	err = bot2.sendTextWithOptions(ctx, "C123", "Hey @alice, check this", SendOptions{})
+	err = bot2.sendTextWithOptions(ctx, "C123", "Hey @alice, check this", "")
 	if err != nil {
 		t.Fatalf("sendTextWithOptions: %v", err)
 	}

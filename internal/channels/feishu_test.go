@@ -57,7 +57,7 @@ func TestFeishuStartStop(t *testing.T) {
 		t.Fatalf("expected start count 1, got %d", started)
 	}
 
-	if err := bot.Stop(); err != nil {
+	if err := bot.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if bot.IsRunning() {

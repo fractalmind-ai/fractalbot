@@ -277,20 +277,23 @@ func (f *fakeTelemetryChannel) Start(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeTelemetryChannel) Stop() error {
+func (f *fakeTelemetryChannel) Stop(ctx context.Context) error {
+	_ = ctx
 	f.running = false
 	return nil
 }
 
-func (f *fakeTelemetryChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (f *fakeTelemetryChannel) Send(ctx context.Context, msg channels.OutboundMessage) error {
 	_ = ctx
-	_ = target
-	_ = text
 	return nil
 }
 
 func (f *fakeTelemetryChannel) IsRunning() bool {
 	return f.running
+}
+
+func (f *fakeTelemetryChannel) IsAllowed(senderID string) bool {
+	return true
 }
 
 func (f *fakeTelemetryChannel) LastError() time.Time {
@@ -399,11 +402,12 @@ func TestStatusDoesNotExposeSecrets(t *testing.T) {
 }
 
 type fakeSendChannel struct {
-	name     string
-	running  bool
-	lastChat string
-	lastText string
-	sendErr  error
+	name       string
+	running    bool
+	lastChat   string
+	lastText   string
+	lastThread string
+	sendErr    error
 }
 
 func (f *fakeSendChannel) Name() string { return f.name }
@@ -414,58 +418,23 @@ func (f *fakeSendChannel) Start(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeSendChannel) Stop() error {
+func (f *fakeSendChannel) Stop(ctx context.Context) error {
+	_ = ctx
 	f.running = false
 	return nil
 }
 
-func (f *fakeSendChannel) SendMessage(ctx context.Context, target string, text string) error {
+func (f *fakeSendChannel) Send(ctx context.Context, msg channels.OutboundMessage) error {
 	_ = ctx
-	f.lastChat = target
-	f.lastText = text
+	f.lastChat = msg.To
+	f.lastText = msg.Text
+	f.lastThread = msg.ThreadTS
 	return f.sendErr
 }
 
 func (f *fakeSendChannel) IsRunning() bool { return f.running }
 
-type fakeThreadedSendChannel struct {
-	name     string
-	running  bool
-	lastChat string
-	lastText string
-	lastOpts channels.SendOptions
-	sendErr  error
-}
-
-func (f *fakeThreadedSendChannel) Name() string { return f.name }
-
-func (f *fakeThreadedSendChannel) Start(ctx context.Context) error {
-	_ = ctx
-	f.running = true
-	return nil
-}
-
-func (f *fakeThreadedSendChannel) Stop() error {
-	f.running = false
-	return nil
-}
-
-func (f *fakeThreadedSendChannel) SendMessage(ctx context.Context, target string, text string) error {
-	_ = ctx
-	f.lastChat = target
-	f.lastText = text
-	return f.sendErr
-}
-
-func (f *fakeThreadedSendChannel) SendMessageWithOptions(ctx context.Context, target string, text string, opts channels.SendOptions) error {
-	_ = ctx
-	f.lastChat = target
-	f.lastText = text
-	f.lastOpts = opts
-	return f.sendErr
-}
-
-func (f *fakeThreadedSendChannel) IsRunning() bool { return f.running }
+func (f *fakeSendChannel) IsAllowed(senderID string) bool { return true }
 
 func TestMessageSendAPI(t *testing.T) {
 	cfg := &config.Config{
@@ -483,7 +452,7 @@ func TestMessageSendAPI(t *testing.T) {
 	if err := server.agentManager.ChannelManager.Register(fake); err != nil {
 		t.Fatalf("register fake channel: %v", err)
 	}
-	fakeSlack := &fakeThreadedSendChannel{name: "slack"}
+	fakeSlack := &fakeSendChannel{name: "slack"}
 	if err := server.agentManager.ChannelManager.Register(fakeSlack); err != nil {
 		t.Fatalf("register fake slack channel: %v", err)
 	}
@@ -525,10 +494,10 @@ func TestMessageSendAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success with thread ts on threaded channel", func(t *testing.T) {
+	t.Run("success with thread ts", func(t *testing.T) {
 		fakeSlack.lastChat = ""
 		fakeSlack.lastText = ""
-		fakeSlack.lastOpts = channels.SendOptions{}
+		fakeSlack.lastThread = ""
 
 		resp, err := http.Post(
 			ts.URL+"/api/v1/message/send",
@@ -550,8 +519,8 @@ func TestMessageSendAPI(t *testing.T) {
 		if fakeSlack.lastText != "reply" {
 			t.Fatalf("expected text captured, got %q", fakeSlack.lastText)
 		}
-		if fakeSlack.lastOpts.ThreadTS != "1234567890.123456" {
-			t.Fatalf("expected thread ts passed, got %q", fakeSlack.lastOpts.ThreadTS)
+		if fakeSlack.lastThread != "1234567890.123456" {
+			t.Fatalf("expected thread ts passed, got %q", fakeSlack.lastThread)
 		}
 	})
 

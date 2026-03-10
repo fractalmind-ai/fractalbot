@@ -45,7 +45,7 @@ func TestTelegramWebhookRegisterOnStart(t *testing.T) {
 	if setCalls != 1 {
 		t.Fatalf("expected setWebhook call, got %d", setCalls)
 	}
-	if err := bot.Stop(); err != nil {
+	if err := bot.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 }
@@ -79,7 +79,7 @@ func TestTelegramWebhookDeleteOnStop(t *testing.T) {
 	if deleteCalls != 0 {
 		t.Fatalf("expected deleteWebhook not called on start")
 	}
-	if err := bot.Stop(); err != nil {
+	if err := bot.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if deleteCalls != 1 {
