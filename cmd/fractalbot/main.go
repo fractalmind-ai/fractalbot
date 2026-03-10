@@ -82,7 +82,7 @@ func runWithContext(ctx context.Context, args []string, out io.Writer) int {
 	fs := flag.NewFlagSet("fractalbot", flag.ContinueOnError)
 	fs.SetOutput(out)
 
-	configPath := fs.String("config", "./config.yaml", "path to config file")
+	configPath := fs.String("config", "", "path to config file (default: ~/.config/fractalbot/config.yaml)")
 	portOverride := fs.Int("port", 0, "override gateway port")
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
 
@@ -95,7 +95,7 @@ func runWithContext(ctx context.Context, args []string, out io.Writer) int {
 		logger.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := config.LoadConfig(config.ResolveConfigPath(*configPath))
 	if err != nil {
 		logger.Printf("failed to load config: %v", err)
 		return 1

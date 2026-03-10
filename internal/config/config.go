@@ -152,6 +152,31 @@ type AgentsConfig struct {
 	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
 }
 
+// ResolveConfigPath returns the config file path using this priority:
+//  1. flagValue (if non-empty, i.e. --config was explicitly provided)
+//  2. $FRACTALBOT_CONFIG environment variable
+//  3. ~/.config/fractalbot/config.yaml (XDG-style default)
+//  4. ./config.yaml (legacy fallback)
+func ResolveConfigPath(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+
+	if env := os.Getenv("FRACTALBOT_CONFIG"); env != "" {
+		return env
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		xdg := filepath.Join(home, ".config", "fractalbot", "config.yaml")
+		if _, err := os.Stat(xdg); err == nil {
+			return xdg
+		}
+	}
+
+	return "./config.yaml"
+}
+
 // LoadConfig loads configuration from file.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
