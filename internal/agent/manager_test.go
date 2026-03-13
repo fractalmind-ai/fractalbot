@@ -310,6 +310,23 @@ sys.exit(1)
 	if !strings.Contains(err.Error(), "assign failed") {
 		t.Fatalf("expected assign failure error, got %v", err)
 	}
+
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil {
+		t.Fatal("expected routing telemetry")
+	}
+	if telemetry.SelectedAgent != "qa-1" {
+		t.Fatalf("selected_agent=%q", telemetry.SelectedAgent)
+	}
+	if telemetry.Status != "error" {
+		t.Fatalf("status=%q", telemetry.Status)
+	}
+	if !strings.Contains(telemetry.Error, "assign failed") {
+		t.Fatalf("error=%q", telemetry.Error)
+	}
+	if telemetry.RecordedAt.IsZero() {
+		t.Fatal("expected recorded_at")
+	}
 }
 
 func TestAssignOhMyCodePromptUsesResolvedDefaultAgent(t *testing.T) {
@@ -376,6 +393,26 @@ sys.exit(1)
 		if !strings.Contains(prompt, part) {
 			t.Fatalf("expected %q in prompt, got %q", part, prompt)
 		}
+	}
+
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil {
+		t.Fatal("expected routing telemetry")
+	}
+	if telemetry.SelectedAgent != "qa-1" {
+		t.Fatalf("selected_agent=%q", telemetry.SelectedAgent)
+	}
+	if telemetry.Channel != "telegram" || telemetry.ChatID != "321" || telemetry.UserID != "456" || telemetry.Username != "bob" {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+	if telemetry.Status != "assigned" {
+		t.Fatalf("status=%q", telemetry.Status)
+	}
+	if telemetry.Error != "" {
+		t.Fatalf("error=%q", telemetry.Error)
+	}
+	if telemetry.RecordedAt.IsZero() {
+		t.Fatal("expected recorded_at")
 	}
 }
 

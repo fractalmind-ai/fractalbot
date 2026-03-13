@@ -40,6 +40,19 @@ type Manager struct {
 	ChannelManager *channels.Manager
 	mu             sync.RWMutex
 	agents         map[string]protocol.AgentInfo
+	routingMu      sync.RWMutex
+	lastRouting    *OhMyCodeRoutingOutcome
+}
+
+type OhMyCodeRoutingOutcome struct {
+	SelectedAgent string
+	Channel       string
+	ChatID        string
+	UserID        string
+	Username      string
+	Status        string
+	Error         string
+	RecordedAt    time.Time
 }
 
 // NewManager creates a new agent manager.
@@ -72,6 +85,16 @@ func (m *Manager) List() []protocol.AgentInfo {
 		agents = append(agents, info)
 	}
 	return agents
+}
+
+func (m *Manager) LastRoutingOutcome() *OhMyCodeRoutingOutcome {
+	m.routingMu.RLock()
+	defer m.routingMu.RUnlock()
+	if m.lastRouting == nil {
+		return nil
+	}
+	outcome := *m.lastRouting
+	return &outcome
 }
 
 // HandleIncoming implements channels.IncomingMessageHandler.
@@ -168,6 +191,7 @@ func (m *Manager) isOhMyCodeEnabled() bool {
 func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride string, inboundData map[string]interface{}) (string, error) {
 	workspace, script, err := m.resolveOhMyCodeWorkspaceAndScript()
 	if err != nil {
+		m.recordRoutingOutcome(inboundData, "", "error", err)
 		return "", err
 	}
 
@@ -180,6 +204,7 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 	}
 	validatedName, err := m.validateOhMyCodeAgent(agentName)
 	if err != nil {
+		m.recordRoutingOutcome(inboundData, agentName, "error", err)
 		return "", err
 	}
 	name := validatedName
@@ -198,9 +223,11 @@ func (m *Manager) assignOhMyCode(ctx context.Context, userText, agentOverride st
 
 	prompt := buildOhMyCodeTaskPrompt(userText, name, inboundData)
 	if _, err := runOhMyCodeAgentManager(assignCtx, workspace, script, prompt, "assign", name); err != nil {
+		m.recordRoutingOutcome(inboundData, name, "error", err)
 		return "", err
 	}
 
+	m.recordRoutingOutcome(inboundData, name, "assigned", nil)
 	return ohMyCodeAssignAckMessage, nil
 }
 
@@ -446,6 +473,25 @@ func promptContextValue(inboundData map[string]interface{}, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func (m *Manager) recordRoutingOutcome(inboundData map[string]interface{}, selectedAgent, status string, err error) {
+	outcome := &OhMyCodeRoutingOutcome{
+		SelectedAgent: strings.TrimSpace(selectedAgent),
+		Channel:       promptContextValue(inboundData, "channel"),
+		ChatID:        promptContextValue(inboundData, "chat_id"),
+		UserID:        promptContextValue(inboundData, "user_id"),
+		Username:      promptContextValue(inboundData, "username"),
+		Status:        strings.TrimSpace(status),
+		RecordedAt:    time.Now().UTC(),
+	}
+	if err != nil {
+		outcome.Error = err.Error()
+	}
+
+	m.routingMu.Lock()
+	m.lastRouting = outcome
+	m.routingMu.Unlock()
 }
 
 func extractRecentMessages(inboundData map[string]interface{}) []map[string]interface{} {
