@@ -406,11 +406,23 @@ type agentStatus struct {
 	OhMyCode            *ohMyCodeStatus `json:"oh_my_code,omitempty"`
 }
 
+type ohMyCodeRoutingStatus struct {
+	SelectedAgent string `json:"selected_agent,omitempty"`
+	Channel       string `json:"channel,omitempty"`
+	ChatID        string `json:"chat_id,omitempty"`
+	UserID        string `json:"user_id,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Error         string `json:"error,omitempty"`
+	RecordedAt    string `json:"recorded_at,omitempty"`
+}
+
 type ohMyCodeStatus struct {
-	Enabled             bool     `json:"enabled"`
-	WorkspaceConfigured bool     `json:"workspace_configured"`
-	DefaultAgent        string   `json:"default_agent,omitempty"`
-	AllowedAgents       []string `json:"allowed_agents,omitempty"`
+	Enabled             bool                   `json:"enabled"`
+	WorkspaceConfigured bool                   `json:"workspace_configured"`
+	DefaultAgent        string                 `json:"default_agent,omitempty"`
+	AllowedAgents       []string               `json:"allowed_agents,omitempty"`
+	LastRouting         *ohMyCodeRoutingStatus `json:"last_routing,omitempty"`
 }
 
 func (s *Server) channelStatus() []channelStatus {
@@ -562,6 +574,20 @@ func (s *Server) agentStatus() *agentStatus {
 		}
 		if len(ohMyCode.AllowedAgents) > 0 {
 			status.OhMyCode.AllowedAgents = append([]string{}, ohMyCode.AllowedAgents...)
+		}
+		if s.agentManager != nil {
+			if routing := s.agentManager.LastRoutingOutcome(); routing != nil {
+				status.OhMyCode.LastRouting = &ohMyCodeRoutingStatus{
+					SelectedAgent: routing.SelectedAgent,
+					Channel:       routing.Channel,
+					ChatID:        routing.ChatID,
+					UserID:        routing.UserID,
+					Username:      routing.Username,
+					Status:        routing.Status,
+					Error:         routing.Error,
+					RecordedAt:    formatStatusTime(routing.RecordedAt),
+				}
+			}
 		}
 	}
 

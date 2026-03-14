@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +132,16 @@ type statusPayload struct {
 			WorkspaceConfigured bool     `json:"workspace_configured"`
 			DefaultAgent        string   `json:"default_agent"`
 			AllowedAgents       []string `json:"allowed_agents"`
+			LastRouting         *struct {
+				SelectedAgent string `json:"selected_agent"`
+				Channel       string `json:"channel"`
+				ChatID        string `json:"chat_id"`
+				UserID        string `json:"user_id"`
+				Username      string `json:"username"`
+				Status        string `json:"status"`
+				Error         string `json:"error"`
+				RecordedAt    string `json:"recorded_at"`
+			} `json:"last_routing"`
 		} `json:"oh_my_code"`
 	} `json:"agents"`
 }
@@ -398,6 +410,90 @@ func TestStatusDoesNotExposeSecrets(t *testing.T) {
 	text := string(body)
 	if strings.Contains(text, "bot-token-secret") || strings.Contains(text, "app-secret") || strings.Contains(text, "cli_secret") {
 		t.Fatalf("status response leaked secrets: %s", text)
+	}
+}
+
+func TestStatusIncludesOhMyCodeRoutingTelemetry(t *testing.T) {
+	workspace := t.TempDir()
+	scriptPath := filepath.Join(workspace, "agent_manager.py")
+
+	script := `import sys
+
+if len(sys.argv) >= 2 and sys.argv[1] == "assign":
+    print("assign ok")
+    sys.exit(0)
+
+print("unexpected command", file=sys.stderr)
+sys.exit(1)
+`
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			Bind: "127.0.0.1",
+			Port: 0,
+		},
+		Channels: &config.ChannelsConfig{},
+		Agents: &config.AgentsConfig{
+			Workspace: workspace,
+			OhMyCode: &config.OhMyCodeConfig{
+				Enabled:            true,
+				Workspace:          workspace,
+				AgentManagerScript: scriptPath,
+				DefaultAgent:       "qa-1",
+			},
+		},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	reply, err := server.agentManager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel":  "telegram",
+			"text":     "hello",
+			"chat_id":  int64(321),
+			"user_id":  int64(456),
+			"username": "bob",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != "处理中…" {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	statusResp, err := fetchStatus(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	if statusResp.Agents == nil || statusResp.Agents.OhMyCode == nil || statusResp.Agents.OhMyCode.LastRouting == nil {
+		t.Fatalf("expected last_routing telemetry, got %#v", statusResp.Agents)
+	}
+	routing := statusResp.Agents.OhMyCode.LastRouting
+	if routing.SelectedAgent != "qa-1" {
+		t.Fatalf("selected_agent=%q", routing.SelectedAgent)
+	}
+	if routing.Channel != "telegram" || routing.ChatID != "321" || routing.UserID != "456" || routing.Username != "bob" {
+		t.Fatalf("unexpected routing payload: %#v", routing)
+	}
+	if routing.Status != "assigned" {
+		t.Fatalf("status=%q", routing.Status)
+	}
+	if routing.RecordedAt == "" {
+		t.Fatal("expected recorded_at")
 	}
 }
 
