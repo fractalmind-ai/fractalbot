@@ -39,6 +39,34 @@ func (h *fakeHandler) callCount() int {
 	return h.calls
 }
 
+type fakeLifecycleHandler struct {
+	fakeHandler
+	monitorReply string
+	monitorErr   error
+	startReply   string
+	startErr     error
+	stopReply    string
+	stopErr      error
+	doctorReply  string
+	doctorErr    error
+}
+
+func (h *fakeLifecycleHandler) MonitorAgent(ctx context.Context, agentName string, lines int) (string, error) {
+	return h.monitorReply, h.monitorErr
+}
+
+func (h *fakeLifecycleHandler) StartAgent(ctx context.Context, agentName string) (string, error) {
+	return h.startReply, h.startErr
+}
+
+func (h *fakeLifecycleHandler) StopAgent(ctx context.Context, agentName string) (string, error) {
+	return h.stopReply, h.stopErr
+}
+
+func (h *fakeLifecycleHandler) Doctor(ctx context.Context) (string, error) {
+	return h.doctorReply, h.doctorErr
+}
+
 type fakeSender struct {
 	mu      sync.Mutex
 	calls   int
@@ -477,5 +505,75 @@ func TestStatsCountsMessages(t *testing.T) {
 	}
 	if stats.OutboundProcessed != 2 {
 		t.Fatalf("expected 2 outbound processed, got %d", stats.OutboundProcessed)
+	}
+}
+
+func TestLifecycleDelegatesToUnderlyingHandler(t *testing.T) {
+	handler := &fakeLifecycleHandler{
+		monitorReply: "monitor ok",
+		startReply:   "start ok",
+		stopReply:    "stop ok",
+		doctorReply:  "doctor ok",
+	}
+	b := New(handler, &fakeSender{}, 1, 1)
+
+	if got, err := b.MonitorAgent(context.Background(), "main", 10); err != nil || got != "monitor ok" {
+		t.Fatalf("MonitorAgent() = %q, %v", got, err)
+	}
+	if got, err := b.StartAgent(context.Background(), "main"); err != nil || got != "start ok" {
+		t.Fatalf("StartAgent() = %q, %v", got, err)
+	}
+	if got, err := b.StopAgent(context.Background(), "main"); err != nil || got != "stop ok" {
+		t.Fatalf("StopAgent() = %q, %v", got, err)
+	}
+	if got, err := b.Doctor(context.Background()); err != nil || got != "doctor ok" {
+		t.Fatalf("Doctor() = %q, %v", got, err)
+	}
+}
+
+func TestLifecycleReturnsNotAvailableWithoutUnderlyingLifecycle(t *testing.T) {
+	b := New(&fakeHandler{}, &fakeSender{}, 1, 1)
+
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "monitor",
+			call: func() error {
+				_, err := b.MonitorAgent(context.Background(), "main", 10)
+				return err
+			},
+		},
+		{
+			name: "start",
+			call: func() error {
+				_, err := b.StartAgent(context.Background(), "main")
+				return err
+			},
+		},
+		{
+			name: "stop",
+			call: func() error {
+				_, err := b.StopAgent(context.Background(), "main")
+				return err
+			},
+		},
+		{
+			name: "doctor",
+			call: func() error {
+				_, err := b.Doctor(context.Background())
+				return err
+			},
+		},
+	}
+
+	for _, tc := range checks {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil || err.Error() != "agent-manager is not available" {
+				t.Fatalf("expected agent-manager unavailable, got %v", err)
+			}
+		})
 	}
 }
