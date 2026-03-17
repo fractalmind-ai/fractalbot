@@ -115,6 +115,43 @@ func (b *MessageBus) HandleIncoming(ctx context.Context, msg *protocol.Message) 
 	}
 }
 
+// MonitorAgent forwards lifecycle monitor requests when the underlying handler
+// supports channel agent lifecycle commands.
+func (b *MessageBus) MonitorAgent(ctx context.Context, agentName string, lines int) (string, error) {
+	lifecycle, ok := b.handler.(channels.AgentLifecycle)
+	if !ok || lifecycle == nil {
+		return "", errors.New("agent-manager is not available")
+	}
+	return lifecycle.MonitorAgent(ctx, agentName, lines)
+}
+
+// StartAgent forwards lifecycle start requests when available.
+func (b *MessageBus) StartAgent(ctx context.Context, agentName string) (string, error) {
+	lifecycle, ok := b.handler.(channels.AgentLifecycle)
+	if !ok || lifecycle == nil {
+		return "", errors.New("agent-manager is not available")
+	}
+	return lifecycle.StartAgent(ctx, agentName)
+}
+
+// StopAgent forwards lifecycle stop requests when available.
+func (b *MessageBus) StopAgent(ctx context.Context, agentName string) (string, error) {
+	lifecycle, ok := b.handler.(channels.AgentLifecycle)
+	if !ok || lifecycle == nil {
+		return "", errors.New("agent-manager is not available")
+	}
+	return lifecycle.StopAgent(ctx, agentName)
+}
+
+// Doctor forwards lifecycle doctor requests when available.
+func (b *MessageBus) Doctor(ctx context.Context) (string, error) {
+	lifecycle, ok := b.handler.(channels.AgentLifecycle)
+	if !ok || lifecycle == nil {
+		return "", errors.New("agent-manager is not available")
+	}
+	return lifecycle.Doctor(ctx)
+}
+
 // PublishOutbound sends an outbound message through the bus.
 // It blocks until the consumer processes the send and returns the result.
 func (b *MessageBus) PublishOutbound(ctx context.Context, channelName string, msg channels.OutboundMessage) error {
@@ -199,6 +236,7 @@ func extractChannelName(msg *protocol.Message) string {
 
 // Ensure MessageBus satisfies IncomingMessageHandler at compile time.
 var _ channels.IncomingMessageHandler = (*MessageBus)(nil)
+var _ channels.AgentLifecycle = (*MessageBus)(nil)
 
 // String returns a human-readable description for debugging.
 func (b *MessageBus) String() string {
