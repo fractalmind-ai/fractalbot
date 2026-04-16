@@ -63,6 +63,17 @@ type SlackBot struct {
 	userDir        map[string]string // lowercase name → user ID
 	userDirUpdated time.Time
 	resolveUsersFn func(ctx context.Context) ([]slack.User, error)
+
+	chanInfoMu      sync.RWMutex
+	chanInfoCache   map[string]*slackChannelInfo // channelID → info
+	chanInfoUpdated map[string]time.Time
+	getConvInfoFn   func(ctx context.Context, channelID string) (*slack.Channel, error)
+}
+
+// slackChannelInfo caches display-relevant channel metadata.
+type slackChannelInfo struct {
+	Name             string // e.g. "general"
+	ConversationType string // "channel", "im", "mpim", "group"
 }
 
 func NewSlackBot(botToken, appToken string, allowedUsers []string, allowedChannels []string, defaultAgent string, allowedAgents []string) (*SlackBot, error) {
@@ -892,11 +903,16 @@ func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text, thr
 		b.markError()
 		return nil, err
 	}
-	return &SendResult{
+	result := &SendResult{
 		ChannelID: respChannel,
 		MessageTS: respTS,
 		ThreadTS:  strings.TrimSpace(threadTS),
-	}, nil
+	}
+	// Best-effort: enrich with channel_name from cache
+	if info := b.resolveChannelInfo(ctx, respChannel); info != nil && info.Name != "" {
+		result.ChannelName = info.Name
+	}
+	return result, nil
 }
 
 func (b *SlackBot) fetchRecentMessages(ctx context.Context, channelID string, limit int) []map[string]interface{} {
@@ -947,15 +963,31 @@ func (b *SlackBot) defaultFetchHistory(ctx context.Context, channelID string, li
 }
 
 func (b *SlackBot) toProtocolMessage(msg *slackInboundMessage, text, agent, trustLevel string, recentMessages []map[string]interface{}) *protocol.Message {
+	convType := msg.channelType
+	channelName := ""
+
+	// Resolve human-readable channel metadata via API cache
+	if info := b.resolveChannelInfo(b.ctx, msg.channelID); info != nil {
+		if info.Name != "" {
+			channelName = info.Name
+		}
+		if info.ConversationType != "" {
+			convType = info.ConversationType
+		}
+	}
+
 	data := map[string]interface{}{
-		"channel":     "slack",
-		"text":        text,
-		"agent":       agent,
-		"user_id":     msg.userID,
-		"chat_id":     msg.channelID,
-		"chatType":    msg.channelType,
-		"trust_level": trustLevel,
-		"thread_ts":   msg.threadTS,
+		"channel":           "slack",
+		"text":              text,
+		"agent":             agent,
+		"user_id":           msg.userID,
+		"chat_id":           msg.channelID,
+		"conversation_type": convType,
+		"trust_level":       trustLevel,
+		"thread_ts":         msg.threadTS,
+	}
+	if channelName != "" {
+		data["channel_name"] = channelName
 	}
 	if len(msg.attachments) > 0 {
 		data["attachments"] = msg.attachments
@@ -1252,6 +1284,75 @@ func (b *SlackBot) userDirStale() bool {
 	b.userDirMu.RLock()
 	defer b.userDirMu.RUnlock()
 	return b.userDir == nil || time.Since(b.userDirUpdated) > userDirTTL
+}
+
+const chanInfoTTL = 30 * time.Minute
+
+// resolveChannelInfo returns cached channel metadata, fetching from the API if stale.
+func (b *SlackBot) resolveChannelInfo(ctx context.Context, channelID string) *slackChannelInfo {
+	if strings.TrimSpace(channelID) == "" {
+		return nil
+	}
+
+	b.chanInfoMu.RLock()
+	info, cached := b.chanInfoCache[channelID]
+	updated := b.chanInfoUpdated[channelID]
+	b.chanInfoMu.RUnlock()
+
+	if cached && time.Since(updated) < chanInfoTTL {
+		return info
+	}
+
+	fetchFn := b.getConvInfoFn
+	if fetchFn == nil {
+		if b.apiClient == nil {
+			return nil
+		}
+		fetchFn = func(ctx context.Context, channelID string) (*slack.Channel, error) {
+			return b.apiClient.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+				ChannelID: channelID,
+			})
+		}
+	}
+
+	ch, err := fetchFn(ctx, channelID)
+	if err != nil {
+		log.Printf("slack: failed to resolve channel info for %s: %v", channelID, err)
+		return nil
+	}
+
+	resolved := &slackChannelInfo{
+		Name:             ch.Name,
+		ConversationType: slackConversationType(ch),
+	}
+
+	b.chanInfoMu.Lock()
+	if b.chanInfoCache == nil {
+		b.chanInfoCache = make(map[string]*slackChannelInfo)
+		b.chanInfoUpdated = make(map[string]time.Time)
+	}
+	b.chanInfoCache[channelID] = resolved
+	b.chanInfoUpdated[channelID] = time.Now()
+	b.chanInfoMu.Unlock()
+
+	return resolved
+}
+
+// slackConversationType maps Slack channel properties to a human-readable type.
+func slackConversationType(ch *slack.Channel) string {
+	if ch == nil {
+		return ""
+	}
+	if ch.IsIM {
+		return "im"
+	}
+	if ch.IsMpIM {
+		return "mpim"
+	}
+	if ch.IsGroup {
+		return "group"
+	}
+	return "channel"
 }
 
 // resolveSlackMentions converts @name patterns in outbound text to <@USERID> format.

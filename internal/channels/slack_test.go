@@ -1466,6 +1466,9 @@ func TestSlackReplyUsesThreadTSWhenPresent(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.getConvInfoFn = func(ctx context.Context, channelID string) (*slack.Channel, error) {
+		return &slack.Channel{}, nil
+	}
 	bot.sendMessageWithOptionsFn = bot.sendTextWithOptions
 	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
@@ -1598,6 +1601,9 @@ func TestSlackSendTextWithOptionsPostsThreadTS(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.getConvInfoFn = func(ctx context.Context, channelID string) (*slack.Channel, error) {
+		return &slack.Channel{}, nil
+	}
 
 	if _, err := bot.sendTextWithOptions(
 		context.Background(),
@@ -1991,6 +1997,9 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 			return []slack.User{
 				{ID: "U111", Name: "alice"},
 			}, nil
+		},
+		getConvInfoFn: func(ctx context.Context, channelID string) (*slack.Channel, error) {
+			return &slack.Channel{}, nil
 		},
 	}
 
