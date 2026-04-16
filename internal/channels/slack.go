@@ -41,8 +41,8 @@ type SlackBot struct {
 
 	startFn                  func(ctx context.Context) error
 	stopFn                   func() error
-	sendMessageFn            func(ctx context.Context, channelID, text string) error
-	sendMessageWithOptionsFn func(ctx context.Context, channelID, text, threadTS string) error
+	sendMessageFn            func(ctx context.Context, channelID, text string) (*SendResult, error)
+	sendMessageWithOptionsFn func(ctx context.Context, channelID, text, threadTS string) (*SendResult, error)
 	fetchHistoryFn           func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
 
 	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
@@ -162,30 +162,32 @@ func (b *SlackBot) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (b *SlackBot) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *SlackBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	if strings.TrimSpace(msg.To) == "" {
-		return errors.New("slack channel ID is required")
+		return nil, errors.New("slack channel ID is required")
 	}
 	if b.sendMessageWithOptionsFn != nil {
-		if err := b.sendMessageWithOptionsFn(ctx, msg.To, msg.Text, msg.ThreadTS); err != nil {
+		result, err := b.sendMessageWithOptionsFn(ctx, msg.To, msg.Text, msg.ThreadTS)
+		if err != nil {
 			b.markError()
-			return err
+			return nil, err
 		}
 		b.markActivity()
-		return nil
+		return result, nil
 	}
 	if strings.TrimSpace(msg.ThreadTS) != "" {
-		return errors.New("slack threaded sender not configured")
+		return nil, errors.New("slack threaded sender not configured")
 	}
 	if b.sendMessageFn == nil {
-		return errors.New("slack sender not configured")
+		return nil, errors.New("slack sender not configured")
 	}
-	if err := b.sendMessageFn(ctx, msg.To, msg.Text); err != nil {
+	result, err := b.sendMessageFn(ctx, msg.To, msg.Text)
+	if err != nil {
 		b.markError()
-		return err
+		return nil, err
 	}
 	b.markActivity()
-	return nil
+	return result, nil
 }
 
 // IsAllowed reports whether senderID is on the allowlist.
@@ -857,25 +859,26 @@ func (b *SlackBot) ack(req socketmode.Request, payload ...interface{}) {
 }
 
 func (b *SlackBot) reply(ctx context.Context, msg *slackInboundMessage, text string) error {
-	return b.Send(ctx, OutboundMessage{
+	_, err := b.Send(ctx, OutboundMessage{
 		To:       msg.channelID,
 		Text:     TruncateSlackReply(text),
 		ThreadTS: msg.threadTS,
 	})
+	return err
 }
 
-func (b *SlackBot) sendText(ctx context.Context, channelID, text string) error {
+func (b *SlackBot) sendText(ctx context.Context, channelID, text string) (*SendResult, error) {
 	return b.sendTextWithOptions(ctx, channelID, text, "")
 }
 
-func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text, threadTS string) error {
+func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text, threadTS string) (*SendResult, error) {
 	if b.apiClient == nil {
 		b.markError()
-		return errors.New("slack api client not initialized")
+		return nil, errors.New("slack api client not initialized")
 	}
 	if strings.TrimSpace(channelID) == "" {
 		b.markError()
-		return errors.New("slack channel ID is required")
+		return nil, errors.New("slack channel ID is required")
 	}
 	resolved := b.resolveSlackMentions(ctx, text)
 	msgOptions := []slack.MsgOption{
@@ -884,12 +887,16 @@ func (b *SlackBot) sendTextWithOptions(ctx context.Context, channelID, text, thr
 	if strings.TrimSpace(threadTS) != "" {
 		msgOptions = append(msgOptions, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
 	}
-	_, _, err := b.apiClient.PostMessageContext(ctx, channelID, msgOptions...)
+	respChannel, respTS, err := b.apiClient.PostMessageContext(ctx, channelID, msgOptions...)
 	if err != nil {
 		b.markError()
-		return err
+		return nil, err
 	}
-	return nil
+	return &SendResult{
+		ChannelID: respChannel,
+		MessageTS: respTS,
+		ThreadTS:  strings.TrimSpace(threadTS),
+	}, nil
 }
 
 func (b *SlackBot) fetchRecentMessages(ctx context.Context, channelID string, limit int) []map[string]interface{} {

@@ -137,19 +137,19 @@ func (b *DiscordBot) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (b *DiscordBot) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *DiscordBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	if b.sendMessageFn == nil {
-		return errors.New("discord sender not configured")
+		return nil, errors.New("discord sender not configured")
 	}
 	if strings.TrimSpace(msg.To) == "" {
-		return errors.New("discord channel ID is required")
+		return nil, errors.New("discord channel ID is required")
 	}
 	if err := b.sendMessageFn(ctx, msg.To, msg.Text); err != nil {
 		b.markError()
-		return err
+		return nil, err
 	}
 	b.markActivity()
-	return nil
+	return &SendResult{ChannelID: msg.To}, nil
 }
 
 // IsAllowed reports whether senderID is on the allowlist.

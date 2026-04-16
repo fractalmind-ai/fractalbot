@@ -156,19 +156,19 @@ func (b *FeishuBot) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	if b.sendMessageFn == nil {
-		return errors.New("feishu sender not configured")
+		return nil, errors.New("feishu sender not configured")
 	}
 	if strings.TrimSpace(msg.To) == "" {
-		return errors.New("feishu receive_id is required")
+		return nil, errors.New("feishu receive_id is required")
 	}
 	if err := b.sendMessageFn(ctx, "open_id", msg.To, msg.Text); err != nil {
 		b.markError()
-		return err
+		return nil, err
 	}
 	b.markActivity()
-	return nil
+	return &SendResult{ChannelID: msg.To}, nil
 }
 
 // IsAllowed reports whether senderID is on the allowlist.

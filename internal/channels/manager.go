@@ -146,19 +146,20 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-// Send routes an outbound message through the channel's worker queue.
-// Returns error if the channel is not found or the queue is full.
-func (m *Manager) Send(ctx context.Context, channelName string, msg OutboundMessage) error {
+// Send routes an outbound message through the channel's worker.
+// It performs a synchronous send with rate limiting and returns result metadata.
+// Returns error if the channel is not found.
+func (m *Manager) Send(ctx context.Context, channelName string, msg OutboundMessage) (*SendResult, error) {
 	w, ok := m.workers[channelName]
 	if !ok {
 		// Fallback to direct send if worker not started yet
 		ch := m.Get(channelName)
 		if ch == nil {
-			return fmt.Errorf("channel %q not found", channelName)
+			return nil, fmt.Errorf("channel %q not found", channelName)
 		}
 		return ch.Send(ctx, msg)
 	}
-	return w.enqueue(msg)
+	return w.sendSync(ctx, msg)
 }
 
 func (m *Manager) startChannel(name string, channel Channel, ctx context.Context) {

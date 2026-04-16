@@ -310,11 +310,14 @@ type messageSendRequest struct {
 }
 
 type messageSendResponse struct {
-	Status   string `json:"status"`
-	Channel  string `json:"channel,omitempty"`
-	To       string `json:"to,omitempty"`
-	ThreadTS string `json:"thread_ts,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Status      string `json:"status"`
+	Channel     string `json:"channel,omitempty"`
+	To          string `json:"to,omitempty"`
+	ThreadTS    string `json:"thread_ts,omitempty"`
+	ChannelID   string `json:"channel_id,omitempty"`
+	ChannelName string `json:"channel_name,omitempty"`
+	MessageTS   string `json:"message_ts,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
@@ -355,11 +358,12 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.messageBus.PublishOutbound(r.Context(), request.Channel, channels.OutboundMessage{
+	result, err := s.messageBus.PublishOutbound(r.Context(), request.Channel, channels.OutboundMessage{
 		To:       request.To,
 		Text:     request.Text,
 		ThreadTS: request.ThreadTS,
-	}); err != nil {
+	})
+	if err != nil {
 		status := http.StatusBadGateway
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
@@ -368,12 +372,21 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, messageSendResponse{
+	resp := messageSendResponse{
 		Status:   "ok",
 		Channel:  request.Channel,
 		To:       request.To,
 		ThreadTS: request.ThreadTS,
-	})
+	}
+	if result != nil {
+		resp.ChannelID = result.ChannelID
+		resp.ChannelName = result.ChannelName
+		resp.MessageTS = result.MessageTS
+		if result.ThreadTS != "" {
+			resp.ThreadTS = result.ThreadTS
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {

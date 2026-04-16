@@ -37,11 +37,11 @@ func (f *fakeChannel) Stop(ctx context.Context) error {
 	return f.stopErr
 }
 
-func (f *fakeChannel) Send(ctx context.Context, msg OutboundMessage) error {
+func (f *fakeChannel) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	_ = ctx
 	f.lastChat = msg.To
 	f.lastText = msg.Text
-	return nil
+	return &SendResult{ChannelID: msg.To}, nil
 }
 
 func (f *fakeChannel) IsRunning() bool { return f.running }
@@ -169,9 +169,9 @@ func (b *blockingStartChannel) Start(ctx context.Context) error {
 
 func (b *blockingStartChannel) Stop(ctx context.Context) error { _ = ctx; return nil }
 
-func (b *blockingStartChannel) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *blockingStartChannel) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	_ = ctx
-	return nil
+	return nil, nil
 }
 
 func (b *blockingStartChannel) IsRunning() bool { return false }
@@ -298,8 +298,8 @@ func (c *contextObservingChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *contextObservingChannel) Send(ctx context.Context, msg OutboundMessage) error {
-	return nil
+func (c *contextObservingChannel) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
+	return nil, nil
 }
 
 func (c *contextObservingChannel) IsRunning() bool { return c.running }
@@ -322,6 +322,6 @@ func (p *panickingChannel) Start(ctx context.Context) error {
 func (p *panickingChannel) Stop(ctx context.Context) error { _ = ctx; return nil }
 func (p *panickingChannel) IsRunning() bool                { return false }
 func (p *panickingChannel) IsAllowed(senderID string) bool { return true }
-func (p *panickingChannel) Send(ctx context.Context, msg OutboundMessage) error {
-	return nil
+func (p *panickingChannel) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
+	return nil, nil
 }

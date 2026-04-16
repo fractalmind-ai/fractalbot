@@ -22,11 +22,13 @@ func (s *stubChannel) Start(ctx context.Context) error { s.running = true; retur
 func (s *stubChannel) Stop(ctx context.Context) error  { s.running = false; return nil }
 func (s *stubChannel) IsRunning() bool                 { return s.running }
 func (s *stubChannel) IsAllowed(senderID string) bool  { return true }
-func (s *stubChannel) Send(ctx context.Context, msg OutboundMessage) error {
+func (s *stubChannel) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	if s.sendFn != nil {
-		return s.sendFn(ctx, msg)
+		if err := s.sendFn(ctx, msg); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return &SendResult{ChannelID: msg.To}, nil
 }
 
 // --- classifyError tests ---
@@ -319,17 +321,15 @@ func TestManager_Send_RoutesToWorker(t *testing.T) {
 	defer cancel()
 	w.start(ctx)
 
-	err := mgr.Send(context.Background(), "test", OutboundMessage{To: "chat1", Text: "hi"})
+	_, err := mgr.Send(context.Background(), "test", OutboundMessage{To: "chat1", Text: "hi"})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-	w.stop()
-
 	if received.Load() != 1 {
 		t.Errorf("worker received %d messages, want 1", received.Load())
 	}
+	w.stop()
 }
 
 func TestManager_Send_FallbackDirect(t *testing.T) {
@@ -349,7 +349,7 @@ func TestManager_Send_FallbackDirect(t *testing.T) {
 	}
 	// No worker started — should fallback to direct send
 
-	err := mgr.Send(context.Background(), "test", OutboundMessage{To: "chat1", Text: "hi"})
+	_, err := mgr.Send(context.Background(), "test", OutboundMessage{To: "chat1", Text: "hi"})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestManager_Send_UnknownChannel(t *testing.T) {
 		startCancels: make(map[string]context.CancelFunc),
 	}
 
-	err := mgr.Send(context.Background(), "nonexistent", OutboundMessage{})
+	_, err := mgr.Send(context.Background(), "nonexistent", OutboundMessage{})
 	if err == nil {
 		t.Error("expected error for unknown channel")
 	}

@@ -14,7 +14,7 @@ import (
 // ChannelSender routes outbound messages to the correct channel.
 // Satisfied by channels.Manager.
 type ChannelSender interface {
-	Send(ctx context.Context, channelName string, msg channels.OutboundMessage) error
+	Send(ctx context.Context, channelName string, msg channels.OutboundMessage) (*channels.SendResult, error)
 }
 
 // InboundMessage wraps a protocol message with routing metadata.
@@ -30,13 +30,19 @@ type inboundReply struct {
 	Err  error
 }
 
+// outboundResult pairs a send result with an error for channel communication.
+type outboundResult struct {
+	Result *channels.SendResult
+	Err    error
+}
+
 // OutboundEnvelope wraps an outbound message with its target channel and
-// a completion channel for synchronous error reporting.
+// a completion channel for synchronous result reporting.
 type OutboundEnvelope struct {
 	Ctx         context.Context
 	ChannelName string
 	Message     channels.OutboundMessage
-	errCh       chan error
+	resultCh    chan outboundResult
 }
 
 // Stats holds message processing counters.
@@ -154,30 +160,30 @@ func (b *MessageBus) Doctor(ctx context.Context) (string, error) {
 
 // PublishOutbound sends an outbound message through the bus.
 // It blocks until the consumer processes the send and returns the result.
-func (b *MessageBus) PublishOutbound(ctx context.Context, channelName string, msg channels.OutboundMessage) error {
+func (b *MessageBus) PublishOutbound(ctx context.Context, channelName string, msg channels.OutboundMessage) (*channels.SendResult, error) {
 	if b.closed.Load() {
-		return errors.New("bus is closed")
+		return nil, errors.New("bus is closed")
 	}
 
-	errCh := make(chan error, 1)
+	resultCh := make(chan outboundResult, 1)
 	env := &OutboundEnvelope{
 		Ctx:         ctx,
 		ChannelName: channelName,
 		Message:     msg,
-		errCh:       errCh,
+		resultCh:    resultCh,
 	}
 
 	select {
 	case b.outbound <- env:
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 
 	select {
-	case err := <-errCh:
-		return err
+	case res := <-resultCh:
+		return res.Result, res.Err
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
@@ -215,8 +221,8 @@ func (b *MessageBus) consumeInbound() {
 func (b *MessageBus) consumeOutbound() {
 	defer b.wg.Done()
 	for env := range b.outbound {
-		err := b.sender.Send(env.Ctx, env.ChannelName, env.Message)
-		env.errCh <- err
+		result, err := b.sender.Send(env.Ctx, env.ChannelName, env.Message)
+		env.resultCh <- outboundResult{Result: result, Err: err}
 		b.outboundProcessed.Add(1)
 	}
 }

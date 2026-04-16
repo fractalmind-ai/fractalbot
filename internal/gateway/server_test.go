@@ -295,9 +295,9 @@ func (f *fakeTelemetryChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeTelemetryChannel) Send(ctx context.Context, msg channels.OutboundMessage) error {
+func (f *fakeTelemetryChannel) Send(ctx context.Context, msg channels.OutboundMessage) (*channels.SendResult, error) {
 	_ = ctx
-	return nil
+	return nil, nil
 }
 
 func (f *fakeTelemetryChannel) IsRunning() bool {
@@ -594,12 +594,15 @@ func (f *fakeSendChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeSendChannel) Send(ctx context.Context, msg channels.OutboundMessage) error {
+func (f *fakeSendChannel) Send(ctx context.Context, msg channels.OutboundMessage) (*channels.SendResult, error) {
 	_ = ctx
 	f.lastChat = msg.To
 	f.lastText = msg.Text
 	f.lastThread = msg.ThreadTS
-	return f.sendErr
+	if f.sendErr != nil {
+		return nil, f.sendErr
+	}
+	return &channels.SendResult{ChannelID: msg.To}, nil
 }
 
 func (f *fakeSendChannel) IsRunning() bool { return f.running }
