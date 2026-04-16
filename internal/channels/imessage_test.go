@@ -61,7 +61,7 @@ func TestIMessageBotSendMessageUsesAppleScript(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	if err := bot.Send(context.Background(), OutboundMessage{Text: "hello from test"}); err != nil {
+	if _, err := bot.Send(context.Background(), OutboundMessage{Text: "hello from test"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestIMessageBotSendFallsBackToConfiguredMessage(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := bot.Send(context.Background(), OutboundMessage{}); err != nil {
+	if _, err := bot.Send(context.Background(), OutboundMessage{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if !strings.Contains(script, `send "configured default"`) {

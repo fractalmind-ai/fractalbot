@@ -1337,12 +1337,15 @@ func (b *TelegramBot) convertToProtocolMessage(msg *TelegramMessage, text, agent
 }
 
 // Send sends a message to Telegram.
-func (b *TelegramBot) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *TelegramBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	chatID, err := strconv.ParseInt(strings.TrimSpace(msg.To), 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid telegram chat ID %q: %w", msg.To, err)
+		return nil, fmt.Errorf("invalid telegram chat ID %q: %w", msg.To, err)
 	}
-	return b.sendToChat(ctx, chatID, msg.Text)
+	if err := b.sendToChat(ctx, chatID, msg.Text); err != nil {
+		return nil, err
+	}
+	return &SendResult{ChannelID: msg.To}, nil
 }
 
 // IsAllowed reports whether senderID is on the allowlist.

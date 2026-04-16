@@ -75,14 +75,17 @@ type fakeSender struct {
 	sendErr error
 }
 
-func (s *fakeSender) Send(ctx context.Context, channelName string, msg channels.OutboundMessage) error {
+func (s *fakeSender) Send(ctx context.Context, channelName string, msg channels.OutboundMessage) (*channels.SendResult, error) {
 	s.mu.Lock()
 	s.calls++
 	s.lastCh = channelName
 	s.lastMsg = msg
 	err := s.sendErr
 	s.mu.Unlock()
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return &channels.SendResult{ChannelID: msg.To}, nil
 }
 
 func (s *fakeSender) callCount() int {
@@ -178,12 +181,15 @@ func TestOutboundPublishAndConsume(t *testing.T) {
 	b.Start()
 	defer func() { b.Close(); b.Wait() }()
 
-	err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{
+	result, err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{
 		To:   "12345",
 		Text: "hello from bus",
 	})
 	if err != nil {
 		t.Fatalf("PublishOutbound: %v", err)
+	}
+	if result == nil || result.ChannelID != "12345" {
+		t.Fatalf("expected SendResult with ChannelID=12345, got %v", result)
 	}
 	if sender.callCount() != 1 {
 		t.Fatalf("expected 1 sender call, got %d", sender.callCount())
@@ -208,7 +214,7 @@ func TestOutboundSendError(t *testing.T) {
 	b.Start()
 	defer func() { b.Close(); b.Wait() }()
 
-	err := b.PublishOutbound(context.Background(), "slack", channels.OutboundMessage{
+	_, err := b.PublishOutbound(context.Background(), "slack", channels.OutboundMessage{
 		To:   "C123",
 		Text: "test",
 	})
@@ -224,7 +230,7 @@ func TestOutboundWithThreadTS(t *testing.T) {
 	b.Start()
 	defer func() { b.Close(); b.Wait() }()
 
-	err := b.PublishOutbound(context.Background(), "slack", channels.OutboundMessage{
+	_, err := b.PublishOutbound(context.Background(), "slack", channels.OutboundMessage{
 		To:       "C123",
 		Text:     "reply",
 		ThreadTS: "1234567890.123456",
@@ -283,7 +289,7 @@ func TestPublishOutboundContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	err := b2.PublishOutbound(ctx, "telegram", channels.OutboundMessage{To: "1", Text: "x"})
+	_, err := b2.PublishOutbound(ctx, "telegram", channels.OutboundMessage{To: "1", Text: "x"})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
@@ -302,7 +308,7 @@ func TestClosePreventsFurtherPublish(t *testing.T) {
 		t.Fatalf("expected 'bus is closed', got %v", err)
 	}
 
-	err = b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"})
+	_, err = b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"})
 	if err == nil || err.Error() != "bus is closed" {
 		t.Fatalf("expected 'bus is closed', got %v", err)
 	}
@@ -383,7 +389,7 @@ func TestConcurrentPublish(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"})
+				_, err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"})
 				if err != nil {
 					t.Errorf("outbound error: %v", err)
 				}
@@ -494,7 +500,7 @@ func TestStatsCountsMessages(t *testing.T) {
 
 	// Send 2 outbound messages
 	for i := 0; i < 2; i++ {
-		if err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"}); err != nil {
+		if _, err := b.PublishOutbound(context.Background(), "telegram", channels.OutboundMessage{To: "1", Text: "x"}); err != nil {
 			t.Fatalf("PublishOutbound: %v", err)
 		}
 	}

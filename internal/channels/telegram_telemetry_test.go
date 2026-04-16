@@ -33,7 +33,7 @@ func TestTelegramTelemetry(t *testing.T) {
 			return nil, errors.New("send failed")
 		}),
 	}
-	if err := bot.Send(context.Background(), OutboundMessage{To: "1", Text: "hi"}); err == nil {
+	if _, err := bot.Send(context.Background(), OutboundMessage{To: "1", Text: "hi"}); err == nil {
 		t.Fatalf("expected send error")
 	}
 	if bot.LastError().IsZero() {

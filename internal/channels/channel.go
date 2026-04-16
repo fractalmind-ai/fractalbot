@@ -10,9 +10,18 @@ type Channel interface {
 	Name() string
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	Send(ctx context.Context, msg OutboundMessage) error
+	Send(ctx context.Context, msg OutboundMessage) (*SendResult, error)
 	IsRunning() bool
 	IsAllowed(senderID string) bool
+}
+
+// SendResult carries metadata about a successfully sent message.
+// Fields are best-effort: channels populate what they can.
+type SendResult struct {
+	ChannelID   string `json:"channel_id,omitempty"`
+	ChannelName string `json:"channel_name,omitempty"`
+	MessageTS   string `json:"message_ts,omitempty"`
+	ThreadTS    string `json:"thread_ts,omitempty"`
 }
 
 // OutboundMessage carries all data needed to send a message through a channel.

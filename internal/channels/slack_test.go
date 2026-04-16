@@ -82,10 +82,10 @@ func TestSlackAllowlist(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -123,10 +123,10 @@ func TestSlackUnauthorized(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -160,10 +160,10 @@ func TestSlackSocketModeDMEvent(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -197,10 +197,10 @@ func TestSlackWhoamiRequiresAllowlist(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -222,10 +222,10 @@ func TestSlackAgentsEmptyConfigHint(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -256,10 +256,10 @@ func TestSlackDefaultAgentMissingGuidance(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -290,10 +290,10 @@ func TestSlackAgentsDedupesDefault(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -321,10 +321,10 @@ func TestSlackReplyTruncation(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: strings.Repeat("a", maxSlackReplyChars+10)}
@@ -349,10 +349,10 @@ func TestSlackIgnoreNonDMFromUnauthorized(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -382,9 +382,9 @@ func TestSlackIgnoreNonDMEvenFromAllowedUser(t *testing.T) {
 	handler := &fakeSlackHandler{reply: "ok"}
 	bot.SetHandler(handler)
 
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -486,10 +486,10 @@ func TestSlackStatusDoesNotLeakTokens(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -514,10 +514,10 @@ func TestSlackStatusRequiresAllowlist(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -539,10 +539,10 @@ func TestSlackAgentsRequiresAllowlist(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -575,10 +575,10 @@ func TestSlackIncompleteAgentUsageRequiresAllowlist(t *testing.T) {
 	}
 	for _, input := range tests {
 		var sent slackSendCapture
-		bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+		bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 			_ = ctx
 			sent = slackSendCapture{channelID: channelID, text: text}
-			return nil
+			return nil, nil
 		}
 
 		bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -601,10 +601,10 @@ func TestSlackAgentWithTaskStillUnauthorized(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -737,10 +737,10 @@ func TestSlackAppMentionAllowlisted(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleSocketEvent(context.Background(), socketmode.Event{
@@ -771,10 +771,10 @@ func TestSlackAppMentionUnauthorized(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleSocketEvent(context.Background(), socketmode.Event{
@@ -805,10 +805,10 @@ func TestSlackToolsRequiresAllowlist(t *testing.T) {
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -833,10 +833,10 @@ func TestSlackToolBypassesAgentSelection(t *testing.T) {
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -861,10 +861,10 @@ func TestSlackToolHandlerMissing(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -889,10 +889,10 @@ func TestSlackMonitorUnauthorized(t *testing.T) {
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -917,10 +917,10 @@ func TestSlackMonitorAllowed(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -942,10 +942,10 @@ func TestSlackMonitorUsage(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -967,10 +967,10 @@ func TestSlackToolCommandUnauthorized(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -995,10 +995,10 @@ func TestSlackToolCommandAllowedRoutes(t *testing.T) {
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -1020,10 +1020,10 @@ func TestSlackStatusWithMentionRequiresAllowlist(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	bot.handleMessageEvent(context.Background(), &slackInboundMessage{
@@ -1154,9 +1154,9 @@ func TestSlackMentionIncludesRecentMessages(t *testing.T) {
 	handler := &fakeSlackHandler{reply: "ok"}
 	bot.SetHandler(handler)
 
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
-		return nil
+		return nil, nil
 	}
 	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
 		_ = ctx
@@ -1196,9 +1196,9 @@ func TestSlackDMIncludesRecentMessages(t *testing.T) {
 	handler := &fakeSlackHandler{reply: "ok"}
 	bot.SetHandler(handler)
 
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
-		return nil
+		return nil, nil
 	}
 	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
 		_ = ctx
@@ -1237,10 +1237,10 @@ func TestSlackHistoryFetchErrorDoesNotBlock(t *testing.T) {
 	bot.SetHandler(handler)
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
 		_ = ctx
@@ -1369,10 +1369,10 @@ func TestSlackHandleMessageEventForwardsAttachmentsToHandler(t *testing.T) {
 	}
 
 	var sent slackSendCapture
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		sent = slackSendCapture{channelID: channelID, text: text}
-		return nil
+		return nil, nil
 	}
 
 	handler := &fakeSlackHandler{reply: "ok"}
@@ -1466,11 +1466,14 @@ func TestSlackReplyUsesThreadTSWhenPresent(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.getConvInfoFn = func(ctx context.Context, channelID string) (*slack.Channel, error) {
+		return &slack.Channel{}, nil
+	}
 	bot.sendMessageWithOptionsFn = bot.sendTextWithOptions
-	bot.sendMessageFn = func(ctx context.Context, channelID, text string) error {
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
 		_ = ctx
 		t.Fatalf("expected reply to use thread API path, got plain sendMessage call")
-		return nil
+		return nil, nil
 	}
 
 	if err := bot.reply(context.Background(), &slackInboundMessage{
@@ -1547,14 +1550,14 @@ func TestSlackSendUsesThreadTS(t *testing.T) {
 
 	var captured slackSendCapture
 	var capturedThreadTS string
-	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) error {
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) (*SendResult, error) {
 		_ = ctx
 		captured = slackSendCapture{channelID: channelID, text: text}
 		capturedThreadTS = threadTS
-		return nil
+		return nil, nil
 	}
 
-	if err := bot.Send(
+	if _, err := bot.Send(
 		context.Background(),
 		OutboundMessage{
 			To:       "C0A8ESWV7D0",
@@ -1598,8 +1601,11 @@ func TestSlackSendTextWithOptionsPostsThreadTS(t *testing.T) {
 		t.Fatalf("NewSlackBot: %v", err)
 	}
 	bot.apiClient = slack.New("xoxb-token", slack.OptionAPIURL(server.URL+"/"))
+	bot.getConvInfoFn = func(ctx context.Context, channelID string) (*slack.Channel, error) {
+		return &slack.Channel{}, nil
+	}
 
-	if err := bot.sendTextWithOptions(
+	if _, err := bot.sendTextWithOptions(
 		context.Background(),
 		"C0A8ESWV7D0",
 		"thread reply",
@@ -1962,13 +1968,13 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 	}
 
 	// Override PostMessageContext by setting sendMessageWithOptionsFn to capture text.
-	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) error {
+	bot.sendMessageWithOptionsFn = func(ctx context.Context, channelID, text, threadTS string) (*SendResult, error) {
 		sentText = text
-		return nil
+		return nil, nil
 	}
 
 	ctx := context.Background()
-	err := bot.Send(ctx, OutboundMessage{To: "C123", Text: "Hey @alice, check this"})
+	_, err := bot.Send(ctx, OutboundMessage{To: "C123", Text: "Hey @alice, check this"})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -1992,9 +1998,12 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 				{ID: "U111", Name: "alice"},
 			}, nil
 		},
+		getConvInfoFn: func(ctx context.Context, channelID string) (*slack.Channel, error) {
+			return &slack.Channel{}, nil
+		},
 	}
 
-	err = bot2.sendTextWithOptions(ctx, "C123", "Hey @alice, check this", "")
+	_, err = bot2.sendTextWithOptions(ctx, "C123", "Hey @alice, check this", "")
 	if err != nil {
 		t.Fatalf("sendTextWithOptions: %v", err)
 	}

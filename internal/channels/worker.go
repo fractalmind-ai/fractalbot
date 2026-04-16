@@ -177,7 +177,7 @@ func (w *channelWorker) drain(ctx context.Context) {
 	for {
 		select {
 		case msg := <-w.queue:
-			if err := w.channel.Send(ctx, msg); err != nil {
+			if _, err := w.channel.Send(ctx, msg); err != nil {
 				log.Printf("[worker/%s] drain send failed: %v", w.channel.Name(), err)
 			}
 		default:
@@ -198,7 +198,7 @@ func (w *channelWorker) sendWithRetry(ctx context.Context, msg OutboundMessage) 
 	}
 
 	for attempt := 0; attempt <= retryMaxAttempts; attempt++ {
-		err := w.channel.Send(ctx, msg)
+		_, err := w.channel.Send(ctx, msg)
 		if err == nil {
 			w.afterSend(ctx, msg)
 			return
@@ -235,6 +235,47 @@ func (w *channelWorker) sendWithRetry(ctx context.Context, msg OutboundMessage) 
 			}
 		}
 	}
+}
+
+// sendSync performs a synchronous send with rate limiting and returns the result.
+// Used by Manager.Send for bus-originated sends that need result feedback.
+func (w *channelWorker) sendSync(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
+	w.beforeSend(ctx, msg)
+
+	if err := w.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
+	for attempt := 0; attempt <= retryMaxAttempts; attempt++ {
+		result, err := w.channel.Send(ctx, msg)
+		if err == nil {
+			w.afterSend(ctx, msg)
+			return result, nil
+		}
+
+		ec := classifyError(err)
+		switch ec {
+		case ErrPermanent:
+			return nil, err
+		case ErrRateLimit:
+			select {
+			case <-time.After(rateLimitDelay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		case ErrTransient:
+			if attempt >= retryMaxAttempts {
+				return nil, err
+			}
+			delay := retryDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return nil, fmt.Errorf("channel %s: retries exhausted", w.channel.Name())
 }
 
 // retryDelay calculates exponential backoff: base * 2^attempt, capped at max.

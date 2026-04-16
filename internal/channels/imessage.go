@@ -249,7 +249,7 @@ func (b *IMessageBot) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (b *IMessageBot) Send(ctx context.Context, msg OutboundMessage) error {
+func (b *IMessageBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
 	recipient := strings.TrimSpace(msg.To)
 	if recipient == "" {
 		recipient = b.recipient
@@ -258,7 +258,10 @@ func (b *IMessageBot) Send(ctx context.Context, msg OutboundMessage) error {
 	if message == "" {
 		message = b.defaultMessage
 	}
-	return b.send(ctx, recipient, message)
+	if err := b.send(ctx, recipient, message); err != nil {
+		return nil, err
+	}
+	return &SendResult{ChannelID: recipient}, nil
 }
 
 // IsAllowed always returns true for iMessage (single-recipient channel).

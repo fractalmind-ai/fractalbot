@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
@@ -497,4 +498,103 @@ func TestBuildPromptWithoutRecentMessages(t *testing.T) {
 	if !strings.Contains(out, "User message:\nhello\n") {
 		t.Fatalf("expected user message, got %q", out)
 	}
+}
+
+func TestBuildPromptBodyModeFilePointer(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("this text is ignored when file-backed", "main", map[string]interface{}{
+		"channel":   "slack",
+		"chat_id":   "C123",
+		"user_id":   "U123",
+		"body_mode": channels.BodyModeFilePointer,
+		"body_file": "/tmp/fractalbot/bodies/body-123.md",
+	})
+
+	if !strings.Contains(out, "- body_mode: file_pointer") {
+		t.Fatalf("expected body_mode in routing context, got %q", out)
+	}
+	if !strings.Contains(out, "- body_file: /tmp/fractalbot/bodies/body-123.md") {
+		t.Fatalf("expected body_file in routing context, got %q", out)
+	}
+	if !strings.Contains(out, "see file /tmp/fractalbot/bodies/body-123.md") {
+		t.Fatalf("expected file reference in user message section, got %q", out)
+	}
+	if strings.Contains(out, "this text is ignored") {
+		t.Fatalf("expected inline text to be omitted when file-backed, got %q", out)
+	}
+	if !strings.Contains(out, "Do NOT re-wrap it into another file") {
+		t.Fatalf("expected no-double-wrap instruction, got %q", out)
+	}
+}
+
+func TestBuildPromptBodyModeInlineUnchanged(t *testing.T) {
+	out := buildOhMyCodeTaskPrompt("hello inline", "main", map[string]interface{}{
+		"channel":     "slack",
+		"chat_id":     "C123",
+		"user_id":     "U123",
+		"body_mode":   channels.BodyModeInline,
+		"trust_level": "full",
+	})
+
+	if !strings.Contains(out, "User message:\nhello inline\n") {
+		t.Fatalf("expected inline body, got %q", out)
+	}
+	if strings.Contains(out, "body_file") {
+		t.Fatalf("expected no body_file for inline mode, got %q", out)
+	}
+}
+
+func TestHandleIncomingBodyWrapShortMessage(t *testing.T) {
+	manager := NewManager(&config.AgentsConfig{})
+
+	msg := &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "slack",
+			"text":    "short message",
+		},
+	}
+
+	_, _ = manager.HandleIncoming(context.Background(), msg)
+
+	data := msg.Data.(map[string]interface{})
+	if data["body_mode"] != channels.BodyModeInline {
+		t.Fatalf("body_mode=%v, want inline", data["body_mode"])
+	}
+	if data["body_text"] != "short message" {
+		t.Fatalf("body_text=%v", data["body_text"])
+	}
+}
+
+func TestHandleIncomingBodyWrapLongMessage(t *testing.T) {
+	manager := NewManager(&config.AgentsConfig{})
+
+	longText := strings.Repeat("This is a long line of text for testing.\n", 15)
+	msg := &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "slack",
+			"text":    longText,
+		},
+	}
+
+	_, _ = manager.HandleIncoming(context.Background(), msg)
+
+	data := msg.Data.(map[string]interface{})
+	if data["body_mode"] != channels.BodyModeFilePointer {
+		t.Fatalf("body_mode=%v, want file_pointer", data["body_mode"])
+	}
+
+	bodyFile, ok := data["body_file"].(string)
+	if !ok || bodyFile == "" {
+		t.Fatal("body_file should be set")
+	}
+
+	content, err := os.ReadFile(bodyFile)
+	if err != nil {
+		t.Fatalf("read body file: %v", err)
+	}
+	if string(content) != longText {
+		t.Fatal("file content mismatch")
+	}
+
+	// Cleanup
+	_ = os.Remove(bodyFile)
 }
