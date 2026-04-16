@@ -45,6 +45,22 @@ type imsgWatchEvent struct {
 	Attachments json.RawMessage `json:"attachments"`
 }
 
+type imsgChat struct {
+	ID         int64  `json:"id"`
+	Identifier string `json:"identifier"`
+	Service    string `json:"service"`
+}
+
+type imsgHistoryEvent struct {
+	ID          int64           `json:"id"`
+	ChatID      int64           `json:"chat_id"`
+	Sender      string          `json:"sender"`
+	Text        string          `json:"text"`
+	CreatedAt   string          `json:"created_at"`
+	IsFromMe    bool            `json:"is_from_me"`
+	Attachments json.RawMessage `json:"attachments"`
+}
+
 // IMessageInbound represents a single inbound iMessage entry.
 type IMessageInbound struct {
 	MessageID    int64
@@ -77,6 +93,8 @@ type IMessageBot struct {
 	isMessagesRunning  func(ctx context.Context) (bool, error)
 	startMessagesApp   func(ctx context.Context) error
 	resolveServiceIDFn func(ctx context.Context) (string, error)
+	resolveChatIDFn    func(ctx context.Context, recipient string) (int64, error)
+	fetchHistoryFn     func(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error)
 	sleepFn            func(d time.Duration)
 
 	resolvedServiceID string
@@ -87,6 +105,8 @@ type IMessageBot struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	watchStartTime time.Time
 
 	telemetryMu  sync.RWMutex
 	lastActivity time.Time
@@ -128,6 +148,8 @@ func NewIMessageBot(recipient, defaultMessage, service string) (*IMessageBot, er
 	bot.isMessagesRunning = bot.defaultIsMessagesRunning
 	bot.startMessagesApp = bot.defaultStartMessagesApp
 	bot.resolveServiceIDFn = bot.defaultResolveServiceID
+	bot.resolveChatIDFn = bot.defaultResolveChatID
+	bot.fetchHistoryFn = bot.defaultFetchHistory
 
 	return bot, nil
 }
@@ -211,6 +233,8 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 	}
 
 	b.ctx, b.cancel = context.WithCancel(ctx)
+	b.watchStartTime = time.Now().UTC()
+	b.setRunning(true)
 
 	// Resolve iMessage service UUID for outbound sending (best-effort).
 	serviceID, err := b.resolveServiceIDFn(b.ctx)
@@ -223,19 +247,28 @@ func (b *IMessageBot) Start(ctx context.Context) error {
 
 	if b.pollingEnabled {
 		if err := b.ensureMessagesRunning(b.ctx); err != nil {
+			b.setRunning(false)
 			b.markError()
 			return err
 		}
 		if err := b.checkPermissionsFn(b.ctx); err != nil {
+			b.setRunning(false)
 			b.markError()
 			return err
 		}
 
+		if err := b.initializeLastSeenMessageID(b.ctx); err != nil {
+			log.Printf("imessage: initial history sync unavailable: %v", err)
+			b.markError()
+		}
+
 		b.wg.Add(1)
 		go b.watchLoop(b.ctx)
+
+		b.wg.Add(1)
+		go b.pollLoop(b.ctx)
 	}
 
-	b.setRunning(true)
 	return nil
 }
 
@@ -337,9 +370,12 @@ func (b *IMessageBot) processImsgStream(ctx context.Context, reader io.ReadClose
 		if strings.TrimSpace(inbound.Text) == "" {
 			continue
 		}
+		if b.shouldDropHistoricalWithoutBaseline(inbound) {
+			continue
+		}
 
-		if inbound.MessageID > 0 {
-			b.setLastSeenMessageID(inbound.MessageID)
+		if !b.claimMessageID(inbound.MessageID) {
+			continue
 		}
 
 		b.handleSingleInbound(ctx, inbound)
@@ -351,7 +387,7 @@ func (b *IMessageBot) processImsgStream(ctx context.Context, reader io.ReadClose
 }
 
 func (b *IMessageBot) defaultStartImsgWatch(ctx context.Context, recipient string) (io.ReadCloser, func() error, error) {
-	cmd := exec.CommandContext(ctx, "imsg", "watch", "--json", "--participants", recipient)
+	cmd := exec.CommandContext(ctx, "imsg", b.buildImsgWatchArgs(recipient)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("imsg stdout pipe: %w", err)
@@ -362,10 +398,36 @@ func (b *IMessageBot) defaultStartImsgWatch(ctx context.Context, recipient strin
 	return stdout, cmd.Wait, nil
 }
 
+func (b *IMessageBot) buildImsgWatchArgs(recipient string) []string {
+	args := []string{"watch", "--json", "--participants", recipient}
+
+	if lastSeen := b.getLastSeenMessageID(); lastSeen > 0 {
+		args = append(args, "--since-rowid", fmt.Sprintf("%d", lastSeen))
+		return args
+	}
+
+	if !b.watchStartTime.IsZero() {
+		args = append(args, "--start", b.watchStartTime.Format(time.RFC3339))
+	}
+
+	return args
+}
+
 func imsgEventToInbound(event imsgWatchEvent) IMessageInbound {
 	ts, _ := time.Parse(time.RFC3339, event.Timestamp)
 	return IMessageInbound{
 		MessageID:    event.RowID,
+		Sender:       strings.TrimSpace(event.Sender),
+		Text:         strings.TrimSpace(event.Text),
+		Timestamp:    ts,
+		RawTimestamp: ts.UnixNano(),
+	}
+}
+
+func historyEventToInbound(event imsgHistoryEvent) IMessageInbound {
+	ts, _ := time.Parse(time.RFC3339, event.CreatedAt)
+	return IMessageInbound{
+		MessageID:    event.ID,
 		Sender:       strings.TrimSpace(event.Sender),
 		Text:         strings.TrimSpace(event.Text),
 		Timestamp:    ts,
@@ -521,6 +583,98 @@ func (b *IMessageBot) ensureMessagesRunning(ctx context.Context) error {
 	return b.startMessagesApp(ctx)
 }
 
+func (b *IMessageBot) initializeLastSeenMessageID(ctx context.Context) error {
+	resolveChatID := b.resolveChatIDFn
+	if resolveChatID == nil {
+		resolveChatID = b.defaultResolveChatID
+	}
+
+	chatID, err := resolveChatID(ctx, b.recipient)
+	if err != nil {
+		return err
+	}
+
+	fetchHistory := b.fetchHistoryFn
+	if fetchHistory == nil {
+		fetchHistory = b.defaultFetchHistory
+	}
+
+	events, err := fetchHistory(ctx, chatID, 1)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 || events[0].ID <= 0 {
+		return nil
+	}
+
+	b.setLastSeenMessageID(events[0].ID)
+	log.Printf("imessage: initialized last seen message id=%d for recipient=%s", events[0].ID, b.recipient)
+	return nil
+}
+
+func (b *IMessageBot) pollLoop(ctx context.Context) {
+	defer b.wg.Done()
+
+	for {
+		if err := b.pollOnce(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("imessage: history poll failed: %v", err)
+			b.markError()
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(b.pollingInterval):
+		}
+	}
+}
+
+func (b *IMessageBot) pollOnce(ctx context.Context) error {
+	resolveChatID := b.resolveChatIDFn
+	if resolveChatID == nil {
+		resolveChatID = b.defaultResolveChatID
+	}
+
+	chatID, err := resolveChatID(ctx, b.recipient)
+	if err != nil {
+		return err
+	}
+
+	fetchHistory := b.fetchHistoryFn
+	if fetchHistory == nil {
+		fetchHistory = b.defaultFetchHistory
+	}
+
+	events, err := fetchHistory(ctx, chatID, b.pollingLimit)
+	if err != nil {
+		return err
+	}
+
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.IsFromMe {
+			continue
+		}
+
+		inbound := historyEventToInbound(event)
+		if strings.TrimSpace(inbound.Text) == "" {
+			continue
+		}
+		if b.shouldDropHistoricalWithoutBaseline(inbound) {
+			continue
+		}
+		if !b.claimMessageID(inbound.MessageID) {
+			continue
+		}
+		b.handleSingleInbound(ctx, inbound)
+	}
+
+	return nil
+}
+
 func (b *IMessageBot) getLastSeenMessageID() int64 {
 	b.lastSeenMu.Lock()
 	defer b.lastSeenMu.Unlock()
@@ -531,6 +685,135 @@ func (b *IMessageBot) setLastSeenMessageID(value int64) {
 	b.lastSeenMu.Lock()
 	b.lastSeenMessageID = value
 	b.lastSeenMu.Unlock()
+}
+
+func (b *IMessageBot) claimMessageID(value int64) bool {
+	if value <= 0 {
+		return true
+	}
+
+	b.lastSeenMu.Lock()
+	defer b.lastSeenMu.Unlock()
+
+	if value <= b.lastSeenMessageID {
+		return false
+	}
+
+	b.lastSeenMessageID = value
+	return true
+}
+
+func (b *IMessageBot) shouldDropHistoricalWithoutBaseline(inbound IMessageInbound) bool {
+	if b.getLastSeenMessageID() > 0 {
+		return false
+	}
+	if b.watchStartTime.IsZero() {
+		return false
+	}
+	if inbound.Timestamp.IsZero() {
+		return false
+	}
+	return inbound.Timestamp.Before(b.watchStartTime)
+}
+
+func (b *IMessageBot) defaultResolveChatID(ctx context.Context, recipient string) (int64, error) {
+	if b.execFn == nil {
+		return 0, errors.New("imessage executor not configured")
+	}
+
+	output, err := b.execFn(ctx, "imsg", "chats", "--json")
+	if err != nil {
+		trimmedOutput := strings.TrimSpace(string(output))
+		if trimmedOutput != "" {
+			return 0, fmt.Errorf("imsg chats failed: %w: %s", err, trimmedOutput)
+		}
+		return 0, fmt.Errorf("imsg chats failed: %w", err)
+	}
+
+	chats, err := parseImsgChats(output)
+	if err != nil {
+		return 0, err
+	}
+
+	trimmedRecipient := strings.TrimSpace(recipient)
+	for _, chat := range chats {
+		if strings.TrimSpace(chat.Identifier) == trimmedRecipient {
+			return chat.ID, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no iMessage chat found for recipient %q", trimmedRecipient)
+}
+
+func (b *IMessageBot) defaultFetchHistory(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error) {
+	if b.execFn == nil {
+		return nil, errors.New("imessage executor not configured")
+	}
+
+	if chatID <= 0 {
+		return nil, errors.New("imessage chat id is required")
+	}
+
+	if limit <= 0 {
+		limit = defaultIMessagePollingLimit
+	}
+
+	output, err := b.execFn(ctx, "imsg", "history", "--chat-id", fmt.Sprintf("%d", chatID), "--limit", fmt.Sprintf("%d", limit), "--json")
+	if err != nil {
+		trimmedOutput := strings.TrimSpace(string(output))
+		if trimmedOutput != "" {
+			return nil, fmt.Errorf("imsg history failed: %w: %s", err, trimmedOutput)
+		}
+		return nil, fmt.Errorf("imsg history failed: %w", err)
+	}
+
+	return parseImsgHistory(output)
+}
+
+func parseImsgChats(output []byte) ([]imsgChat, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	chats := make([]imsgChat, 0, 4)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+
+		var chat imsgChat
+		if err := json.Unmarshal(line, &chat); err != nil {
+			return nil, fmt.Errorf("parse imsg chats output: %w", err)
+		}
+		chats = append(chats, chat)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan imsg chats output: %w", err)
+	}
+
+	return chats, nil
+}
+
+func parseImsgHistory(output []byte) ([]imsgHistoryEvent, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	events := make([]imsgHistoryEvent, 0, 8)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+
+		var event imsgHistoryEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, fmt.Errorf("parse imsg history output: %w", err)
+		}
+		events = append(events, event)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan imsg history output: %w", err)
+	}
+
+	return events, nil
 }
 
 func (b *IMessageBot) send(ctx context.Context, recipient, text string) error {
