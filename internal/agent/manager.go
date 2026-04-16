@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -117,6 +119,14 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", nil
+	}
+
+	// Apply channel-agnostic body wrapping: short bodies stay inline,
+	// long bodies are written to a file so downstream consumers can
+	// skip a second file-wrap pass.
+	bodyDir := filepath.Join(os.TempDir(), "fractalbot", "bodies")
+	if err := channels.WrapMessageBody(msg, bodyDir); err != nil {
+		log.Printf("body wrap: %v", err)
 	}
 
 	if isRuntimeToolInvocation(text) {
@@ -392,6 +402,8 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	username := promptContextValue(inboundData, "username")
 	trustLevel := promptContextValue(inboundData, "trust_level")
 	threadTS := promptContextValue(inboundData, "thread_ts")
+	bodyMode := promptContextValue(inboundData, "body_mode")
+	bodyFile := promptContextValue(inboundData, "body_file")
 
 	var sb strings.Builder
 	sb.WriteString("# Task Assignment\n\n")
@@ -404,6 +416,12 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	if threadTS != "" {
 		sb.WriteString(fmt.Sprintf("- thread_ts: %s\n", threadTS))
 	}
+	if bodyMode != "" {
+		sb.WriteString(fmt.Sprintf("- body_mode: %s\n", bodyMode))
+	}
+	if bodyFile != "" {
+		sb.WriteString(fmt.Sprintf("- body_file: %s\n", bodyFile))
+	}
 	sb.WriteString("\n")
 	sb.WriteString("Routing instructions:\n")
 	sb.WriteString("- selected_agent is the final routing target after default/allowlist resolution.\n")
@@ -412,6 +430,9 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 	sb.WriteString("- Effective available skills:\n")
 	sb.WriteString("  - use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)\n")
 	sb.WriteString("- If channel=telegram and recipient is omitted, default to current chat_id.\n")
+	if bodyMode == channels.BodyModeFilePointer {
+		sb.WriteString("- body_mode=file_pointer: the user message body is in the file above. Read it with your file tools. Do NOT re-wrap it into another file.\n")
+	}
 	sb.WriteString("\n")
 
 	// Insert recent conversation context if available.
@@ -437,11 +458,15 @@ func buildOhMyCodeTaskPrompt(userText, selectedAgent string, inboundData map[str
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("User message:\n")
-	if trustLevel == "full" || trustLevel == "" {
+	// When body is file-backed, reference the file instead of embedding the full text.
+	if bodyMode == channels.BodyModeFilePointer && bodyFile != "" {
+		sb.WriteString(fmt.Sprintf("User message body: see file %s\n", bodyFile))
+	} else if trustLevel == "full" || trustLevel == "" {
+		sb.WriteString("User message:\n")
 		sb.WriteString(strings.TrimSpace(userText))
 		sb.WriteString("\n")
 	} else {
+		sb.WriteString("User message:\n")
 		sb.WriteString("<user_input>\n")
 		sb.WriteString(strings.TrimSpace(userText))
 		sb.WriteString("\n</user_input>\n")
