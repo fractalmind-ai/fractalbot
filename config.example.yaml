@@ -53,6 +53,45 @@ channels:
     # If true, FractalBot will call Telegram deleteWebhook() on shutdown.
     webhookDeleteOnStop: false
 
+  # WeChat official channel configuration (optional; KR2 scaffold)
+  wechat:
+    enabled: false
+    # Official capability provider: wecom | mp_service
+    provider: "wecom"
+    # Inbound mode: callback | polling
+    mode: "callback"
+
+    # Polling-first placeholders (for future KR2 slices)
+    baseURL: ""
+    token: ""
+    stateFile: "./workspace/wechat.polling.state.json"
+    pollIntervalSeconds: 3
+
+    # Inbound callback server
+    callbackListenAddr: "127.0.0.1:18810"
+    callbackPath: "/wechat/callback"
+    callbackToken: "replace-me"
+    callbackEncodingAESKey: "replace-me-if-required"
+
+    # WeCom credentials
+    corpId: ""
+    corpSecret: ""
+    agentId: ""
+
+    # MP Service Account credentials
+    appId: ""
+    appSecret: ""
+
+    # Optional routing defaults for future wechat channel support
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+
+    # Reply behavior
+    syncReplyTimeoutSeconds: 4
+    asyncSendEnabled: true
+    accessTokenCacheFile: "./workspace/wechat.token.json"
+
   # Slack channel configuration (optional)
   slack:
     enabled: false

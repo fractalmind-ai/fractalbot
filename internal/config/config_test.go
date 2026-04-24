@@ -211,3 +211,156 @@ func TestLoadConfigAcceptsIMessagePollingConfig(t *testing.T) {
 		t.Fatalf("pollingLimit=%d want 25", cfg.Channels.IMessage.PollingLimit)
 	}
 }
+
+func TestLoadConfigAcceptsWeChatConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`channels:
+  wechat:
+    enabled: true
+    provider: "wecom"
+    mode: "polling"
+    baseURL: "https://ilinkai.weixin.qq.com/"
+    token: "bot-token-123"
+    stateFile: "./workspace/wechat.polling.state.json"
+    pollIntervalSeconds: 3
+    callbackListenAddr: "127.0.0.1:18810"
+    callbackPath: "/wechat/callback"
+    callbackToken: "token-123"
+    callbackEncodingAESKey: "aes-key-123"
+    corpId: "ww123"
+    corpSecret: "secret-123"
+    agentId: "1000001"
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+      - "qa-1"
+    syncReplyTimeoutSeconds: 4
+    asyncSendEnabled: true
+    accessTokenCacheFile: "./workspace/wechat.token.json"
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Channels == nil || cfg.Channels.WeChat == nil {
+		t.Fatalf("expected channels.wechat config")
+	}
+	if cfg.Channels.WeChat.Provider != "wecom" {
+		t.Fatalf("provider=%q want wecom", cfg.Channels.WeChat.Provider)
+	}
+	if cfg.Channels.WeChat.Mode != "polling" {
+		t.Fatalf("mode=%q want polling", cfg.Channels.WeChat.Mode)
+	}
+	if cfg.Channels.WeChat.BaseURL != "https://ilinkai.weixin.qq.com/" {
+		t.Fatalf("baseURL=%q", cfg.Channels.WeChat.BaseURL)
+	}
+	if cfg.Channels.WeChat.Token != "bot-token-123" {
+		t.Fatalf("token=%q", cfg.Channels.WeChat.Token)
+	}
+	if cfg.Channels.WeChat.StateFile != "./workspace/wechat.polling.state.json" {
+		t.Fatalf("stateFile=%q", cfg.Channels.WeChat.StateFile)
+	}
+	if cfg.Channels.WeChat.PollIntervalSeconds != 3 {
+		t.Fatalf("pollIntervalSeconds=%d want 3", cfg.Channels.WeChat.PollIntervalSeconds)
+	}
+	if cfg.Channels.WeChat.CallbackPath != "/wechat/callback" {
+		t.Fatalf("callbackPath=%q", cfg.Channels.WeChat.CallbackPath)
+	}
+	if !cfg.Channels.WeChat.AsyncSendEnabled {
+		t.Fatalf("expected asyncSendEnabled=true")
+	}
+	if cfg.Channels.WeChat.SyncReplyTimeoutSeconds != 4 {
+		t.Fatalf("syncReplyTimeoutSeconds=%d want 4", cfg.Channels.WeChat.SyncReplyTimeoutSeconds)
+	}
+}
+
+func TestLoadConfigRejectsInvalidWeChatProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`channels:
+  wechat:
+    enabled: true
+    provider: "weixin_ilink"
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected invalid provider error")
+	}
+	if !strings.Contains(err.Error(), "channels.wechat.provider") {
+		t.Fatalf("expected error to mention channels.wechat.provider, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsWeChatPollingWithoutBaseURLOrToken(t *testing.T) {
+	t.Run("missing baseURL", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		content := []byte(`channels:
+  wechat:
+    enabled: true
+    provider: "wecom"
+    mode: "polling"
+    token: "bot-token-123"
+`)
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		_, err := LoadConfig(path)
+		if err == nil {
+			t.Fatal("expected missing baseURL error")
+		}
+		if !strings.Contains(err.Error(), "channels.wechat.baseURL") {
+			t.Fatalf("expected error to mention channels.wechat.baseURL, got %v", err)
+		}
+	})
+
+	t.Run("missing token", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		content := []byte(`channels:
+  wechat:
+    enabled: true
+    provider: "wecom"
+    mode: "polling"
+    baseURL: "https://ilinkai.weixin.qq.com/"
+`)
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		_, err := LoadConfig(path)
+		if err == nil {
+			t.Fatal("expected missing token error")
+		}
+		if !strings.Contains(err.Error(), "channels.wechat.token") {
+			t.Fatalf("expected error to mention channels.wechat.token, got %v", err)
+		}
+	})
+}
+
+func TestLoadConfigRejectsWeChatAllowlistWithoutDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`channels:
+  wechat:
+    enabled: true
+    allowedAgents:
+      - "main"
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected missing defaultAgent error")
+	}
+	if !strings.Contains(err.Error(), "channels.wechat.defaultAgent") || !strings.Contains(err.Error(), "channels.wechat.allowedAgents") {
+		t.Fatalf("expected error to mention both config keys, got %v", err)
+	}
+}

@@ -108,17 +108,35 @@ type statusPayload struct {
 	ActiveClients int    `json:"active_clients"`
 	Uptime        string `json:"uptime"`
 	Channels      []struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-		Running bool   `json:"running"`
-		Mode    string `json:"mode"`
-		Webhook *struct {
+		Name     string `json:"name"`
+		Enabled  bool   `json:"enabled"`
+		Running  bool   `json:"running"`
+		Mode     string `json:"mode"`
+		Provider string `json:"provider"`
+		Webhook  *struct {
 			RegisterOnStart      bool `json:"register_on_start"`
 			DeleteOnStop         bool `json:"delete_on_stop"`
 			PublicURLConfigured  bool `json:"public_url_configured"`
 			ListenAddrConfigured bool `json:"listen_addr_configured"`
 			Registered           bool `json:"registered"`
 		} `json:"webhook"`
+		Callback *struct {
+			ListenAddrConfigured bool `json:"listen_addr_configured"`
+			PathConfigured       bool `json:"path_configured"`
+			TokenConfigured      bool `json:"token_configured"`
+			AESKeyConfigured     bool `json:"aes_key_configured"`
+		} `json:"callback"`
+		Polling *struct {
+			BaseURLConfigured   bool   `json:"base_url_configured"`
+			TokenConfigured     bool   `json:"token_configured"`
+			StateFileConfigured bool   `json:"state_file_configured"`
+			IntervalSeconds     int    `json:"interval_seconds"`
+			CursorPresent       bool   `json:"cursor_present"`
+			CursorPreview       string `json:"cursor_preview"`
+			StateFileExists     bool   `json:"state_file_exists"`
+			LastPollAt          string `json:"last_poll_at"`
+			LastPollMessages    int    `json:"last_poll_messages"`
+		} `json:"polling"`
 		LastError    string `json:"last_error"`
 		LastActivity string `json:"last_activity"`
 	} `json:"channels"`
@@ -178,6 +196,19 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 				WebhookRegisterOnStart: true,
 				WebhookDeleteOnStop:    true,
 			},
+			WeChat: &config.WeChatConfig{
+				Enabled:                true,
+				Provider:               "wecom",
+				Mode:                   "polling",
+				BaseURL:                "https://ilinkai.weixin.qq.com/",
+				Token:                  "bot-token-123",
+				StateFile:              "./workspace/wechat.polling.state.json",
+				PollIntervalSeconds:    3,
+				CallbackListenAddr:     "127.0.0.1:18810",
+				CallbackPath:           "/wechat/callback",
+				CallbackToken:          "token-123",
+				CallbackEncodingAESKey: "aes-key-123",
+			},
 		},
 		Agents: &config.AgentsConfig{
 			Workspace:     "/tmp/agents",
@@ -207,35 +238,132 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 		t.Fatalf("status request failed: %v", err)
 	}
 
-	if len(statusResp.Channels) != 1 {
-		t.Fatalf("expected 1 channel, got %d", len(statusResp.Channels))
+	if len(statusResp.Channels) != 2 {
+		t.Fatalf("expected 2 channels, got %d", len(statusResp.Channels))
 	}
-	if statusResp.Channels[0].Name != "telegram" {
-		t.Fatalf("unexpected channel name: %s", statusResp.Channels[0].Name)
+	channelsByName := map[string]struct {
+		Enabled  bool
+		Running  bool
+		Mode     string
+		Provider string
+		Webhook  *struct {
+			RegisterOnStart      bool `json:"register_on_start"`
+			DeleteOnStop         bool `json:"delete_on_stop"`
+			PublicURLConfigured  bool `json:"public_url_configured"`
+			ListenAddrConfigured bool `json:"listen_addr_configured"`
+			Registered           bool `json:"registered"`
+		}
+		Callback *struct {
+			ListenAddrConfigured bool `json:"listen_addr_configured"`
+			PathConfigured       bool `json:"path_configured"`
+			TokenConfigured      bool `json:"token_configured"`
+			AESKeyConfigured     bool `json:"aes_key_configured"`
+		}
+		Polling *struct {
+			BaseURLConfigured   bool   `json:"base_url_configured"`
+			TokenConfigured     bool   `json:"token_configured"`
+			StateFileConfigured bool   `json:"state_file_configured"`
+			IntervalSeconds     int    `json:"interval_seconds"`
+			CursorPresent       bool   `json:"cursor_present"`
+			CursorPreview       string `json:"cursor_preview"`
+			StateFileExists     bool   `json:"state_file_exists"`
+			LastPollAt          string `json:"last_poll_at"`
+			LastPollMessages    int    `json:"last_poll_messages"`
+		}
+	}{}
+	for _, ch := range statusResp.Channels {
+		channelsByName[ch.Name] = struct {
+			Enabled  bool
+			Running  bool
+			Mode     string
+			Provider string
+			Webhook  *struct {
+				RegisterOnStart      bool `json:"register_on_start"`
+				DeleteOnStop         bool `json:"delete_on_stop"`
+				PublicURLConfigured  bool `json:"public_url_configured"`
+				ListenAddrConfigured bool `json:"listen_addr_configured"`
+				Registered           bool `json:"registered"`
+			}
+			Callback *struct {
+				ListenAddrConfigured bool `json:"listen_addr_configured"`
+				PathConfigured       bool `json:"path_configured"`
+				TokenConfigured      bool `json:"token_configured"`
+				AESKeyConfigured     bool `json:"aes_key_configured"`
+			}
+			Polling *struct {
+				BaseURLConfigured   bool   `json:"base_url_configured"`
+				TokenConfigured     bool   `json:"token_configured"`
+				StateFileConfigured bool   `json:"state_file_configured"`
+				IntervalSeconds     int    `json:"interval_seconds"`
+				CursorPresent       bool   `json:"cursor_present"`
+				CursorPreview       string `json:"cursor_preview"`
+				StateFileExists     bool   `json:"state_file_exists"`
+				LastPollAt          string `json:"last_poll_at"`
+				LastPollMessages    int    `json:"last_poll_messages"`
+			}
+		}{
+			Enabled:  ch.Enabled,
+			Running:  ch.Running,
+			Mode:     ch.Mode,
+			Provider: ch.Provider,
+			Webhook:  ch.Webhook,
+			Callback: ch.Callback,
+			Polling:  ch.Polling,
+		}
 	}
-	if !statusResp.Channels[0].Enabled {
+	telegram := channelsByName["telegram"]
+	if !telegram.Enabled {
 		t.Fatalf("expected telegram to be enabled")
 	}
-	if statusResp.Channels[0].Running {
+	if telegram.Running {
 		t.Fatalf("expected telegram running=false before start")
 	}
-	if statusResp.Channels[0].Mode != "webhook" {
-		t.Fatalf("unexpected telegram mode: %s", statusResp.Channels[0].Mode)
+	if telegram.Mode != "webhook" {
+		t.Fatalf("unexpected telegram mode: %s", telegram.Mode)
 	}
-	if statusResp.Channels[0].Webhook == nil {
+	if telegram.Webhook == nil {
 		t.Fatalf("expected webhook status")
 	}
-	if !statusResp.Channels[0].Webhook.RegisterOnStart {
+	if !telegram.Webhook.RegisterOnStart {
 		t.Fatalf("expected webhook register_on_start true")
 	}
-	if !statusResp.Channels[0].Webhook.DeleteOnStop {
+	if !telegram.Webhook.DeleteOnStop {
 		t.Fatalf("expected webhook delete_on_stop true")
 	}
-	if !statusResp.Channels[0].Webhook.PublicURLConfigured {
+	if !telegram.Webhook.PublicURLConfigured {
 		t.Fatalf("expected webhook public_url_configured true")
 	}
-	if !statusResp.Channels[0].Webhook.ListenAddrConfigured {
+	if !telegram.Webhook.ListenAddrConfigured {
 		t.Fatalf("expected webhook listen_addr_configured true")
+	}
+
+	wechat := channelsByName["wechat"]
+	if !wechat.Enabled {
+		t.Fatalf("expected wechat to be enabled")
+	}
+	if wechat.Running {
+		t.Fatalf("expected wechat running=false before start")
+	}
+	if wechat.Provider != "wecom" {
+		t.Fatalf("unexpected wechat provider: %s", wechat.Provider)
+	}
+	if wechat.Mode != "polling" {
+		t.Fatalf("unexpected wechat mode: %s", wechat.Mode)
+	}
+	if wechat.Callback == nil {
+		t.Fatalf("expected callback status")
+	}
+	if !wechat.Callback.ListenAddrConfigured || !wechat.Callback.PathConfigured || !wechat.Callback.TokenConfigured || !wechat.Callback.AESKeyConfigured {
+		t.Fatalf("unexpected wechat callback status: %#v", wechat.Callback)
+	}
+	if wechat.Polling == nil {
+		t.Fatalf("expected polling status")
+	}
+	if !wechat.Polling.BaseURLConfigured || !wechat.Polling.TokenConfigured || !wechat.Polling.StateFileConfigured || wechat.Polling.IntervalSeconds != 3 {
+		t.Fatalf("unexpected wechat polling status: %#v", wechat.Polling)
+	}
+	if wechat.Polling.CursorPresent || wechat.Polling.CursorPreview != "" || wechat.Polling.StateFileExists || wechat.Polling.LastPollAt != "" || wechat.Polling.LastPollMessages != 0 {
+		t.Fatalf("expected empty runtime polling status before start: %#v", wechat.Polling)
 	}
 
 	if statusResp.Agents == nil {
@@ -258,6 +386,90 @@ func TestStatusIncludesChannelAndAgentInfo(t *testing.T) {
 	}
 	if len(statusResp.Agents.OhMyCode.AllowedAgents) != 2 {
 		t.Fatalf("unexpected allowed_agents: %v", statusResp.Agents.OhMyCode.AllowedAgents)
+	}
+}
+
+func TestStatusIncludesWeChatPollingRuntimeInfo(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ret":0,"errcode":0,"get_updates_buf":"cursor-abc-123","msgs":[{"client_id":"client-1","from_user_id":"wx-user","to_user_id":"wx-bot","session_id":"session-1","context_token":"ctx-1","item_list":[{"type":1,"text_item":{"text":"hello"}}]}]}`)
+	}))
+	defer upstream.Close()
+
+	stateFile := t.TempDir() + "/wechat.polling.state.json"
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{
+			WeChat: &config.WeChatConfig{
+				Enabled:             true,
+				Provider:            "wecom",
+				Mode:                "polling",
+				BaseURL:             upstream.URL,
+				Token:               "bot-token-123",
+				StateFile:           stateFile,
+				PollIntervalSeconds: 3,
+			},
+		},
+		Agents: &config.AgentsConfig{},
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	bot, err := channels.NewWeChatBot("wecom")
+	if err != nil {
+		t.Fatalf("NewWeChatBot failed: %v", err)
+	}
+	bot.ConfigurePolling(upstream.URL, "bot-token-123", stateFile, 3)
+	bot.ConfigureMode("polling")
+	if err := server.agentManager.ChannelManager.Register(bot); err != nil {
+		t.Fatalf("register wechat bot failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := bot.Start(ctx); err != nil {
+		t.Fatalf("bot.Start failed: %v", err)
+	}
+	defer func() { _ = bot.Stop() }()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status := bot.PollingRuntimeStatus()
+		if status.CursorPresent && status.StateFileExists && !status.LastPollAt.IsZero() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	statusResp, err := fetchStatus(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	if len(statusResp.Channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(statusResp.Channels))
+	}
+	polling := statusResp.Channels[0].Polling
+	if polling == nil {
+		t.Fatalf("expected polling status")
+	}
+	if !polling.CursorPresent || !polling.StateFileExists {
+		t.Fatalf("expected runtime polling state, got %#v", polling)
+	}
+	if polling.CursorPreview != "cursor-abc-123" {
+		t.Fatalf("unexpected cursor_preview: %q", polling.CursorPreview)
+	}
+	if polling.LastPollAt == "" {
+		t.Fatalf("expected last_poll_at")
+	}
+	if polling.LastPollMessages != 1 {
+		t.Fatalf("unexpected last_poll_messages: %d", polling.LastPollMessages)
 	}
 }
 

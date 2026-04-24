@@ -1,0 +1,29 @@
+# WeChat local validation overlay for O7-KR2 (callback-first)
+# Usage: merge these fields into your local FractalBot config when preparing
+# the first runtime proof. Do not commit real secrets.
+
+channels:
+  wechat:
+    enabled: true
+    provider: "wecom"
+
+    # local callback listener used for runtime proof
+    callbackListenAddr: "127.0.0.1:18810"
+    callbackPath: "/wechat/callback"
+    callbackToken: "local-test-token"
+    callbackEncodingAESKey: ""
+
+    # first proof does not require real official credentials yet
+    corpId: ""
+    corpSecret: ""
+    agentId: ""
+    appId: ""
+    appSecret: ""
+
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+
+    syncReplyTimeoutSeconds: 4
+    asyncSendEnabled: true
+    accessTokenCacheFile: "./workspace/wechat.token.json"
