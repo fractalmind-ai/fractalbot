@@ -271,9 +271,6 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	if msg == nil {
 		return nil
 	}
-	if b.isDuplicate(msg.messageID) {
-		return nil
-	}
 	if b.isContentDuplicate(msg.openID, msg.text) {
 		return nil
 	}
