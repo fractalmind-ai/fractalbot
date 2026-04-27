@@ -42,6 +42,7 @@ type imsgWatchEvent struct {
 	Text        string          `json:"text"`
 	Sender      string          `json:"sender"`
 	Timestamp   string          `json:"timestamp"`
+	IsFromMe    bool            `json:"is_from_me"`
 	Attachments json.RawMessage `json:"attachments"`
 }
 
@@ -302,6 +303,9 @@ func (b *IMessageBot) IsAllowed(senderID string) bool {
 func (b *IMessageBot) watchLoop(ctx context.Context) {
 	defer b.wg.Done()
 
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+
 	for {
 		startWatch := b.startWatchFn
 		if startWatch == nil {
@@ -318,7 +322,8 @@ func (b *IMessageBot) watchLoop(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(backoff):
+				backoff = minBackoff(backoff*2, maxBackoff)
 				continue
 			}
 		}
@@ -338,9 +343,17 @@ func (b *IMessageBot) watchLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Second):
+		case <-time.After(backoff):
+			backoff = minBackoff(backoff*2, maxBackoff)
 		}
 	}
+}
+
+func minBackoff(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (b *IMessageBot) processImsgStream(ctx context.Context, reader io.ReadCloser) {
@@ -360,6 +373,11 @@ func (b *IMessageBot) processImsgStream(ctx context.Context, reader io.ReadClose
 		var event imsgWatchEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			log.Printf("imessage: failed to parse imsg event: %v", err)
+			continue
+		}
+
+		// Skip messages sent by this bot — only process genuine inbound.
+		if event.IsFromMe {
 			continue
 		}
 
