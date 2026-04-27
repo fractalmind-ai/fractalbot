@@ -49,6 +49,10 @@ type FeishuBot struct {
 	telemetryMu  sync.RWMutex
 	lastActivity time.Time
 	lastError    time.Time
+
+	seenMu        sync.Mutex
+	seenMsg       map[string]time.Time
+	seenContent   map[string]time.Time
 }
 
 func NewFeishuBot(appID, appSecret, domain string, allowedUsers []string, defaultAgent string, allowedAgents []string) (*FeishuBot, error) {
@@ -74,6 +78,8 @@ func NewFeishuBot(appID, appSecret, domain string, allowedUsers []string, defaul
 		defaultAgent: strings.TrimSpace(defaultAgent),
 		agentAllow:   NewAgentAllowlist(allowedAgents),
 		ctx:          context.Background(),
+		seenMsg:     make(map[string]time.Time),
+		seenContent: make(map[string]time.Time),
 	}, nil
 }
 
@@ -163,7 +169,11 @@ func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) error {
 	if strings.TrimSpace(msg.To) == "" {
 		return errors.New("feishu receive_id is required")
 	}
-	if err := b.sendMessageFn(ctx, "open_id", msg.To, msg.Text); err != nil {
+	receiveIDType := "open_id"
+	if strings.HasPrefix(msg.To, "oc_") {
+		receiveIDType = "chat_id"
+	}
+	if err := b.sendMessageFn(ctx, receiveIDType, msg.To, msg.Text); err != nil {
 		b.markError()
 		return err
 	}
@@ -259,6 +269,12 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 		return nil
 	}
 	if msg == nil {
+		return nil
+	}
+	if b.isDuplicate(msg.messageID) {
+		return nil
+	}
+	if b.isContentDuplicate(msg.openID, msg.text) {
 		return nil
 	}
 	if msg.chatType != "p2p" {
@@ -502,11 +518,11 @@ func parseFeishuInbound(event *larkim.P2MessageReceiveV1) (*feishuInboundMessage
 	chatType := derefString(msg.ChatType)
 	messageID := derefString(msg.MessageId)
 
-	replyIDType := "open_id"
-	replyID := openID
+	replyIDType := "chat_id"
+	replyID := chatID
 	if replyID == "" {
-		replyIDType = "chat_id"
-		replyID = chatID
+		replyIDType = "open_id"
+		replyID = openID
 	}
 
 	return &feishuInboundMessage{
@@ -519,6 +535,52 @@ func parseFeishuInbound(event *larkim.P2MessageReceiveV1) (*feishuInboundMessage
 		replyIDType: replyIDType,
 		replyID:     replyID,
 	}, nil
+}
+
+func (b *FeishuBot) isDuplicate(messageID string) bool {
+	if messageID == "" {
+		return false
+	}
+	b.seenMu.Lock()
+	defer b.seenMu.Unlock()
+	if _, ok := b.seenMsg[messageID]; ok {
+		return true
+	}
+	now := time.Now()
+	b.seenMsg[messageID] = now
+	// Lazy cleanup: if map grows too large, evict entries older than 5 minutes.
+	if len(b.seenMsg) > 1000 {
+		cutoff := now.Add(-5 * time.Minute)
+		for id, t := range b.seenMsg {
+			if t.Before(cutoff) {
+				delete(b.seenMsg, id)
+			}
+		}
+	}
+	return false
+}
+
+func (b *FeishuBot) isContentDuplicate(senderID, text string) bool {
+	if senderID == "" || text == "" {
+		return false
+	}
+	key := senderID + "\x00" + text
+	b.seenMu.Lock()
+	defer b.seenMu.Unlock()
+	now := time.Now()
+	if t, ok := b.seenContent[key]; ok && now.Sub(t) < 60*time.Second {
+		return true
+	}
+	b.seenContent[key] = now
+	if len(b.seenContent) > 1000 {
+		cutoff := now.Add(-5 * time.Minute)
+		for k, t := range b.seenContent {
+			if t.Before(cutoff) {
+				delete(b.seenContent, k)
+			}
+		}
+	}
+	return false
 }
 
 func derefString(value *string) string {
