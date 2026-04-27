@@ -259,6 +259,49 @@ func TestImsgEventToInbound(t *testing.T) {
 	}
 }
 
+func TestBuildImsgWatchArgsUsesSinceRowIDWhenAvailable(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+	bot.watchStartTime = time.Date(2026, 3, 22, 18, 15, 59, 0, time.UTC)
+	bot.setLastSeenMessageID(635)
+
+	args := bot.buildImsgWatchArgs("+8619575545051")
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "watch --json --participants +8619575545051 --since-rowid 635") {
+		t.Fatalf("unexpected args: %v", args)
+	}
+	if strings.Contains(got, "--start") {
+		t.Fatalf("expected --start to be omitted when since-rowid is available: %v", args)
+	}
+}
+
+func TestBuildImsgWatchArgsFallsBackToStartTime(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+	bot.watchStartTime = time.Date(2026, 3, 22, 18, 15, 59, 0, time.UTC)
+
+	args := bot.buildImsgWatchArgs("+8619575545051")
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "watch --json --participants +8619575545051 --start 2026-03-22T18:15:59Z") {
+		t.Fatalf("unexpected args: %v", args)
+	}
+	if strings.Contains(got, "--since-rowid") {
+		t.Fatalf("expected --since-rowid to be omitted without baseline: %v", args)
+	}
+}
+
 func TestImsgWatchReconnectsOnProcessExit(t *testing.T) {
 	originalGOOS := currentGOOS
 	currentGOOS = "darwin"
@@ -281,6 +324,7 @@ func TestImsgWatchReconnectsOnProcessExit(t *testing.T) {
 		startCount++
 		if startCount == 1 {
 			// First call: return a single message then EOF (simulates process exit)
+			bot.watchStartTime = time.Time{}
 			events := `{"rowid":1,"text":"first","sender":"+999","timestamp":"2026-03-04T13:00:00Z","attachments":[]}`
 			return io.NopCloser(strings.NewReader(events)), func() error { return nil }, nil
 		}
@@ -517,5 +561,296 @@ func TestHandleSingleInboundDispatchesAndReplies(t *testing.T) {
 	}
 	if bot.LastActivity().IsZero() {
 		t.Fatalf("expected last activity to be set")
+	}
+}
+
+func TestParseImsgChats(t *testing.T) {
+	output := []byte(strings.Join([]string{
+		`{"name":"","last_message_at":"2026-03-22T18:04:26.590Z","identifier":"+8619575545051","id":3,"service":"iMessage"}`,
+		`{"name":"","last_message_at":"2026-02-01T14:12:28.893Z","identifier":"yubing744@gmail.com","id":2,"service":"iMessage"}`,
+	}, "\n"))
+
+	chats, err := parseImsgChats(output)
+	if err != nil {
+		t.Fatalf("parseImsgChats: %v", err)
+	}
+	if len(chats) != 2 {
+		t.Fatalf("len(chats)=%d want 2", len(chats))
+	}
+	if chats[0].ID != 3 {
+		t.Fatalf("chats[0].ID=%d want 3", chats[0].ID)
+	}
+	if chats[0].Identifier != "+8619575545051" {
+		t.Fatalf("chats[0].Identifier=%q want +8619575545051", chats[0].Identifier)
+	}
+}
+
+func TestDefaultResolveChatID(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_ = ctx
+		if name != "imsg" {
+			t.Fatalf("unexpected command %q", name)
+		}
+		if len(args) != 2 || args[0] != "chats" || args[1] != "--json" {
+			t.Fatalf("unexpected args: %v", args)
+		}
+		return []byte(strings.Join([]string{
+			`{"identifier":"+100","id":1,"service":"iMessage"}`,
+			`{"identifier":"+8619575545051","id":3,"service":"iMessage"}`,
+		}, "\n")), nil
+	}
+
+	chatID, err := bot.defaultResolveChatID(context.Background(), "+8619575545051")
+	if err != nil {
+		t.Fatalf("defaultResolveChatID: %v", err)
+	}
+	if chatID != 3 {
+		t.Fatalf("chatID=%d want 3", chatID)
+	}
+}
+
+func TestParseImsgHistory(t *testing.T) {
+	output := []byte(strings.Join([]string{
+		`{"created_at":"2026-03-22T18:04:26.590Z","chat_id":3,"sender":"+8619575545051","text":"汇报一下OKR进度","id":635,"guid":"FF15563D-6BD5-4691-99FC-B2EFD4C44433","is_from_me":false,"attachments":[],"reactions":[]}`,
+		`{"id":634,"created_at":"2026-03-22T18:01:44.618Z","reactions":[],"sender":"+8619575545051","guid":"C68BF610-041D-4128-88F8-EDAAD93A41C5","chat_id":3,"attachments":[],"text":"FractalBot fully up retest","is_from_me":true}`,
+	}, "\n"))
+
+	events, err := parseImsgHistory(output)
+	if err != nil {
+		t.Fatalf("parseImsgHistory: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("len(events)=%d want 2", len(events))
+	}
+	if events[0].ID != 635 {
+		t.Fatalf("events[0].ID=%d want 635", events[0].ID)
+	}
+	if events[0].Text != "汇报一下OKR进度" {
+		t.Fatalf("events[0].Text=%q want 汇报一下OKR进度", events[0].Text)
+	}
+	if events[0].IsFromMe {
+		t.Fatalf("events[0].IsFromMe=true want false")
+	}
+}
+
+func TestInitializeLastSeenMessageIDUsesLatestHistoryEvent(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	bot.resolveChatIDFn = func(ctx context.Context, recipient string) (int64, error) {
+		_ = ctx
+		if recipient != "+8619575545051" {
+			t.Fatalf("recipient=%q want +8619575545051", recipient)
+		}
+		return 3, nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error) {
+		_ = ctx
+		if chatID != 3 {
+			t.Fatalf("chatID=%d want 3", chatID)
+		}
+		if limit != 1 {
+			t.Fatalf("limit=%d want 1", limit)
+		}
+		return []imsgHistoryEvent{
+			{ID: 635, IsFromMe: false, Text: "汇报一下OKR进度", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:04:26.590Z"},
+		}, nil
+	}
+
+	if err := bot.initializeLastSeenMessageID(context.Background()); err != nil {
+		t.Fatalf("initializeLastSeenMessageID: %v", err)
+	}
+	if bot.getLastSeenMessageID() != 635 {
+		t.Fatalf("lastSeenMessageID=%d want 635", bot.getLastSeenMessageID())
+	}
+}
+
+func TestPollOnceProcessesOnlyUnseenInboundHistory(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+	bot.pollingLimit = 20
+	bot.setLastSeenMessageID(634)
+
+	handler := &fakeIMessageHandler{}
+	bot.SetHandler(handler)
+	bot.resolveChatIDFn = func(ctx context.Context, recipient string) (int64, error) {
+		_ = ctx
+		_ = recipient
+		return 3, nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error) {
+		_ = ctx
+		if chatID != 3 {
+			t.Fatalf("chatID=%d want 3", chatID)
+		}
+		if limit != 20 {
+			t.Fatalf("limit=%d want 20", limit)
+		}
+		return []imsgHistoryEvent{
+			{ID: 636, IsFromMe: true, Text: "reply", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:05:26.590Z"},
+			{ID: 635, IsFromMe: false, Text: "汇报一下OKR进度", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:04:26.590Z"},
+			{ID: 634, IsFromMe: true, Text: "FractalBot fully up retest", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:01:44.618Z"},
+		}, nil
+	}
+
+	if err := bot.pollOnce(context.Background()); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1", handler.calls)
+	}
+	data := handler.msgs[0].Data.(map[string]interface{})
+	if data["text"] != "汇报一下OKR进度" {
+		t.Fatalf("text=%q want 汇报一下OKR进度", data["text"])
+	}
+	if bot.getLastSeenMessageID() != 635 {
+		t.Fatalf("lastSeenMessageID=%d want 635", bot.getLastSeenMessageID())
+	}
+
+	if err := bot.pollOnce(context.Background()); err != nil {
+		t.Fatalf("pollOnce second call: %v", err)
+	}
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1 after dedupe", handler.calls)
+	}
+}
+
+func TestWatchAndPollDeduplicateByMessageID(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+
+	handler := &fakeIMessageHandler{}
+	bot.SetHandler(handler)
+	bot.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, nil
+	}
+	bot.resolveChatIDFn = func(ctx context.Context, recipient string) (int64, error) {
+		_ = ctx
+		_ = recipient
+		return 3, nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error) {
+		_ = ctx
+		_ = limit
+		if chatID != 3 {
+			t.Fatalf("chatID=%d want 3", chatID)
+		}
+		return []imsgHistoryEvent{
+			{ID: 635, IsFromMe: false, Text: "same message", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:04:26.590Z"},
+		}, nil
+	}
+
+	reader := io.NopCloser(strings.NewReader(`{"rowid":635,"text":"same message","sender":"+8619575545051","timestamp":"2026-03-22T18:04:26.590Z","attachments":[]}`))
+	bot.processImsgStream(context.Background(), reader)
+
+	if err := bot.pollOnce(context.Background()); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1", handler.calls)
+	}
+}
+
+func TestImsgWatchDropsHistoricalMessagesBeforeStartWhenNoBaseline(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+	bot.watchStartTime = time.Date(2026, 3, 22, 18, 27, 10, 0, time.UTC)
+
+	handler := &fakeIMessageHandler{}
+	bot.SetHandler(handler)
+
+	reader := io.NopCloser(strings.NewReader(strings.Join([]string{
+		`{"rowid":635,"text":"old message","sender":"+8619575545051","timestamp":"2026-03-22T18:23:59Z","attachments":[]}`,
+		`{"rowid":636,"text":"new message","sender":"+8619575545051","timestamp":"2026-03-22T18:27:11Z","attachments":[]}`,
+	}, "\n")))
+
+	bot.processImsgStream(context.Background(), reader)
+
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1", handler.calls)
+	}
+	data := handler.msgs[0].Data.(map[string]interface{})
+	if data["text"] != "new message" {
+		t.Fatalf("text=%q want new message", data["text"])
+	}
+	if bot.getLastSeenMessageID() != 636 {
+		t.Fatalf("lastSeenMessageID=%d want 636", bot.getLastSeenMessageID())
+	}
+}
+
+func TestPollOnceDropsHistoricalMessagesBeforeStartWhenNoBaseline(t *testing.T) {
+	originalGOOS := currentGOOS
+	currentGOOS = "darwin"
+	defer func() { currentGOOS = originalGOOS }()
+
+	bot, err := NewIMessageBot("+8619575545051", "", "")
+	if err != nil {
+		t.Fatalf("NewIMessageBot: %v", err)
+	}
+	bot.watchStartTime = time.Date(2026, 3, 22, 18, 27, 10, 0, time.UTC)
+	bot.pollingLimit = 20
+
+	handler := &fakeIMessageHandler{}
+	bot.SetHandler(handler)
+	bot.resolveChatIDFn = func(ctx context.Context, recipient string) (int64, error) {
+		_ = ctx
+		_ = recipient
+		return 3, nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, chatID int64, limit int) ([]imsgHistoryEvent, error) {
+		_ = ctx
+		_ = chatID
+		_ = limit
+		return []imsgHistoryEvent{
+			{ID: 635, IsFromMe: false, Text: "old message", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:23:59Z"},
+			{ID: 636, IsFromMe: false, Text: "new message", Sender: "+8619575545051", CreatedAt: "2026-03-22T18:27:11Z"},
+		}, nil
+	}
+
+	if err := bot.pollOnce(context.Background()); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	if handler.calls != 1 {
+		t.Fatalf("handler calls=%d want 1", handler.calls)
+	}
+	data := handler.msgs[0].Data.(map[string]interface{})
+	if data["text"] != "new message" {
+		t.Fatalf("text=%q want new message", data["text"])
+	}
+	if bot.getLastSeenMessageID() != 636 {
+		t.Fatalf("lastSeenMessageID=%d want 636", bot.getLastSeenMessageID())
 	}
 }
