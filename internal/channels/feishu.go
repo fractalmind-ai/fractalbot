@@ -50,9 +50,9 @@ type FeishuBot struct {
 	lastActivity time.Time
 	lastError    time.Time
 
-	seenMu        sync.Mutex
-	seenMsg       map[string]time.Time
-	seenContent   map[string]time.Time
+	seenMu      sync.Mutex
+	seenMsg     map[string]time.Time
+	seenContent map[string]time.Time
 }
 
 func NewFeishuBot(appID, appSecret, domain string, allowedUsers []string, defaultAgent string, allowedAgents []string) (*FeishuBot, error) {
@@ -78,8 +78,8 @@ func NewFeishuBot(appID, appSecret, domain string, allowedUsers []string, defaul
 		defaultAgent: strings.TrimSpace(defaultAgent),
 		agentAllow:   NewAgentAllowlist(allowedAgents),
 		ctx:          context.Background(),
-		seenMsg:     make(map[string]time.Time),
-		seenContent: make(map[string]time.Time),
+		seenMsg:      make(map[string]time.Time),
+		seenContent:  make(map[string]time.Time),
 	}, nil
 }
 
