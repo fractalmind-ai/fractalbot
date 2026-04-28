@@ -75,6 +75,10 @@ func TestClassifyError_Transient(t *testing.T) {
 		"timeout",
 		"temporary failure",
 		"server error",
+		"Invalid access token",
+		"feishu send failed: code=99991663 msg=Invalid access token",
+		"feishu send failed: code=99991664 msg=Invalid app access token",
+		"feishu send failed: code=99991671 msg=access token expired",
 	}
 	for _, msg := range tests {
 		if got := classifyError(errors.New(msg)); got != ErrTransient {

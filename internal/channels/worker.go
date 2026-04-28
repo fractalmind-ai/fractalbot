@@ -35,6 +35,14 @@ func classifyError(err error) ErrorClass {
 			return ErrRateLimit
 		}
 	}
+	// Token expiration is transient — recoverable by refreshing credentials.
+	// Must be checked before the "invalid" permanent pattern below,
+	// because "Invalid access token" contains "invalid".
+	for _, pattern := range []string{"access token", "token expired", "99991663", "99991664", "99991671"} {
+		if containsLower(msg, pattern) {
+			return ErrTransient
+		}
+	}
 	// Permanent failures — no point retrying
 	for _, pattern := range []string{"not running", "not configured", "invalid", "unauthorized", "forbidden", "not found"} {
 		if containsLower(msg, pattern) {
