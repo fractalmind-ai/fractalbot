@@ -408,9 +408,31 @@ type channelStatus struct {
 	Enabled      bool                            `json:"enabled"`
 	Running      bool                            `json:"running"`
 	Mode         string                          `json:"mode,omitempty"`
+	Provider     string                          `json:"provider,omitempty"`
 	Webhook      *channels.TelegramWebhookStatus `json:"webhook,omitempty"`
+	Callback     *callbackStatus                 `json:"callback,omitempty"`
+	Polling      *pollingStatus                  `json:"polling,omitempty"`
 	LastError    string                          `json:"last_error"`
 	LastActivity string                          `json:"last_activity"`
+}
+
+type callbackStatus struct {
+	ListenAddrConfigured bool `json:"listen_addr_configured"`
+	PathConfigured       bool `json:"path_configured"`
+	TokenConfigured      bool `json:"token_configured"`
+	AESKeyConfigured     bool `json:"aes_key_configured"`
+}
+
+type pollingStatus struct {
+	BaseURLConfigured   bool   `json:"base_url_configured"`
+	TokenConfigured     bool   `json:"token_configured"`
+	StateFileConfigured bool   `json:"state_file_configured"`
+	IntervalSeconds     int    `json:"interval_seconds,omitempty"`
+	CursorPresent       bool   `json:"cursor_present,omitempty"`
+	CursorPreview       string `json:"cursor_preview,omitempty"`
+	StateFileExists     bool   `json:"state_file_exists,omitempty"`
+	LastPollAt          string `json:"last_poll_at,omitempty"`
+	LastPollMessages    int    `json:"last_poll_messages,omitempty"`
 }
 
 type agentStatus struct {
@@ -464,6 +486,31 @@ func (s *Server) channelStatus() []channelStatus {
 			return formatStatusTime(provider.LastError()), formatStatusTime(provider.LastActivity())
 		}
 		return "", ""
+	}
+
+	if s.config.Channels.WeChat != nil {
+		ch := getChannel("wechat")
+		lastError, lastActivity := telemetry(ch)
+		polling := wechatPollingStatusFromConfig(s.config.Channels.WeChat)
+		if bot, ok := ch.(*channels.WeChatBot); ok && polling != nil {
+			runtime := bot.PollingRuntimeStatus()
+			polling.CursorPresent = runtime.CursorPresent
+			polling.CursorPreview = runtime.CursorPreview
+			polling.StateFileExists = runtime.StateFileExists
+			polling.LastPollAt = formatStatusTime(runtime.LastPollAt)
+			polling.LastPollMessages = runtime.LastPollMsgs
+		}
+		statuses = append(statuses, channelStatus{
+			Name:         "wechat",
+			Enabled:      s.config.Channels.WeChat.Enabled,
+			Running:      isRunning(ch),
+			Mode:         wechatModeFromConfig(s.config.Channels.WeChat),
+			Provider:     wechatProviderFromConfig(s.config.Channels.WeChat),
+			Callback:     wechatCallbackStatusFromConfig(s.config.Channels.WeChat),
+			Polling:      polling,
+			LastError:    lastError,
+			LastActivity: lastActivity,
+		})
 	}
 
 	if s.config.Channels.Telegram != nil {
@@ -548,6 +595,55 @@ func telegramModeFromConfig(cfg *config.TelegramConfig) string {
 		return "polling"
 	}
 	return mode
+}
+
+func wechatProviderFromConfig(cfg *config.WeChatConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	if provider == "" {
+		return "wecom"
+	}
+	return provider
+}
+
+func wechatModeFromConfig(cfg *config.WeChatConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode != "" && mode != "auto" {
+		return mode
+	}
+	if strings.TrimSpace(cfg.BaseURL) != "" || strings.TrimSpace(cfg.Token) != "" || strings.TrimSpace(cfg.StateFile) != "" || cfg.PollIntervalSeconds > 0 {
+		return "polling"
+	}
+	return "callback"
+}
+
+func wechatCallbackStatusFromConfig(cfg *config.WeChatConfig) *callbackStatus {
+	if cfg == nil {
+		return nil
+	}
+	return &callbackStatus{
+		ListenAddrConfigured: strings.TrimSpace(cfg.CallbackListenAddr) != "",
+		PathConfigured:       strings.TrimSpace(cfg.CallbackPath) != "",
+		TokenConfigured:      strings.TrimSpace(cfg.CallbackToken) != "",
+		AESKeyConfigured:     strings.TrimSpace(cfg.CallbackEncodingAESKey) != "",
+	}
+}
+
+func wechatPollingStatusFromConfig(cfg *config.WeChatConfig) *pollingStatus {
+	if cfg == nil {
+		return nil
+	}
+	return &pollingStatus{
+		BaseURLConfigured:   strings.TrimSpace(cfg.BaseURL) != "",
+		TokenConfigured:     strings.TrimSpace(cfg.Token) != "",
+		StateFileConfigured: strings.TrimSpace(cfg.StateFile) != "",
+		IntervalSeconds:     cfg.PollIntervalSeconds,
+	}
 }
 
 func telegramWebhookStatusFromConfig(cfg *config.TelegramConfig) *channels.TelegramWebhookStatus {

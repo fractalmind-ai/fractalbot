@@ -257,6 +257,32 @@ func (m *Manager) registerConfiguredChannels() error {
 		}
 	}
 
+	if m.cfg.WeChat != nil && m.cfg.WeChat.Enabled {
+		if m.Get("wechat") != nil {
+			return nil
+		}
+		bot, err := NewWeChatBot(m.cfg.WeChat.Provider)
+		if err != nil {
+			return fmt.Errorf("failed to init wechat bot: %w", err)
+		}
+		bot.ConfigurePolling(
+			m.cfg.WeChat.BaseURL,
+			m.cfg.WeChat.Token,
+			m.cfg.WeChat.StateFile,
+			m.cfg.WeChat.PollIntervalSeconds,
+		)
+		bot.ConfigureCallback(
+			m.cfg.WeChat.CallbackListenAddr,
+			m.cfg.WeChat.CallbackPath,
+			m.cfg.WeChat.CallbackToken,
+			m.cfg.WeChat.CallbackEncodingAESKey,
+		)
+		bot.ConfigureMode(m.cfg.WeChat.Mode)
+		if err := m.Register(bot); err != nil {
+			return fmt.Errorf("failed to register wechat bot: %w", err)
+		}
+	}
+
 	if m.cfg.Feishu != nil && m.cfg.Feishu.Enabled {
 		if m.Get("feishu") != nil {
 			return nil

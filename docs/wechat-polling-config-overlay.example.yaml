@@ -1,0 +1,21 @@
+# WeChat polling-first local validation overlay for O7-KR2
+# Usage: merge these fields into a private local FractalBot config when
+# preparing the first polling proof. Do not commit real secrets.
+
+channels:
+  wechat:
+    enabled: true
+    mode: "polling"
+    # Runtime currently only accepts "wecom" / "mp_service".
+    # Keep "wecom" here so the local proof config matches the actual parser.
+    provider: "wecom"
+
+    # polling runtime
+    baseURL: "https://ilinkai.weixin.qq.com/"
+    token: "replace-with-local-bot-token"
+    stateFile: "./workspace/wechat.polling.state.json"
+    pollIntervalSeconds: 3
+
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"

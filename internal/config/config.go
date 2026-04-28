@@ -30,10 +30,58 @@ type GatewayConfig struct {
 // ChannelsConfig contains channel configurations.
 type ChannelsConfig struct {
 	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+	WeChat   *WeChatConfig   `yaml:"wechat,omitempty"`
 	Feishu   *FeishuConfig   `yaml:"feishu,omitempty"`
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 	IMessage *IMessageConfig `yaml:"imessage,omitempty"`
+}
+
+// WeChatConfig contains WeChat official channel settings.
+type WeChatConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Provider selects the concrete official capability. Supported: "wecom", "mp_service".
+	Provider string `yaml:"provider,omitempty"`
+
+	// Mode controls how FractalBot receives WeChat updates.
+	// Supported values: "callback", "polling". Empty means auto.
+	Mode string `yaml:"mode,omitempty"`
+
+	// BaseURL overrides the upstream polling API base URL when polling mode is used.
+	BaseURL string `yaml:"baseURL,omitempty"`
+	// Token carries the polling API credential / session token when polling mode is used.
+	Token string `yaml:"token,omitempty"`
+	// StateFile persists polling cursor / session state for reconnects and restarts.
+	StateFile string `yaml:"stateFile,omitempty"`
+	// PollIntervalSeconds sets the polling loop interval. Default will be decided by runtime.
+	PollIntervalSeconds int `yaml:"pollIntervalSeconds,omitempty"`
+
+	// CallbackListenAddr is the local bind address for inbound callbacks.
+	CallbackListenAddr string `yaml:"callbackListenAddr,omitempty"`
+	// CallbackPath is the HTTP path mounted on the callback server.
+	CallbackPath string `yaml:"callbackPath,omitempty"`
+	// CallbackToken is used to verify callback requests when the provider requires it.
+	CallbackToken string `yaml:"callbackToken,omitempty"`
+	// CallbackEncodingAESKey configures encrypted callback payload verification/decryption when required.
+	CallbackEncodingAESKey string `yaml:"callbackEncodingAESKey,omitempty"`
+
+	// WeCom outbound auth.
+	CorpID     string `yaml:"corpId,omitempty"`
+	CorpSecret string `yaml:"corpSecret,omitempty"`
+	AgentID    string `yaml:"agentId,omitempty"`
+
+	// MP Service Account outbound auth.
+	AppID     string `yaml:"appId,omitempty"`
+	AppSecret string `yaml:"appSecret,omitempty"`
+
+	// Routing defaults.
+	DefaultAgent  string   `yaml:"defaultAgent,omitempty"`
+	AllowedAgents []string `yaml:"allowedAgents,omitempty"`
+
+	// Reply policy.
+	SyncReplyTimeoutSeconds int    `yaml:"syncReplyTimeoutSeconds,omitempty"`
+	AsyncSendEnabled        bool   `yaml:"asyncSendEnabled,omitempty"`
+	AccessTokenCacheFile    string `yaml:"accessTokenCacheFile,omitempty"`
 }
 
 // TelegramConfig contains Telegram channel settings.
@@ -229,9 +277,72 @@ func DefaultConfig() *Config {
 }
 
 func validateConfig(cfg *Config) error {
+	if err := validateWeChatConfig(cfg); err != nil {
+		return err
+	}
 	if err := validateOhMyCodeConfig(cfg); err != nil {
 		return err
 	}
+	return nil
+}
+
+func validateWeChatConfig(cfg *Config) error {
+	if cfg == nil || cfg.Channels == nil || cfg.Channels.WeChat == nil {
+		return nil
+	}
+
+	wechat := cfg.Channels.WeChat
+	provider := strings.ToLower(strings.TrimSpace(wechat.Provider))
+	switch provider {
+	case "", "wecom", "mp_service":
+	default:
+		return fmt.Errorf("channels.wechat.provider: unsupported value %q", wechat.Provider)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(wechat.Mode))
+	switch mode {
+	case "", "auto", "callback", "polling":
+	default:
+		return fmt.Errorf("channels.wechat.mode: unsupported value %q", wechat.Mode)
+	}
+
+	if mode == "polling" {
+		if strings.TrimSpace(wechat.BaseURL) == "" {
+			return fmt.Errorf("channels.wechat.baseURL: required when channels.wechat.mode is polling")
+		}
+		if strings.TrimSpace(wechat.Token) == "" {
+			return fmt.Errorf("channels.wechat.token: required when channels.wechat.mode is polling")
+		}
+	}
+
+	defaultAgent := strings.TrimSpace(wechat.DefaultAgent)
+	if defaultAgent != "" {
+		if err := validateAgentName(defaultAgent); err != nil {
+			return fmt.Errorf("channels.wechat.defaultAgent: %w", err)
+		}
+	}
+
+	allowed := make(map[string]struct{})
+	for idx, name := range wechat.AllowedAgents {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			return fmt.Errorf("channels.wechat.allowedAgents[%d]: agent name is required", idx)
+		}
+		if err := validateAgentName(trimmed); err != nil {
+			return fmt.Errorf("channels.wechat.allowedAgents[%d]: %w", idx, err)
+		}
+		allowed[trimmed] = struct{}{}
+	}
+
+	if len(allowed) > 0 {
+		if defaultAgent == "" {
+			return fmt.Errorf("channels.wechat.defaultAgent: required when channels.wechat.allowedAgents is configured")
+		}
+		if _, ok := allowed[defaultAgent]; !ok {
+			return fmt.Errorf("channels.wechat.defaultAgent: must be in channels.wechat.allowedAgents")
+		}
+	}
+
 	return nil
 }
 
