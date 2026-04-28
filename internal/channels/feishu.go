@@ -251,11 +251,20 @@ func (b *FeishuBot) sendText(ctx context.Context, receiveIDType, receiveID, text
 	resp, err := b.apiClient.Im.V1.Message.Create(ctx, req)
 	if err != nil {
 		b.markError()
+		if isFeishuTokenError(err) {
+			log.Printf("feishu: token error, refreshing API client: %v", err)
+			b.refreshAPIClient()
+		}
 		return err
 	}
 	if !resp.Success() {
 		b.markError()
-		return fmt.Errorf("feishu send failed: code=%d msg=%s", resp.Code, resp.Msg)
+		sendErr := fmt.Errorf("feishu send failed: code=%d msg=%s", resp.Code, resp.Msg)
+		if isFeishuTokenError(sendErr) {
+			log.Printf("feishu: token error in response, refreshing API client: %v", sendErr)
+			b.refreshAPIClient()
+		}
+		return sendErr
 	}
 	b.markActivity()
 	return nil
@@ -647,4 +656,22 @@ func (a FeishuAllowlist) Allowed(openID, userID string) bool {
 		}
 	}
 	return false
+}
+
+func isFeishuTokenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, pattern := range []string{"access token", "99991663", "99991664", "99991671"} {
+		if containsLower(msg, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *FeishuBot) refreshAPIClient() {
+	domainURL := resolveFeishuDomain(b.domain)
+	b.apiClient = lark.NewClient(b.appID, b.appSecret, lark.WithOpenBaseUrl(domainURL))
 }
