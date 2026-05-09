@@ -100,7 +100,11 @@ agents:
   # Maximum concurrent agent sessions
   maxConcurrent: 4
 
-  # Optional: oh-my-code integration (route Telegram messages to agent-manager)
+  # Select the inbound agent runtime. Empty preserves legacy auto-selection.
+  # Supported values: "ohMyCode", "codexAppCDP".
+  router: "ohMyCode"
+
+  # Optional: oh-my-code integration (legacy tmux/agent-manager route)
   ohMyCode:
     # Set true for local demo (requires python3 + tmux + agent-manager in that workspace)
     enabled: false
@@ -130,3 +134,23 @@ agents:
     # - /doctor (admin only)
     # - /whoami (show your Telegram IDs)
     # - /ping (simple health check)
+
+  # Optional: Codex App integration (route messages to a Codex App-managed main session)
+  codexAppCDP:
+    enabled: false
+    # Launch Codex App with CDP enabled, for example:
+    # open -na /Applications/Codex.app --args --remote-debugging-port=9222
+    cdpEndpoint: "http://127.0.0.1:9222"
+    # Match the Codex App renderer target title or URL from /json/list.
+    targetSelector: "Codex"
+    # Codex App local host id. Defaults to "local".
+    hostId: "local"
+    # Optional: pin to a specific /local/<conversationId>. Empty uses the active Codex App thread.
+    conversationId: ""
+    # Durable MVP queue and fallback when CDP delivery is unavailable.
+    inboxPath: "/Users/you/work-assistant/.fractalbot/inbox"
+    fallbackToInbox: true
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+    deliveryTimeoutSeconds: 20

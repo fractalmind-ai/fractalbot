@@ -414,12 +414,16 @@ type channelStatus struct {
 }
 
 type agentStatus struct {
-	WorkspaceConfigured bool            `json:"workspace_configured"`
-	MaxConcurrent       int             `json:"max_concurrent,omitempty"`
-	OhMyCode            *ohMyCodeStatus `json:"oh_my_code,omitempty"`
+	WorkspaceConfigured bool                `json:"workspace_configured"`
+	MaxConcurrent       int                 `json:"max_concurrent,omitempty"`
+	Router              string              `json:"router,omitempty"`
+	LastRouting         *agentRoutingStatus `json:"last_routing,omitempty"`
+	OhMyCode            *ohMyCodeStatus     `json:"oh_my_code,omitempty"`
+	CodexAppCDP         *codexAppCDPStatus  `json:"codex_app_cdp,omitempty"`
 }
 
-type ohMyCodeRoutingStatus struct {
+type agentRoutingStatus struct {
+	Backend       string `json:"backend,omitempty"`
 	SelectedAgent string `json:"selected_agent,omitempty"`
 	Channel       string `json:"channel,omitempty"`
 	ChatID        string `json:"chat_id,omitempty"`
@@ -427,8 +431,12 @@ type ohMyCodeRoutingStatus struct {
 	Username      string `json:"username,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Error         string `json:"error,omitempty"`
+	EnvelopeID    string `json:"envelope_id,omitempty"`
+	InboxPath     string `json:"inbox_path,omitempty"`
 	RecordedAt    string `json:"recorded_at,omitempty"`
 }
+
+type ohMyCodeRoutingStatus = agentRoutingStatus
 
 type ohMyCodeStatus struct {
 	Enabled             bool                   `json:"enabled"`
@@ -436,6 +444,19 @@ type ohMyCodeStatus struct {
 	DefaultAgent        string                 `json:"default_agent,omitempty"`
 	AllowedAgents       []string               `json:"allowed_agents,omitempty"`
 	LastRouting         *ohMyCodeRoutingStatus `json:"last_routing,omitempty"`
+}
+
+type codexAppCDPStatus struct {
+	Enabled         bool                `json:"enabled"`
+	CDPEndpoint     string              `json:"cdp_endpoint,omitempty"`
+	TargetSelector  string              `json:"target_selector,omitempty"`
+	HostID          string              `json:"host_id,omitempty"`
+	ConversationID  string              `json:"conversation_id,omitempty"`
+	InboxConfigured bool                `json:"inbox_configured"`
+	FallbackToInbox bool                `json:"fallback_to_inbox"`
+	DefaultAgent    string              `json:"default_agent,omitempty"`
+	AllowedAgents   []string            `json:"allowed_agents,omitempty"`
+	LastRouting     *agentRoutingStatus `json:"last_routing,omitempty"`
 }
 
 func (s *Server) channelStatus() []channelStatus {
@@ -576,6 +597,12 @@ func (s *Server) agentStatus() *agentStatus {
 	status := &agentStatus{
 		WorkspaceConfigured: strings.TrimSpace(s.config.Agents.Workspace) != "",
 		MaxConcurrent:       s.config.Agents.MaxConcurrent,
+		Router:              activeAgentRouterName(s.config.Agents),
+	}
+	if s.agentManager != nil {
+		if routing := s.agentManager.LastRoutingOutcome(); routing != nil {
+			status.LastRouting = routingStatusFromOutcome(routing)
+		}
 	}
 
 	if s.config.Agents.OhMyCode != nil {
@@ -588,23 +615,67 @@ func (s *Server) agentStatus() *agentStatus {
 		if len(ohMyCode.AllowedAgents) > 0 {
 			status.OhMyCode.AllowedAgents = append([]string{}, ohMyCode.AllowedAgents...)
 		}
-		if s.agentManager != nil {
-			if routing := s.agentManager.LastRoutingOutcome(); routing != nil {
-				status.OhMyCode.LastRouting = &ohMyCodeRoutingStatus{
-					SelectedAgent: routing.SelectedAgent,
-					Channel:       routing.Channel,
-					ChatID:        routing.ChatID,
-					UserID:        routing.UserID,
-					Username:      routing.Username,
-					Status:        routing.Status,
-					Error:         routing.Error,
-					RecordedAt:    formatStatusTime(routing.RecordedAt),
-				}
-			}
+		if status.LastRouting != nil && status.LastRouting.Backend == "ohMyCode" {
+			status.OhMyCode.LastRouting = status.LastRouting
+		}
+	}
+
+	if s.config.Agents.CodexAppCDP != nil {
+		codex := s.config.Agents.CodexAppCDP
+		status.CodexAppCDP = &codexAppCDPStatus{
+			Enabled:         codex.Enabled,
+			CDPEndpoint:     strings.TrimSpace(codex.CDPEndpoint),
+			TargetSelector:  strings.TrimSpace(codex.TargetSelector),
+			HostID:          strings.TrimSpace(codex.HostID),
+			ConversationID:  strings.TrimSpace(codex.ConversationID),
+			InboxConfigured: strings.TrimSpace(codex.InboxPath) != "",
+			FallbackToInbox: codex.FallbackToInbox,
+			DefaultAgent:    strings.TrimSpace(codex.DefaultAgent),
+		}
+		if len(codex.AllowedAgents) > 0 {
+			status.CodexAppCDP.AllowedAgents = append([]string{}, codex.AllowedAgents...)
+		}
+		if status.LastRouting != nil && status.LastRouting.Backend == "codexAppCDP" {
+			status.CodexAppCDP.LastRouting = status.LastRouting
 		}
 	}
 
 	return status
+}
+
+func activeAgentRouterName(cfg *config.AgentsConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	if router := strings.TrimSpace(cfg.Router); router != "" {
+		return router
+	}
+	if cfg.OhMyCode != nil && cfg.OhMyCode.Enabled {
+		return "ohMyCode"
+	}
+	if cfg.CodexAppCDP != nil && cfg.CodexAppCDP.Enabled {
+		return "codexAppCDP"
+	}
+	return ""
+}
+
+func routingStatusFromOutcome(routing *agent.RoutingOutcome) *agentRoutingStatus {
+	if routing == nil {
+		return nil
+	}
+	return &agentRoutingStatus{
+		Backend:       routing.Backend,
+		SelectedAgent: routing.SelectedAgent,
+		Channel:       routing.Channel,
+		ChatID:        routing.ChatID,
+		UserID:        routing.UserID,
+		Username:      routing.Username,
+		Status:        routing.Status,
+		Error:         routing.Error,
+		EnvelopeID:    routing.EnvelopeID,
+		InboxPath:     routing.InboxPath,
+		RecordedAt:    formatStatusTime(routing.RecordedAt),
+	}
 }
 
 func (s *Server) snapshotClients() []*Client {

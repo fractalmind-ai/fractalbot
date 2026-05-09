@@ -757,3 +757,65 @@ func TestMessageSendAPI(t *testing.T) {
 		}
 	})
 }
+
+func TestStatusEndpointReportsCodexAppCDPRouting(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	cfg := &config.Config{
+		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{},
+		Agents: &config.AgentsConfig{
+			Router: "codexAppCDP",
+			CodexAppCDP: &config.CodexAppCDPConfig{
+				Enabled:         true,
+				CDPEndpoint:     "http://127.0.0.1:9222",
+				TargetSelector:  "Codex",
+				HostID:          "local",
+				InboxPath:       inbox,
+				FallbackToInbox: true,
+				DefaultAgent:    "main",
+				AllowedAgents:   []string{"main"},
+			},
+		},
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	_, err = server.agentManager.HandleIncoming(context.Background(), &protocol.Message{Data: map[string]interface{}{
+		"channel": "feishu",
+		"text":    "hello",
+		"agent":   "main",
+		"chat_id": "oc_1",
+		"open_id": "ou_1",
+	}})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer resp.Body.Close()
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	agents := payload["agents"].(map[string]interface{})
+	if agents["router"] != "codexAppCDP" {
+		t.Fatalf("router=%v", agents["router"])
+	}
+	codex := agents["codex_app_cdp"].(map[string]interface{})
+	if codex["enabled"] != true || codex["default_agent"] != "main" || codex["inbox_configured"] != true {
+		t.Fatalf("unexpected codex status: %#v", codex)
+	}
+	routing := agents["last_routing"].(map[string]interface{})
+	if routing["backend"] != "codexAppCDP" || routing["status"] != "queued" || routing["envelope_id"] == "" {
+		t.Fatalf("unexpected routing status: %#v", routing)
+	}
+}

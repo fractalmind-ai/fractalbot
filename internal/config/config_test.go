@@ -284,3 +284,57 @@ func TestLoadConfigAcceptsIMessagePollingConfig(t *testing.T) {
 		t.Fatalf("pollingLimit=%d want 25", cfg.Channels.IMessage.PollingLimit)
 	}
 }
+
+func TestLoadConfigRejectsUnknownAgentRouter(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := []byte("agents:\n  router: rawAppServer\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected unknown router error")
+	}
+	if !strings.Contains(err.Error(), "agents.router") {
+		t.Fatalf("expected agents.router in error, got %v", err)
+	}
+}
+
+func TestLoadConfigValidatesCodexAppCDPAgentAllowlist(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := []byte("agents:\n  router: codexAppCDP\n  codexAppCDP:\n    enabled: true\n    inboxPath: \"" + tmp + "/inbox\"\n    defaultAgent: \"main\"\n    allowedAgents:\n      - \"main\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Agents.Router != "codexAppCDP" {
+		t.Fatalf("router=%q", cfg.Agents.Router)
+	}
+	if cfg.Agents.CodexAppCDP == nil || cfg.Agents.CodexAppCDP.DefaultAgent != "main" {
+		t.Fatalf("unexpected codexAppCDP config: %#v", cfg.Agents.CodexAppCDP)
+	}
+}
+
+func TestLoadConfigRequiresCodexAppCDPInboxWhenEnabled(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := []byte("agents:\n  router: codexAppCDP\n  codexAppCDP:\n    enabled: true\n    defaultAgent: \"main\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected inboxPath error")
+	}
+	if !strings.Contains(err.Error(), "agents.codexAppCDP.inboxPath") {
+		t.Fatalf("expected inboxPath error, got %v", err)
+	}
+}
