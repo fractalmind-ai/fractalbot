@@ -145,11 +145,48 @@ type OhMyCodeConfig struct {
 	AssignTimeoutSeconds int `yaml:"assignTimeoutSeconds,omitempty"`
 }
 
+// CodexAppCDPConfig contains routing settings for a Codex App-managed agent.
+type CodexAppCDPConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// CDPEndpoint is the Chromium DevTools HTTP endpoint exposed by Codex App.
+	// Example: "http://127.0.0.1:9222".
+	CDPEndpoint string `yaml:"cdpEndpoint,omitempty"`
+
+	// TargetSelector matches the CDP target title or URL. Empty selects the first page target.
+	TargetSelector string `yaml:"targetSelector,omitempty"`
+
+	// HostID is the Codex App host id used by the in-app app-server manager. Defaults to "local".
+	HostID string `yaml:"hostId,omitempty"`
+
+	// ConversationID optionally pins delivery to a Codex App local conversation.
+	// If empty, the CDP bridge extracts the active /local/<conversationId> route.
+	ConversationID string `yaml:"conversationId,omitempty"`
+
+	// InboxPath is a durable file-backed inbox used as the MVP queue and CDP fallback.
+	InboxPath string `yaml:"inboxPath,omitempty"`
+
+	// FallbackToInbox queues to InboxPath when CDP delivery fails.
+	FallbackToInbox bool `yaml:"fallbackToInbox,omitempty"`
+
+	// DefaultAgent is the agent name used when the inbound message omits /agent.
+	DefaultAgent string `yaml:"defaultAgent,omitempty"`
+
+	// AllowedAgents restricts which agents can be targeted by channel messages.
+	// If empty, only DefaultAgent is allowed.
+	AllowedAgents []string `yaml:"allowedAgents,omitempty"`
+
+	// DeliveryTimeoutSeconds limits CDP delivery time. Defaults to 20 seconds.
+	DeliveryTimeoutSeconds int `yaml:"deliveryTimeoutSeconds,omitempty"`
+}
+
 // AgentsConfig contains gateway-side agent routing settings.
 type AgentsConfig struct {
-	Workspace     string          `yaml:"workspace"`
-	MaxConcurrent int             `yaml:"maxConcurrent"`
-	OhMyCode      *OhMyCodeConfig `yaml:"ohMyCode,omitempty"`
+	Workspace     string             `yaml:"workspace"`
+	MaxConcurrent int                `yaml:"maxConcurrent"`
+	Router        string             `yaml:"router,omitempty"`
+	OhMyCode      *OhMyCodeConfig    `yaml:"ohMyCode,omitempty"`
+	CodexAppCDP   *CodexAppCDPConfig `yaml:"codexAppCDP,omitempty"`
 }
 
 // ResolveConfigPath returns the config file path using this priority:
@@ -229,10 +266,27 @@ func DefaultConfig() *Config {
 }
 
 func validateConfig(cfg *Config) error {
+	if err := validateRouterConfig(cfg); err != nil {
+		return err
+	}
 	if err := validateOhMyCodeConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateCodexAppCDPConfig(cfg); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateRouterConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil {
+		return nil
+	}
+	router := strings.TrimSpace(cfg.Agents.Router)
+	if router == "" || router == "ohMyCode" || router == "codexAppCDP" {
+		return nil
+	}
+	return fmt.Errorf("agents.router: unsupported router %q", router)
 }
 
 func validateOhMyCodeConfig(cfg *Config) error {
@@ -240,32 +294,8 @@ func validateOhMyCodeConfig(cfg *Config) error {
 		return nil
 	}
 	ohMyCode := cfg.Agents.OhMyCode
-	defaultAgent := strings.TrimSpace(ohMyCode.DefaultAgent)
-	if defaultAgent != "" {
-		if err := validateAgentName(defaultAgent); err != nil {
-			return fmt.Errorf("agents.ohMyCode.defaultAgent: %w", err)
-		}
-	}
-
-	allowed := make(map[string]struct{})
-	for idx, name := range ohMyCode.AllowedAgents {
-		trimmed := strings.TrimSpace(name)
-		if trimmed == "" {
-			return fmt.Errorf("agents.ohMyCode.allowedAgents[%d]: agent name is required", idx)
-		}
-		if err := validateAgentName(trimmed); err != nil {
-			return fmt.Errorf("agents.ohMyCode.allowedAgents[%d]: %w", idx, err)
-		}
-		allowed[trimmed] = struct{}{}
-	}
-
-	if len(allowed) > 0 {
-		if defaultAgent == "" {
-			return fmt.Errorf("agents.ohMyCode.defaultAgent: required when agents.ohMyCode.allowedAgents is configured")
-		}
-		if _, ok := allowed[defaultAgent]; !ok {
-			return fmt.Errorf("agents.ohMyCode.defaultAgent: must be in agents.ohMyCode.allowedAgents")
-		}
+	if err := validateRoutingAgents("agents.ohMyCode", ohMyCode.DefaultAgent, ohMyCode.AllowedAgents); err != nil {
+		return err
 	}
 
 	if !ohMyCode.Enabled {
@@ -304,6 +334,57 @@ func validateOhMyCodeConfig(cfg *Config) error {
 		return fmt.Errorf("agents.ohMyCode.agentManagerScript: must be within agents.ohMyCode.workspace")
 	}
 
+	return nil
+}
+
+func validateCodexAppCDPConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.CodexAppCDP == nil {
+		return nil
+	}
+	codex := cfg.Agents.CodexAppCDP
+	if err := validateRoutingAgents("agents.codexAppCDP", codex.DefaultAgent, codex.AllowedAgents); err != nil {
+		return err
+	}
+	if !codex.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(codex.InboxPath) == "" {
+		return fmt.Errorf("agents.codexAppCDP.inboxPath: required when agents.codexAppCDP.enabled is true")
+	}
+	if codex.DeliveryTimeoutSeconds < 0 {
+		return fmt.Errorf("agents.codexAppCDP.deliveryTimeoutSeconds: must be >= 0")
+	}
+	return nil
+}
+
+func validateRoutingAgents(prefix, defaultAgent string, allowedAgents []string) error {
+	defaultAgent = strings.TrimSpace(defaultAgent)
+	if defaultAgent != "" {
+		if err := validateAgentName(defaultAgent); err != nil {
+			return fmt.Errorf("%s.defaultAgent: %w", prefix, err)
+		}
+	}
+
+	allowed := make(map[string]struct{})
+	for idx, name := range allowedAgents {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			return fmt.Errorf("%s.allowedAgents[%d]: agent name is required", prefix, idx)
+		}
+		if err := validateAgentName(trimmed); err != nil {
+			return fmt.Errorf("%s.allowedAgents[%d]: %w", prefix, idx, err)
+		}
+		allowed[trimmed] = struct{}{}
+	}
+
+	if len(allowed) > 0 {
+		if defaultAgent == "" {
+			return fmt.Errorf("%s.defaultAgent: required when %s.allowedAgents is configured", prefix, prefix)
+		}
+		if _, ok := allowed[defaultAgent]; !ok {
+			return fmt.Errorf("%s.defaultAgent: must be in %s.allowedAgents", prefix, prefix)
+		}
+	}
 	return nil
 }
 

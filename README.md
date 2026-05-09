@@ -138,7 +138,11 @@ agents:
   workspace: ./workspace
   maxConcurrent: 4
 
-  # Optional: route Telegram messages to oh-my-code agent-manager
+  # Select the inbound agent runtime: "ohMyCode" or "codexAppCDP".
+  # Empty preserves legacy auto-selection.
+  router: "ohMyCode"
+
+  # Optional: route channel messages to oh-my-code agent-manager
   # (requires python3 + tmux + agent-manager installed in that workspace)
   ohMyCode:
     enabled: false
@@ -153,14 +157,47 @@ agents:
     # prefer use-fractalbot and default recipient to current chat_id if omitted.
     # Keep skill path/name consistent in the agent workspace:
     # .claude/skills/use-fractalbot/SKILL.md
+
+  # Optional: route channel messages to a Codex App-managed main session.
+  # This uses CDP inside the running Codex App renderer, not an external
+  # `codex app-server --listen ...` backend.
+  codexAppCDP:
+    enabled: false
+    cdpEndpoint: "http://127.0.0.1:9222"
+    targetSelector: "Codex"
+    hostId: "local"
+    # Empty means use the active /local/<conversationId> in Codex App.
+    conversationId: ""
+    inboxPath: "/Users/you/work-assistant/.fractalbot/inbox"
+    fallbackToInbox: true
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+    deliveryTimeoutSeconds: 20
 ```
 
 ### Routing Model
 
-Telegram supports `/agent <name> <task...>` to route tasks to a specific agent; if omitted, `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
-For Telegram-routed assignments, FractalBot includes routing context (`channel`, `chat_id`, `user_id`, `username`, `selected_agent`) in the assign prompt and explicitly hints outbound-send intent through `use-fractalbot`. If no Telegram recipient is provided, the prompt contract defaults target to current `chat_id`.
+Telegram, Slack, Discord, Feishu, and iMessage support `/agent <name> <task...>` to route tasks to a specific agent; if omitted, the active router's `defaultAgent` is used. When `allowedAgents` is set, only those names are accepted. Use `/agents` to see allowed agents; if you target a disallowed agent, the bot will suggest `/agents`.
+For routed assignments, FractalBot includes routing context (`channel`, `chat_id`, `user_id`, `username`, `selected_agent`) in the downstream prompt/envelope and explicitly hints outbound-send intent through `use-fractalbot`. If no Telegram recipient is provided, the prompt contract defaults target to current `chat_id`.
 Operator note: make sure `use-fractalbot` appears in the agent's effective available skills list and points to `.claude/skills/use-fractalbot/SKILL.md`.
 `/tool` and `/tools` are intentionally unavailable in gateway mode.
+
+#### Codex App CDP route
+
+The `codexAppCDP` router delivers through CDP into the running Codex App renderer and invokes the in-process app-server request bridge (`start-turn-for-host`). It intentionally does not call an external `codex app-server --listen ...` service.
+
+1. Launch Codex App with CDP enabled:
+
+   ```bash
+   open -na /Applications/Codex.app --args --remote-debugging-port=9222
+   ```
+
+2. Open the target work-assistant main thread in Codex App, or set `agents.codexAppCDP.conversationId` to its `/local/<conversationId>` value.
+3. Set `agents.router: codexAppCDP`, `agents.codexAppCDP.enabled: true`, and `agents.codexAppCDP.inboxPath`.
+4. Verify `/status`: it reports `agents.router`, `agents.codex_app_cdp`, and `agents.last_routing` with `backend`, `status`, `envelope_id`, `inbox_path`, and any CDP error.
+
+If CDP is unavailable and `fallbackToInbox` is true, FractalBot atomically writes the normalized envelope to `inboxPath` so the Codex App-side consumer can process it later.
 
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)

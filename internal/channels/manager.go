@@ -219,14 +219,9 @@ func (m *Manager) registerConfiguredChannels() error {
 			return errors.New("channels.telegram.botToken is required when telegram is enabled")
 		}
 
-		var defaultAgent string
-		var allowedAgents []string
-		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
-			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
-			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
-		}
+		defaultAgent, allowedAgents, agentConfigName := activeChannelAgentConfig(m.agentsCfg)
 		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
-			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+			return fmt.Errorf("invalid %s config: %w", agentConfigName, err)
 		}
 
 		bot, err := NewTelegramBot(m.cfg.Telegram.BotToken, m.cfg.Telegram.AllowedUsers, m.cfg.Telegram.AdminID, defaultAgent, allowedAgents)
@@ -265,14 +260,9 @@ func (m *Manager) registerConfiguredChannels() error {
 			return errors.New("channels.feishu.appId and channels.feishu.appSecret are required when feishu is enabled")
 		}
 
-		var defaultAgent string
-		var allowedAgents []string
-		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
-			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
-			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
-		}
+		defaultAgent, allowedAgents, agentConfigName := activeChannelAgentConfig(m.agentsCfg)
 		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
-			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+			return fmt.Errorf("invalid %s config: %w", agentConfigName, err)
 		}
 
 		bot, err := NewFeishuBot(
@@ -300,14 +290,9 @@ func (m *Manager) registerConfiguredChannels() error {
 			return errors.New("channels.slack.botToken and channels.slack.appToken are required when slack is enabled")
 		}
 
-		var defaultAgent string
-		var allowedAgents []string
-		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
-			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
-			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
-		}
+		defaultAgent, allowedAgents, agentConfigName := activeChannelAgentConfig(m.agentsCfg)
 		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
-			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+			return fmt.Errorf("invalid %s config: %w", agentConfigName, err)
 		}
 
 		bot, err := NewSlackBot(
@@ -335,14 +320,9 @@ func (m *Manager) registerConfiguredChannels() error {
 			return errors.New("channels.discord.token is required when discord is enabled")
 		}
 
-		var defaultAgent string
-		var allowedAgents []string
-		if m.agentsCfg != nil && m.agentsCfg.OhMyCode != nil {
-			defaultAgent = m.agentsCfg.OhMyCode.DefaultAgent
-			allowedAgents = m.agentsCfg.OhMyCode.AllowedAgents
-		}
+		defaultAgent, allowedAgents, agentConfigName := activeChannelAgentConfig(m.agentsCfg)
 		if err := validateOhMyCodeAgentConfig(defaultAgent, allowedAgents); err != nil {
-			return fmt.Errorf("invalid agents.ohMyCode config: %w", err)
+			return fmt.Errorf("invalid %s config: %w", agentConfigName, err)
 		}
 
 		bot, err := NewDiscordBot(
@@ -389,6 +369,23 @@ func (m *Manager) registerConfiguredChannels() error {
 	}
 
 	return nil
+}
+
+func activeChannelAgentConfig(cfg *config.AgentsConfig) (string, []string, string) {
+	if cfg == nil {
+		return "", nil, "agents.ohMyCode"
+	}
+	router := strings.TrimSpace(cfg.Router)
+	if router == "codexAppCDP" && cfg.CodexAppCDP != nil {
+		return cfg.CodexAppCDP.DefaultAgent, cfg.CodexAppCDP.AllowedAgents, "agents.codexAppCDP"
+	}
+	if router == "" && cfg.CodexAppCDP != nil && cfg.CodexAppCDP.Enabled && (cfg.OhMyCode == nil || !cfg.OhMyCode.Enabled) {
+		return cfg.CodexAppCDP.DefaultAgent, cfg.CodexAppCDP.AllowedAgents, "agents.codexAppCDP"
+	}
+	if cfg.OhMyCode != nil {
+		return cfg.OhMyCode.DefaultAgent, cfg.OhMyCode.AllowedAgents, "agents.ohMyCode"
+	}
+	return "", nil, "agents.ohMyCode"
 }
 
 func validateOhMyCodeAgentConfig(defaultAgent string, allowedAgents []string) error {

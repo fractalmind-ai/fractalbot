@@ -38,15 +38,17 @@ const (
 
 // Manager is a minimal stub for agent lifecycle management.
 type Manager struct {
-	config         *config.AgentsConfig
-	ChannelManager *channels.Manager
-	mu             sync.RWMutex
-	agents         map[string]protocol.AgentInfo
-	routingMu      sync.RWMutex
-	lastRouting    *OhMyCodeRoutingOutcome
+	config            *config.AgentsConfig
+	ChannelManager    *channels.Manager
+	mu                sync.RWMutex
+	agents            map[string]protocol.AgentInfo
+	routingMu         sync.RWMutex
+	lastRouting       *RoutingOutcome
+	codexAppCDPClient codexAppCDPClient
 }
 
-type OhMyCodeRoutingOutcome struct {
+type RoutingOutcome struct {
+	Backend       string
 	SelectedAgent string
 	Channel       string
 	ChatID        string
@@ -54,8 +56,12 @@ type OhMyCodeRoutingOutcome struct {
 	Username      string
 	Status        string
 	Error         string
+	EnvelopeID    string
+	InboxPath     string
 	RecordedAt    time.Time
 }
+
+type OhMyCodeRoutingOutcome = RoutingOutcome
 
 // NewManager creates a new agent manager.
 func NewManager(cfg *config.AgentsConfig) *Manager {
@@ -89,7 +95,7 @@ func (m *Manager) List() []protocol.AgentInfo {
 	return agents
 }
 
-func (m *Manager) LastRoutingOutcome() *OhMyCodeRoutingOutcome {
+func (m *Manager) LastRoutingOutcome() *RoutingOutcome {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
 	if m.lastRouting == nil {
@@ -136,6 +142,22 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		return gatewayToolCommandsUnavailableMessage, nil
 	}
 
+	if m.activeRouter() == "codexAppCDP" && m.isCodexAppCDPEnabled() {
+		agentName, _ := data["agent"].(string)
+		out, err := m.assignCodexAppCDP(ctx, text, agentName, data)
+		if err != nil {
+			return "", err
+		}
+		out = normalizeUserReply(out)
+		if out == "" {
+			return "", nil
+		}
+		if channel == "telegram" {
+			return channels.TruncateTelegramReply(out), nil
+		}
+		return out, nil
+	}
+
 	if m.isOhMyCodeEnabled() {
 		agentName, _ := data["agent"].(string)
 		out, err := m.assignOhMyCode(ctx, text, agentName, data)
@@ -153,6 +175,23 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil
+}
+
+func (m *Manager) activeRouter() string {
+	if m.config == nil {
+		return ""
+	}
+	router := strings.TrimSpace(m.config.Router)
+	if router != "" {
+		return router
+	}
+	if m.config.OhMyCode != nil && m.config.OhMyCode.Enabled {
+		return "ohMyCode"
+	}
+	if m.config.CodexAppCDP != nil && m.config.CodexAppCDP.Enabled {
+		return "codexAppCDP"
+	}
+	return ""
 }
 
 func isRuntimeToolInvocation(text string) bool {
@@ -501,13 +540,20 @@ func promptContextValue(inboundData map[string]interface{}, key string) string {
 }
 
 func (m *Manager) recordRoutingOutcome(inboundData map[string]interface{}, selectedAgent, status string, err error) {
-	outcome := &OhMyCodeRoutingOutcome{
+	m.recordRoutingOutcomeForBackend("ohMyCode", inboundData, selectedAgent, status, "", "", err)
+}
+
+func (m *Manager) recordRoutingOutcomeForBackend(backend string, inboundData map[string]interface{}, selectedAgent, status, envelopeID, inboxPath string, err error) {
+	outcome := &RoutingOutcome{
+		Backend:       strings.TrimSpace(backend),
 		SelectedAgent: strings.TrimSpace(selectedAgent),
 		Channel:       promptContextValue(inboundData, "channel"),
-		ChatID:        promptContextValue(inboundData, "chat_id"),
-		UserID:        promptContextValue(inboundData, "user_id"),
+		ChatID:        firstContextValue(inboundData, "chat_id", "chatID"),
+		UserID:        firstContextValue(inboundData, "user_id", "open_id"),
 		Username:      promptContextValue(inboundData, "username"),
 		Status:        strings.TrimSpace(status),
+		EnvelopeID:    strings.TrimSpace(envelopeID),
+		InboxPath:     strings.TrimSpace(inboxPath),
 		RecordedAt:    time.Now().UTC(),
 	}
 	if err != nil {

@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
+	"github.com/gorilla/websocket"
 )
 
 func TestValidateOhMyCodeAgentDefaultOnly(t *testing.T) {
@@ -597,4 +601,159 @@ func TestHandleIncomingBodyWrapLongMessage(t *testing.T) {
 
 	// Cleanup
 	_ = os.Remove(bodyFile)
+}
+
+func TestHandleIncomingCodexAppCDPWritesInboxEnvelope(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:      true,
+			InboxPath:    inbox,
+			DefaultAgent: "main",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel":   "feishu",
+			"text":      "hello codex",
+			"agent":     "main",
+			"chat_id":   "oc_123",
+			"open_id":   "ou_123",
+			"thread_ts": "thread-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one inbox envelope, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(inbox, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read envelope: %v", err)
+	}
+	var envelope CodexAppEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Channel != "feishu" || envelope.ChatID != "oc_123" || envelope.UserID != "ou_123" || envelope.SelectedAgent != "main" || envelope.Text != "hello codex" {
+		t.Fatalf("unexpected envelope: %#v", envelope)
+	}
+
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Backend != "codexAppCDP" || telemetry.Status != "queued" || telemetry.EnvelopeID == "" || telemetry.InboxPath == "" {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
+	var evaluated string
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/page/1"
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Codex",
+			URL:                  "http://codex.local/local/thread-123",
+			WebSocketDebuggerURL: wsURL,
+		}})
+	})
+	mux.HandleFunc("/devtools/page/1", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Expression string `json:"expression"`
+			} `json:"params"`
+		}
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Fatalf("read cdp request: %v", err)
+		}
+		evaluated = req.Params.Expression
+		if req.Method != "Runtime.evaluate" {
+			t.Fatalf("method=%q", req.Method)
+		}
+		if err := conn.WriteJSON(map[string]interface{}{
+			"id": req.ID,
+			"result": map[string]interface{}{
+				"result": map[string]interface{}{"type": "object", "value": map[string]interface{}{"ok": true}},
+			},
+		}); err != nil {
+			t.Fatalf("write cdp response: %v", err)
+		}
+	})
+
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:        true,
+			CDPEndpoint:    server.URL,
+			TargetSelector: "Codex",
+			InboxPath:      filepath.Join(t.TempDir(), "inbox"),
+			DefaultAgent:   "main",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel":  "slack",
+			"text":     "deliver to app",
+			"chat_id":  "D123",
+			"user_id":  "U123",
+			"username": "alice",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if !strings.Contains(evaluated, "start-turn-for-host") || !strings.Contains(evaluated, "deliver to app") {
+		t.Fatalf("unexpected evaluated script: %s", evaluated)
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Backend != "codexAppCDP" || telemetry.Status != "delivered" || telemetry.EnvelopeID == "" || telemetry.InboxPath != "" {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestBuildCodexAppPromptIncludesUseFractalbotReplyHint(t *testing.T) {
+	prompt := buildCodexAppPrompt(CodexAppEnvelope{
+		ID:            "env-1",
+		Channel:       "feishu",
+		ChatID:        "oc_1",
+		UserID:        "ou_1",
+		SelectedAgent: "main",
+		Text:          "hello",
+	}, nil)
+
+	expectedParts := []string{
+		"For outbound messaging intent, prefer `use-fractalbot` skill.",
+		"Effective available skills:",
+		"use-fractalbot (.claude/skills/use-fractalbot/SKILL.md)",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(prompt, part) {
+			t.Fatalf("expected %q in prompt, got %q", part, prompt)
+		}
+	}
 }
