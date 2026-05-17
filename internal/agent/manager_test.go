@@ -1098,6 +1098,40 @@ func TestSelectCodexAppTargetThreadMainFallsBackToLatestProjectThread(t *testing
 	}
 }
 
+func TestSelectCodexAppTargetThreadUsesSidebarSessionName(t *testing.T) {
+	threads := []codexAppThreadRecord{
+		{
+			ID:        "latest",
+			Title:     "recent task",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 300,
+		},
+		{
+			ID:        "named-main",
+			Title:     "health check",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 100,
+		},
+	}
+	mergeCodexAppSidebarThreads(threads, []codexAppSidebarThreadRecord{{
+		ID:    "named-main",
+		Title: "main",
+	}})
+
+	thread, source, err := selectCodexAppTargetThread(threads, &config.CodexAppCDPConfig{
+		TargetProject: config.CodexAppCDPTargetProjectConfig{
+			CWD:     "/repo/cloudbank",
+			Session: "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("select target: %v", err)
+	}
+	if thread.ID != "named-main" || source != "named-session" {
+		t.Fatalf("selected thread=%#v source=%q", thread, source)
+	}
+}
+
 func TestResolveCodexAppConversationUsesExplicitConversationIDOverride(t *testing.T) {
 	oldQuery := queryCodexAppThreads
 	defer func() { queryCodexAppThreads = oldQuery }()

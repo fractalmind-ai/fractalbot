@@ -117,6 +117,12 @@ type codexAppThreadRecord struct {
 	UpdatedAtMS   int64  `json:"updated_at_ms"`
 }
 
+type codexAppSidebarThreadRecord struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Active bool   `json:"active"`
+}
+
 func (m *Manager) isCodexAppCDPEnabled() bool {
 	if m.config == nil || m.config.CodexAppCDP == nil {
 		return false
@@ -678,7 +684,74 @@ func queryCodexAppThreadsFromStateDB(ctx context.Context, cfg *config.CodexAppCD
 	if err := json.Unmarshal(output, &threads); err != nil {
 		return nil, "state-db", fmt.Errorf("decode Codex App state DB threads: %w", err)
 	}
-	return threads, "state-db", nil
+	source := "state-db"
+	sidebarThreads, sidebarErr := queryCodexAppSidebarThreads(ctx, cfg)
+	if sidebarErr == nil && len(sidebarThreads) > 0 {
+		mergeCodexAppSidebarThreads(threads, sidebarThreads)
+		source = "state-db+sidebar"
+	}
+	return threads, source, nil
+}
+
+func queryCodexAppSidebarThreads(ctx context.Context, cfg *config.CodexAppCDPConfig) ([]codexAppSidebarThreadRecord, error) {
+	if cfg == nil || strings.TrimSpace(cfg.CDPEndpoint) == "" {
+		return nil, nil
+	}
+	target, err := selectCodexAppCDPTarget(ctx, cfg.CDPEndpoint, cfg.TargetSelector)
+	if err != nil {
+		return nil, err
+	}
+	value, err := evaluateCDPValue(ctx, target.WebSocketDebuggerURL, `(() => {
+  return Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-row]")).map((row) => {
+    const rawId = row.getAttribute("data-app-action-sidebar-thread-id") || "";
+    return {
+      id: rawId.replace(/^local:/, ""),
+      title: row.getAttribute("data-app-action-sidebar-thread-title") || "",
+      active: row.getAttribute("data-app-action-sidebar-thread-active") === "true"
+    };
+  }).filter((row) => row.id && row.title);
+})()`)
+	if err != nil {
+		return nil, err
+	}
+	rawRows, ok := value.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("Codex App sidebar returned %T, expected array", value)
+	}
+	rows := make([]codexAppSidebarThreadRecord, 0, len(rawRows))
+	for _, raw := range rawRows {
+		rowMap, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := rowMap["id"].(string)
+		title, _ := rowMap["title"].(string)
+		active, _ := rowMap["active"].(bool)
+		id = strings.TrimSpace(id)
+		title = strings.TrimSpace(title)
+		if id == "" || title == "" {
+			continue
+		}
+		rows = append(rows, codexAppSidebarThreadRecord{ID: id, Title: title, Active: active})
+	}
+	return rows, nil
+}
+
+func mergeCodexAppSidebarThreads(threads []codexAppThreadRecord, sidebarThreads []codexAppSidebarThreadRecord) {
+	sidebarByID := make(map[string]codexAppSidebarThreadRecord, len(sidebarThreads))
+	for _, row := range sidebarThreads {
+		sidebarByID[row.ID] = row
+	}
+	for i := range threads {
+		row, ok := sidebarByID[threads[i].ID]
+		if !ok {
+			continue
+		}
+		threads[i].AgentNickname = row.Title
+		if row.Active {
+			threads[i].Source = strings.Trim(strings.Join([]string{threads[i].Source, "sidebar-active"}, ":"), ":")
+		}
+	}
 }
 
 func codexAppStateDBPath(cfg *config.CodexAppCDPConfig) (string, error) {
@@ -987,9 +1060,17 @@ func preferredCodexAppCDPTarget(targets []cdpTarget) (cdpTarget, bool) {
 }
 
 func evaluateCDPExpression(ctx context.Context, wsURL, expression, expectedConversationID string) error {
+	value, err := evaluateCDPValue(ctx, wsURL, expression)
+	if err != nil {
+		return err
+	}
+	return validateCodexAppDeliveryValue(value, expectedConversationID)
+}
+
+func evaluateCDPValue(ctx context.Context, wsURL, expression string) (interface{}, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
-		return fmt.Errorf("connect CDP websocket: %w", err)
+		return nil, fmt.Errorf("connect CDP websocket: %w", err)
 	}
 	defer conn.Close()
 
@@ -1008,23 +1089,23 @@ func evaluateCDPExpression(ctx context.Context, wsURL, expression, expectedConve
 		},
 	}
 	if err := conn.WriteJSON(request); err != nil {
-		return fmt.Errorf("send CDP Runtime.evaluate: %w", err)
+		return nil, fmt.Errorf("send CDP Runtime.evaluate: %w", err)
 	}
 	for {
 		var response cdpEvaluateResponse
 		if err := conn.ReadJSON(&response); err != nil {
-			return fmt.Errorf("read CDP Runtime.evaluate response: %w", err)
+			return nil, fmt.Errorf("read CDP Runtime.evaluate response: %w", err)
 		}
 		if response.ID != 1 {
 			continue
 		}
 		if response.Error != nil {
-			return fmt.Errorf("CDP Runtime.evaluate failed: %s", response.Error.Message)
+			return nil, fmt.Errorf("CDP Runtime.evaluate failed: %s", response.Error.Message)
 		}
 		if response.Result.ExceptionDetails != nil {
-			return fmt.Errorf("Codex App delivery script failed: %s", response.Result.ExceptionDetails.Text)
+			return nil, fmt.Errorf("Codex App delivery script failed: %s", response.Result.ExceptionDetails.Text)
 		}
-		return validateCodexAppDeliveryValue(response.Result.Result.Value, expectedConversationID)
+		return response.Result.Result.Value, nil
 	}
 }
 
@@ -1177,7 +1258,13 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
   }
 
   const signals = await import(signalsUrl);
-  const sendRequest = typeof signals.Kn === "function" ? signals.Kn : (typeof signals.rn === "function" ? signals.rn : null);
+  const requestCandidates = [
+    ["on", signals.on],
+    ["Kn", signals.Kn],
+    ["rn", signals.rn]
+  ];
+  const candidate = requestCandidates.find(([, fn]) => typeof fn === "function");
+  const sendRequest = candidate ? candidate[1] : null;
   if (typeof sendRequest !== "function") {
     throw new Error("Codex App app-server request bridge is unavailable.");
   }
@@ -1195,6 +1282,6 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
       throw new Error("Codex App start-turn-for-host failed: " + detail);
     }
   }
-  return { ok: true, conversationId, result };
+  return { ok: true, conversationId, bridge: candidate[0], result };
 })()`, string(encoded))
 }
