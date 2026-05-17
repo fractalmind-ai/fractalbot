@@ -447,16 +447,57 @@ type ohMyCodeStatus struct {
 }
 
 type codexAppCDPStatus struct {
-	Enabled         bool                `json:"enabled"`
-	CDPEndpoint     string              `json:"cdp_endpoint,omitempty"`
-	TargetSelector  string              `json:"target_selector,omitempty"`
-	HostID          string              `json:"host_id,omitempty"`
-	ConversationID  string              `json:"conversation_id,omitempty"`
-	InboxConfigured bool                `json:"inbox_configured"`
-	FallbackToInbox bool                `json:"fallback_to_inbox"`
-	DefaultAgent    string              `json:"default_agent,omitempty"`
-	AllowedAgents   []string            `json:"allowed_agents,omitempty"`
-	LastRouting     *agentRoutingStatus `json:"last_routing,omitempty"`
+	Enabled              bool                       `json:"enabled"`
+	CDPEndpoint          string                     `json:"cdp_endpoint,omitempty"`
+	TargetSelector       string                     `json:"target_selector,omitempty"`
+	HostID               string                     `json:"host_id,omitempty"`
+	ConversationID       string                     `json:"conversation_id,omitempty"`
+	TargetProject        *codexAppCDPTargetProject  `json:"target_project,omitempty"`
+	ResolvedConversation *codexAppCDPResolvedTarget `json:"resolved_conversation,omitempty"`
+	InboxConfigured      bool                       `json:"inbox_configured"`
+	FallbackToInbox      bool                       `json:"fallback_to_inbox"`
+	RepairPolicy         string                     `json:"repair_policy,omitempty"`
+	CheckOnIncoming      bool                       `json:"check_on_incoming_message"`
+	Watch                codexAppCDPWatch           `json:"watch"`
+	Readiness            *codexAppCDPReady          `json:"readiness,omitempty"`
+	DefaultAgent         string                     `json:"default_agent,omitempty"`
+	AllowedAgents        []string                   `json:"allowed_agents,omitempty"`
+	LastRouting          *agentRoutingStatus        `json:"last_routing,omitempty"`
+}
+
+type codexAppCDPTargetProject struct {
+	Name    string `json:"name,omitempty"`
+	CWD     string `json:"cwd,omitempty"`
+	Session string `json:"session,omitempty"`
+	StateDB string `json:"state_db,omitempty"`
+}
+
+type codexAppCDPResolvedTarget struct {
+	Configured     bool   `json:"configured"`
+	ID             string `json:"id,omitempty"`
+	Title          string `json:"title,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	Source         string `json:"source,omitempty"`
+	LastResolvedAt string `json:"last_resolved_at,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
+}
+
+type codexAppCDPWatch struct {
+	Enabled         bool `json:"enabled"`
+	Running         bool `json:"running"`
+	IntervalSeconds int  `json:"interval_seconds,omitempty"`
+	CooldownSeconds int  `json:"cooldown_seconds,omitempty"`
+}
+
+type codexAppCDPReady struct {
+	Available        bool   `json:"available"`
+	TargetCount      int    `json:"target_count"`
+	LastCheckedAt    string `json:"last_checked_at,omitempty"`
+	LastError        string `json:"last_error,omitempty"`
+	LastRepairAt     string `json:"last_repair_at,omitempty"`
+	LastRepairAction string `json:"last_repair_action,omitempty"`
+	LastRepairError  string `json:"last_repair_error,omitempty"`
 }
 
 func (s *Server) channelStatus() []channelStatus {
@@ -630,7 +671,48 @@ func (s *Server) agentStatus() *agentStatus {
 			ConversationID:  strings.TrimSpace(codex.ConversationID),
 			InboxConfigured: strings.TrimSpace(codex.InboxPath) != "",
 			FallbackToInbox: codex.FallbackToInbox,
-			DefaultAgent:    strings.TrimSpace(codex.DefaultAgent),
+			RepairPolicy:    codexRepairPolicy(codex),
+			CheckOnIncoming: codexCheckOnIncoming(codex),
+			Watch: codexAppCDPWatch{
+				Enabled:         codexWatchEnabled(codex),
+				IntervalSeconds: codexWatchIntervalSeconds(codex),
+				CooldownSeconds: codexCooldownSeconds(codex),
+			},
+			DefaultAgent: strings.TrimSpace(codex.DefaultAgent),
+		}
+		if codexTargetProjectConfigured(codex) {
+			status.CodexAppCDP.TargetProject = &codexAppCDPTargetProject{
+				Name:    strings.TrimSpace(codex.TargetProject.Name),
+				CWD:     strings.TrimSpace(codex.TargetProject.CWD),
+				Session: strings.TrimSpace(codex.TargetProject.Session),
+				StateDB: strings.TrimSpace(codex.TargetProject.StateDB),
+			}
+		}
+		if s.agentManager != nil {
+			if readiness := s.agentManager.CodexAppCDPReadinessStatus(); readiness != nil {
+				status.CodexAppCDP.Watch.Running = readiness.WatchRunning
+				status.CodexAppCDP.Readiness = &codexAppCDPReady{
+					Available:        readiness.Available,
+					TargetCount:      readiness.TargetCount,
+					LastCheckedAt:    formatStatusTime(readiness.LastCheckedAt),
+					LastError:        readiness.LastError,
+					LastRepairAt:     formatStatusTime(readiness.LastRepairAt),
+					LastRepairAction: readiness.LastRepairAction,
+					LastRepairError:  readiness.LastRepairError,
+				}
+			}
+			if resolved := s.agentManager.CodexAppCDPResolvedConversationStatus(); resolved != nil {
+				status.CodexAppCDP.ResolvedConversation = &codexAppCDPResolvedTarget{
+					Configured:     resolved.Configured,
+					ID:             resolved.ID,
+					Title:          resolved.Title,
+					CWD:            resolved.ThreadCWD,
+					UpdatedAt:      formatStatusTime(resolved.UpdatedAt),
+					Source:         resolved.Source,
+					LastResolvedAt: formatStatusTime(resolved.LastResolvedAt),
+					LastError:      resolved.LastError,
+				}
+			}
 		}
 		if len(codex.AllowedAgents) > 0 {
 			status.CodexAppCDP.AllowedAgents = append([]string{}, codex.AllowedAgents...)
@@ -657,6 +739,49 @@ func activeAgentRouterName(cfg *config.AgentsConfig) string {
 		return "codexAppCDP"
 	}
 	return ""
+}
+
+func codexRepairPolicy(cfg *config.CodexAppCDPConfig) string {
+	if cfg == nil || strings.TrimSpace(cfg.RepairPolicy) == "" {
+		return "relaunch"
+	}
+	return strings.TrimSpace(cfg.RepairPolicy)
+}
+
+func codexCheckOnIncoming(cfg *config.CodexAppCDPConfig) bool {
+	return cfg == nil || cfg.CheckOnIncomingMessage == nil || *cfg.CheckOnIncomingMessage
+}
+
+func codexWatchEnabled(cfg *config.CodexAppCDPConfig) bool {
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	if cfg.Watch.Enabled == nil {
+		return true
+	}
+	return *cfg.Watch.Enabled
+}
+
+func codexTargetProjectConfigured(cfg *config.CodexAppCDPConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	target := cfg.TargetProject
+	return strings.TrimSpace(target.Name) != "" || strings.TrimSpace(target.CWD) != "" || strings.TrimSpace(target.Session) != "" || strings.TrimSpace(target.StateDB) != ""
+}
+
+func codexWatchIntervalSeconds(cfg *config.CodexAppCDPConfig) int {
+	if cfg != nil && cfg.Watch.IntervalSeconds > 0 {
+		return cfg.Watch.IntervalSeconds
+	}
+	return 60
+}
+
+func codexCooldownSeconds(cfg *config.CodexAppCDPConfig) int {
+	if cfg != nil && cfg.Watch.CooldownSeconds > 0 {
+		return cfg.Watch.CooldownSeconds
+	}
+	return 90
 }
 
 func routingStatusFromOutcome(routing *agent.RoutingOutcome) *agentRoutingStatus {

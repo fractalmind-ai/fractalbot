@@ -163,6 +163,10 @@ type CodexAppCDPConfig struct {
 	// If empty, the CDP bridge extracts the active /local/<conversationId> route.
 	ConversationID string `yaml:"conversationId,omitempty"`
 
+	// TargetProject resolves the Codex App conversation dynamically by project
+	// and named session. ConversationID, when set, remains an explicit override.
+	TargetProject CodexAppCDPTargetProjectConfig `yaml:"targetProject,omitempty"`
+
 	// InboxPath is a durable file-backed inbox used as the MVP queue and CDP fallback.
 	InboxPath string `yaml:"inboxPath,omitempty"`
 
@@ -178,6 +182,46 @@ type CodexAppCDPConfig struct {
 
 	// DeliveryTimeoutSeconds limits CDP delivery time. Defaults to 20 seconds.
 	DeliveryTimeoutSeconds int `yaml:"deliveryTimeoutSeconds,omitempty"`
+
+	// RepairPolicy controls what the gateway may do when CDP is unavailable.
+	// Supported values: "off", "status-only", "new-instance", "relaunch".
+	// Empty defaults to "relaunch" when Codex App CDP is enabled.
+	RepairPolicy string `yaml:"repairPolicy,omitempty"`
+
+	// CheckOnIncomingMessage controls whether inbound Codex App routes check CDP
+	// readiness before delivery. Nil defaults to true.
+	CheckOnIncomingMessage *bool `yaml:"checkOnIncomingMessage,omitempty"`
+
+	// Watch periodically checks CDP readiness while the gateway is running.
+	Watch CodexAppCDPWatchConfig `yaml:"watch,omitempty"`
+}
+
+// CodexAppCDPTargetProjectConfig describes a stable logical Codex App target.
+type CodexAppCDPTargetProjectConfig struct {
+	// Name is an optional display alias used when CWD is not configured.
+	Name string `yaml:"name,omitempty"`
+
+	// CWD is the project working directory. Exact CWD match is preferred.
+	CWD string `yaml:"cwd,omitempty"`
+
+	// Session is the named Codex App session, for example "main".
+	Session string `yaml:"session,omitempty"`
+
+	// StateDB optionally pins the Codex App state sqlite DB for resolution.
+	// Empty defaults to the newest ~/.codex/state_*.sqlite.
+	StateDB string `yaml:"stateDb,omitempty"`
+}
+
+// CodexAppCDPWatchConfig controls the long-running Codex App CDP watchdog.
+type CodexAppCDPWatchConfig struct {
+	// Enabled controls the watchdog. Nil defaults to true when Codex App CDP is enabled.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// IntervalSeconds sets the watchdog interval. Defaults to 60 when watch is enabled.
+	IntervalSeconds int `yaml:"intervalSeconds,omitempty"`
+
+	// CooldownSeconds prevents repeated repair attempts. Defaults to 90.
+	CooldownSeconds int `yaml:"cooldownSeconds,omitempty"`
 }
 
 // AgentsConfig contains gateway-side agent routing settings.
@@ -348,11 +392,22 @@ func validateCodexAppCDPConfig(cfg *Config) error {
 	if !codex.Enabled {
 		return nil
 	}
-	if strings.TrimSpace(codex.InboxPath) == "" {
-		return fmt.Errorf("agents.codexAppCDP.inboxPath: required when agents.codexAppCDP.enabled is true")
+	if strings.TrimSpace(codex.CDPEndpoint) == "" && strings.TrimSpace(codex.InboxPath) == "" {
+		return fmt.Errorf("agents.codexAppCDP.cdpEndpoint or agents.codexAppCDP.inboxPath: required when agents.codexAppCDP.enabled is true")
 	}
 	if codex.DeliveryTimeoutSeconds < 0 {
 		return fmt.Errorf("agents.codexAppCDP.deliveryTimeoutSeconds: must be >= 0")
+	}
+	switch strings.TrimSpace(codex.RepairPolicy) {
+	case "", "off", "status-only", "new-instance", "relaunch":
+	default:
+		return fmt.Errorf("agents.codexAppCDP.repairPolicy: unsupported policy %q", codex.RepairPolicy)
+	}
+	if codex.Watch.IntervalSeconds < 0 {
+		return fmt.Errorf("agents.codexAppCDP.watch.intervalSeconds: must be >= 0")
+	}
+	if codex.Watch.CooldownSeconds < 0 {
+		return fmt.Errorf("agents.codexAppCDP.watch.cooldownSeconds: must be >= 0")
 	}
 	return nil
 }

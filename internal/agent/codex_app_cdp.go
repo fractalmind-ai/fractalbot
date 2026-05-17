@@ -9,8 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,7 +27,17 @@ import (
 const (
 	defaultCodexAppHostID          = "local"
 	defaultCodexAppDeliveryTimeout = 20 * time.Second
+	defaultCodexAppWatchInterval   = 60 * time.Second
+	defaultCodexAppRepairCooldown  = 90 * time.Second
+	defaultCodexAppPath            = "/Applications/Codex.app"
 	codexAppAssignAckMessage       = "处理中…"
+)
+
+const (
+	codexAppCDPRepairOff         = "off"
+	codexAppCDPRepairStatusOnly  = "status-only"
+	codexAppCDPRepairNewInstance = "new-instance"
+	codexAppCDPRepairRelaunch    = "relaunch"
 )
 
 type CodexAppEnvelope struct {
@@ -55,6 +69,53 @@ type codexAppCDPClient interface {
 }
 
 type liveCodexAppCDPClient struct{}
+
+var queryCodexAppThreads = queryCodexAppThreadsFromStateDB
+
+// CodexAppCDPReadinessStatus is exposed in /status for CDP observability.
+type CodexAppCDPReadinessStatus struct {
+	Enabled          bool
+	Endpoint         string
+	Available        bool
+	TargetCount      int
+	RepairPolicy     string
+	CheckOnIncoming  bool
+	WatchEnabled     bool
+	WatchRunning     bool
+	IntervalSeconds  int
+	CooldownSeconds  int
+	LastCheckedAt    time.Time
+	LastError        string
+	LastRepairAt     time.Time
+	LastRepairAction string
+	LastRepairError  string
+}
+
+// CodexAppCDPResolvedConversationStatus is exposed in /status for target
+// observability when delivery resolves project/session to a conversation id.
+type CodexAppCDPResolvedConversationStatus struct {
+	Configured     bool
+	ProjectName    string
+	ProjectCWD     string
+	Session        string
+	ID             string
+	Title          string
+	ThreadCWD      string
+	UpdatedAt      time.Time
+	Source         string
+	LastResolvedAt time.Time
+	LastError      string
+}
+
+type codexAppThreadRecord struct {
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	AgentNickname string `json:"agent_nickname"`
+	CWD           string `json:"cwd"`
+	Source        string `json:"source"`
+	UpdatedAt     int64  `json:"updated_at"`
+	UpdatedAtMS   int64  `json:"updated_at_ms"`
+}
 
 func (m *Manager) isCodexAppCDPEnabled() bool {
 	if m.config == nil || m.config.CodexAppCDP == nil {
@@ -114,23 +175,36 @@ func (m *Manager) deliverCodexAppEnvelope(ctx context.Context, cfg *config.Codex
 
 	endpoint := strings.TrimSpace(cfg.CDPEndpoint)
 	if endpoint != "" {
+		deliveryCfg := *cfg
 		deliveryCtx := ctx
 		if timeout := codexAppDeliveryTimeout(cfg); timeout > 0 {
 			var cancel context.CancelFunc
 			deliveryCtx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
 		}
-		client := m.codexAppCDPClient
-		if client == nil {
-			client = liveCodexAppCDPClient{}
+		if codexAppCheckOnIncoming(cfg) {
+			deliveryErr = m.ensureCodexAppCDPReady(deliveryCtx, cfg, "incoming")
 		}
-		if err := client.Deliver(deliveryCtx, cfg, envelope, prompt); err == nil {
-			result.Status = "delivered"
-			result.CDPDelivered = true
-			result.ConversationID = strings.TrimSpace(cfg.ConversationID)
-			return result
-		} else {
-			deliveryErr = err
+		if deliveryErr == nil {
+			if conversationID, err := m.resolveCodexAppConversation(deliveryCtx, cfg); err != nil {
+				deliveryErr = err
+			} else if strings.TrimSpace(conversationID) != "" {
+				deliveryCfg.ConversationID = conversationID
+			}
+		}
+		if deliveryErr == nil {
+			client := m.codexAppCDPClient
+			if client == nil {
+				client = liveCodexAppCDPClient{}
+			}
+			if err := client.Deliver(deliveryCtx, &deliveryCfg, envelope, prompt); err == nil {
+				result.Status = "delivered"
+				result.CDPDelivered = true
+				result.ConversationID = strings.TrimSpace(deliveryCfg.ConversationID)
+				return result
+			} else {
+				deliveryErr = err
+			}
 		}
 	}
 
@@ -167,6 +241,547 @@ func codexAppDeliveryTimeout(cfg *config.CodexAppCDPConfig) time.Duration {
 		return time.Duration(cfg.DeliveryTimeoutSeconds) * time.Second
 	}
 	return defaultCodexAppDeliveryTimeout
+}
+
+func codexAppRepairPolicy(cfg *config.CodexAppCDPConfig) string {
+	if cfg == nil {
+		return codexAppCDPRepairRelaunch
+	}
+	policy := strings.TrimSpace(cfg.RepairPolicy)
+	if policy == "" {
+		return codexAppCDPRepairRelaunch
+	}
+	return policy
+}
+
+func codexAppCheckOnIncoming(cfg *config.CodexAppCDPConfig) bool {
+	if cfg == nil || cfg.CheckOnIncomingMessage == nil {
+		return true
+	}
+	return *cfg.CheckOnIncomingMessage
+}
+
+func codexAppWatchInterval(cfg *config.CodexAppCDPConfig) time.Duration {
+	if cfg != nil && cfg.Watch.IntervalSeconds > 0 {
+		return time.Duration(cfg.Watch.IntervalSeconds) * time.Second
+	}
+	return defaultCodexAppWatchInterval
+}
+
+func codexAppRepairCooldown(cfg *config.CodexAppCDPConfig) time.Duration {
+	if cfg != nil && cfg.Watch.CooldownSeconds > 0 {
+		return time.Duration(cfg.Watch.CooldownSeconds) * time.Second
+	}
+	return defaultCodexAppRepairCooldown
+}
+
+func codexAppWatchEnabled(cfg *config.CodexAppCDPConfig) bool {
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	if cfg.Watch.Enabled == nil {
+		return true
+	}
+	return *cfg.Watch.Enabled
+}
+
+func (m *Manager) startCodexAppCDPWatch(parent context.Context, cfg *config.CodexAppCDPConfig) {
+	if cfg == nil || !codexAppWatchEnabled(cfg) || strings.TrimSpace(cfg.CDPEndpoint) == "" || codexAppRepairPolicy(cfg) == codexAppCDPRepairOff {
+		m.updateCodexAppCDPReadinessStatus(cfg, nil, false)
+		return
+	}
+	m.stopCodexAppCDPWatch(context.Background())
+
+	watchCtx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.cdpMonitorCancel = cancel
+	m.cdpMonitorDone = done
+	m.mu.Unlock()
+	m.updateCodexAppCDPReadinessStatus(cfg, nil, true)
+
+	go func() {
+		defer close(done)
+		interval := codexAppWatchInterval(cfg)
+		m.ensureCodexAppCDPReadyWithTimeout(watchCtx, cfg, "watch")
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+				m.ensureCodexAppCDPReadyWithTimeout(watchCtx, cfg, "watch")
+			}
+		}
+	}()
+}
+
+func (m *Manager) stopCodexAppCDPWatch(ctx context.Context) {
+	m.mu.Lock()
+	cancel := m.cdpMonitorCancel
+	done := m.cdpMonitorDone
+	m.cdpMonitorCancel = nil
+	m.cdpMonitorDone = nil
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	m.mu.Lock()
+	if m.cdpReadiness != nil {
+		m.cdpReadiness.WatchRunning = false
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) CodexAppCDPReadinessStatus() *CodexAppCDPReadinessStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cdpReadiness == nil {
+		return nil
+	}
+	status := *m.cdpReadiness
+	return &status
+}
+
+func (m *Manager) CodexAppCDPResolvedConversationStatus() *CodexAppCDPResolvedConversationStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cdpResolvedTarget == nil {
+		return nil
+	}
+	status := *m.cdpResolvedTarget
+	return &status
+}
+
+func (m *Manager) updateCodexAppCDPResolvedConversationStatus(cfg *config.CodexAppCDPConfig, update func(*CodexAppCDPResolvedConversationStatus)) {
+	if cfg == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	status := m.cdpResolvedTarget
+	if status == nil {
+		status = &CodexAppCDPResolvedConversationStatus{}
+		m.cdpResolvedTarget = status
+	}
+	status.Configured = codexAppTargetProjectConfigured(cfg)
+	status.ProjectName = strings.TrimSpace(cfg.TargetProject.Name)
+	status.ProjectCWD = strings.TrimSpace(cfg.TargetProject.CWD)
+	status.Session = strings.TrimSpace(cfg.TargetProject.Session)
+	if update != nil {
+		update(status)
+	}
+}
+
+func (m *Manager) updateCodexAppCDPReadinessStatus(cfg *config.CodexAppCDPConfig, update func(*CodexAppCDPReadinessStatus), watchRunning bool) {
+	if cfg == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	status := m.cdpReadiness
+	if status == nil {
+		status = &CodexAppCDPReadinessStatus{}
+		m.cdpReadiness = status
+	}
+	status.Enabled = cfg.Enabled
+	status.Endpoint = strings.TrimSpace(cfg.CDPEndpoint)
+	status.RepairPolicy = codexAppRepairPolicy(cfg)
+	status.CheckOnIncoming = codexAppCheckOnIncoming(cfg)
+	status.WatchEnabled = codexAppWatchEnabled(cfg)
+	status.WatchRunning = watchRunning || (m.cdpMonitorCancel != nil)
+	status.IntervalSeconds = int(codexAppWatchInterval(cfg) / time.Second)
+	status.CooldownSeconds = int(codexAppRepairCooldown(cfg) / time.Second)
+	if update != nil {
+		update(status)
+	}
+}
+
+func (m *Manager) ensureCodexAppCDPReady(ctx context.Context, cfg *config.CodexAppCDPConfig, _ string) error {
+	if cfg == nil || strings.TrimSpace(cfg.CDPEndpoint) == "" {
+		return nil
+	}
+	policy := codexAppRepairPolicy(cfg)
+	if policy == codexAppCDPRepairOff {
+		return nil
+	}
+
+	available, targetCount, checkErr := checkCodexAppCDPReady(ctx, cfg)
+	m.updateCodexAppCDPReadinessStatus(cfg, func(status *CodexAppCDPReadinessStatus) {
+		status.Available = available
+		status.TargetCount = targetCount
+		status.LastCheckedAt = time.Now().UTC()
+		status.LastError = errorString(checkErr)
+	}, false)
+	if checkErr == nil {
+		return nil
+	}
+	if policy == codexAppCDPRepairStatusOnly {
+		return checkErr
+	}
+
+	if !m.canRepairCodexAppCDP(cfg) {
+		return checkErr
+	}
+
+	repairErr := repairCodexAppCDP(ctx, cfg, policy)
+	m.updateCodexAppCDPReadinessStatus(cfg, func(status *CodexAppCDPReadinessStatus) {
+		status.LastRepairAt = time.Now().UTC()
+		status.LastRepairAction = policy
+		status.LastRepairError = errorString(repairErr)
+	}, false)
+	if repairErr != nil {
+		return fmt.Errorf("Codex App CDP unavailable: %v; repair failed: %w", checkErr, repairErr)
+	}
+
+	available, targetCount, checkErr = waitCodexAppCDPReady(ctx, cfg)
+	m.updateCodexAppCDPReadinessStatus(cfg, func(status *CodexAppCDPReadinessStatus) {
+		status.Available = available
+		status.TargetCount = targetCount
+		status.LastCheckedAt = time.Now().UTC()
+		status.LastError = errorString(checkErr)
+	}, false)
+	return checkErr
+}
+
+func (m *Manager) ensureCodexAppCDPReadyWithTimeout(ctx context.Context, cfg *config.CodexAppCDPConfig, reason string) error {
+	if timeout := codexAppDeliveryTimeout(cfg); timeout > 0 {
+		checkCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return m.ensureCodexAppCDPReady(checkCtx, cfg, reason)
+	}
+	return m.ensureCodexAppCDPReady(ctx, cfg, reason)
+}
+
+func (m *Manager) canRepairCodexAppCDP(cfg *config.CodexAppCDPConfig) bool {
+	cooldown := codexAppRepairCooldown(cfg)
+	if cooldown <= 0 {
+		return true
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cdpReadiness == nil || m.cdpReadiness.LastRepairAt.IsZero() || time.Since(m.cdpReadiness.LastRepairAt) >= cooldown
+}
+
+func checkCodexAppCDPReady(ctx context.Context, cfg *config.CodexAppCDPConfig) (bool, int, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(cfg.CDPEndpoint), "/")
+	if endpoint == "" {
+		return false, 0, errors.New("agents.codexAppCDP.cdpEndpoint is required")
+	}
+	if err := getCodexAppCDPJSON(ctx, endpoint+"/json/version", nil); err != nil {
+		return false, 0, err
+	}
+	var targets []cdpTarget
+	if err := getCodexAppCDPJSON(ctx, endpoint+"/json/list", &targets); err != nil {
+		return false, 0, err
+	}
+	count := 0
+	for _, target := range targets {
+		if target.WebSocketDebuggerURL != "" {
+			count++
+		}
+	}
+	if count == 0 {
+		return false, 0, errors.New("Codex App CDP has no debuggable targets")
+	}
+	return true, count, nil
+}
+
+func waitCodexAppCDPReady(ctx context.Context, cfg *config.CodexAppCDPConfig) (bool, int, error) {
+	var lastErr error
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		available, targetCount, err := checkCodexAppCDPReady(ctx, cfg)
+		if err == nil {
+			return available, targetCount, nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return false, 0, lastErr
+			}
+			return false, 0, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func getCodexAppCDPJSON(ctx context.Context, endpoint string, dest interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("query CDP endpoint %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("query CDP endpoint %s: HTTP %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if dest == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		return fmt.Errorf("decode CDP endpoint %s: %w", endpoint, err)
+	}
+	return nil
+}
+
+func repairCodexAppCDP(ctx context.Context, cfg *config.CodexAppCDPConfig, policy string) error {
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("repair policy %q is only supported on macOS", policy)
+	}
+	port, err := codexAppCDPPort(cfg.CDPEndpoint)
+	if err != nil {
+		return err
+	}
+	switch policy {
+	case codexAppCDPRepairNewInstance:
+		return openCodexAppWithCDP(ctx, port)
+	case codexAppCDPRepairRelaunch:
+		_ = exec.CommandContext(ctx, "osascript", "-e", `tell application "Codex" to quit`).Run()
+		time.Sleep(2 * time.Second)
+		return openCodexAppWithCDP(ctx, port)
+	default:
+		return fmt.Errorf("unsupported repair policy %q", policy)
+	}
+}
+
+func openCodexAppWithCDP(ctx context.Context, port string) error {
+	cmd := exec.CommandContext(ctx, "open", "-na", defaultCodexAppPath, "--args", "--remote-debugging-port="+port)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("launch Codex App with CDP: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func codexAppCDPPort(endpoint string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Host == "" {
+		return "", fmt.Errorf("agents.codexAppCDP.cdpEndpoint: invalid endpoint %q", endpoint)
+	}
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return "", fmt.Errorf("agents.codexAppCDP.cdpEndpoint: unsupported scheme %q", parsed.Scheme)
+		}
+	}
+	return port, nil
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func (m *Manager) resolveCodexAppConversation(ctx context.Context, cfg *config.CodexAppCDPConfig) (string, error) {
+	if cfg == nil {
+		return "", nil
+	}
+	if conversationID := strings.TrimSpace(cfg.ConversationID); conversationID != "" {
+		m.updateCodexAppCDPResolvedConversationStatus(cfg, func(status *CodexAppCDPResolvedConversationStatus) {
+			status.ID = conversationID
+			status.Title = ""
+			status.ThreadCWD = ""
+			status.UpdatedAt = time.Time{}
+			status.Source = "config"
+			status.LastResolvedAt = time.Now().UTC()
+			status.LastError = ""
+		})
+		return conversationID, nil
+	}
+	if !codexAppTargetProjectConfigured(cfg) {
+		return "", nil
+	}
+	threads, source, err := queryCodexAppThreads(ctx, cfg)
+	if err != nil {
+		m.updateCodexAppCDPResolvedConversationStatus(cfg, func(status *CodexAppCDPResolvedConversationStatus) {
+			status.ID = ""
+			status.Title = ""
+			status.ThreadCWD = ""
+			status.UpdatedAt = time.Time{}
+			status.LastResolvedAt = time.Now().UTC()
+			status.LastError = err.Error()
+			status.Source = source
+		})
+		return "", err
+	}
+	thread, matchSource, err := selectCodexAppTargetThread(threads, cfg)
+	if err != nil {
+		m.updateCodexAppCDPResolvedConversationStatus(cfg, func(status *CodexAppCDPResolvedConversationStatus) {
+			status.ID = ""
+			status.Title = ""
+			status.ThreadCWD = ""
+			status.UpdatedAt = time.Time{}
+			status.LastResolvedAt = time.Now().UTC()
+			status.LastError = err.Error()
+			status.Source = source
+		})
+		return "", err
+	}
+	updatedAt := codexAppThreadUpdatedAt(thread)
+	m.updateCodexAppCDPResolvedConversationStatus(cfg, func(status *CodexAppCDPResolvedConversationStatus) {
+		status.ID = thread.ID
+		status.Title = thread.Title
+		status.ThreadCWD = thread.CWD
+		status.UpdatedAt = updatedAt
+		status.Source = strings.Trim(strings.Join([]string{source, matchSource}, ":"), ":")
+		status.LastResolvedAt = time.Now().UTC()
+		status.LastError = ""
+	})
+	return thread.ID, nil
+}
+
+func codexAppTargetProjectConfigured(cfg *config.CodexAppCDPConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	target := cfg.TargetProject
+	return strings.TrimSpace(target.Name) != "" || strings.TrimSpace(target.CWD) != "" || strings.TrimSpace(target.Session) != ""
+}
+
+func queryCodexAppThreadsFromStateDB(ctx context.Context, cfg *config.CodexAppCDPConfig) ([]codexAppThreadRecord, string, error) {
+	dbPath, err := codexAppStateDBPath(cfg)
+	if err != nil {
+		return nil, "state-db", err
+	}
+	query := `select id,title,coalesce(agent_nickname,'') as agent_nickname,cwd,source,updated_at,coalesce(updated_at_ms,0) as updated_at_ms from threads where archived=0 order by updated_at desc, updated_at_ms desc limit 500;`
+	cmd := exec.CommandContext(ctx, "sqlite3", "-json", dbPath, query)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, "state-db", fmt.Errorf("query Codex App state DB %s: %w: %s", dbPath, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, "state-db", fmt.Errorf("query Codex App state DB %s: %w", dbPath, err)
+	}
+	var threads []codexAppThreadRecord
+	if err := json.Unmarshal(output, &threads); err != nil {
+		return nil, "state-db", fmt.Errorf("decode Codex App state DB threads: %w", err)
+	}
+	return threads, "state-db", nil
+}
+
+func codexAppStateDBPath(cfg *config.CodexAppCDPConfig) (string, error) {
+	if cfg != nil {
+		if dbPath := strings.TrimSpace(cfg.TargetProject.StateDB); dbPath != "" {
+			return dbPath, nil
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve Codex App state DB: %w", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(home, ".codex", "state_*.sqlite"))
+	if err != nil {
+		return "", fmt.Errorf("resolve Codex App state DB: %w", err)
+	}
+	if len(matches) == 0 {
+		return "", errors.New("no Codex App state DB found at ~/.codex/state_*.sqlite")
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		left, leftErr := os.Stat(matches[i])
+		right, rightErr := os.Stat(matches[j])
+		if leftErr != nil || rightErr != nil {
+			return matches[i] > matches[j]
+		}
+		return left.ModTime().After(right.ModTime())
+	})
+	return matches[0], nil
+}
+
+func selectCodexAppTargetThread(threads []codexAppThreadRecord, cfg *config.CodexAppCDPConfig) (codexAppThreadRecord, string, error) {
+	if cfg == nil {
+		return codexAppThreadRecord{}, "", errors.New("agents.codexAppCDP is required")
+	}
+	target := cfg.TargetProject
+	projectName := strings.TrimSpace(target.Name)
+	projectCWD := cleanCodexAppCWD(target.CWD)
+	session := strings.TrimSpace(target.Session)
+	matches := make([]codexAppThreadRecord, 0, len(threads))
+	for _, thread := range threads {
+		if strings.TrimSpace(thread.ID) == "" {
+			continue
+		}
+		if !codexAppProjectMatches(thread, projectName, projectCWD) {
+			continue
+		}
+		matches = append(matches, thread)
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		return codexAppThreadUpdatedAt(matches[i]).After(codexAppThreadUpdatedAt(matches[j]))
+	})
+	if len(matches) == 0 {
+		return codexAppThreadRecord{}, "", fmt.Errorf("no Codex App thread matched project cwd=%q name=%q", target.CWD, target.Name)
+	}
+	if session == "" {
+		return matches[0], "project-latest", nil
+	}
+	for _, thread := range matches {
+		if codexAppSessionMatches(thread, session) {
+			return thread, "named-session", nil
+		}
+	}
+	if strings.EqualFold(session, "main") {
+		return matches[0], "main-latest", nil
+	}
+	return codexAppThreadRecord{}, "", fmt.Errorf("no Codex App thread matched project cwd=%q name=%q session=%q", target.CWD, target.Name, target.Session)
+}
+
+func codexAppProjectMatches(thread codexAppThreadRecord, projectName, projectCWD string) bool {
+	threadCWD := cleanCodexAppCWD(thread.CWD)
+	if projectCWD != "" {
+		return threadCWD == projectCWD
+	}
+	if projectName == "" {
+		return true
+	}
+	return strings.EqualFold(filepath.Base(threadCWD), projectName)
+}
+
+func codexAppSessionMatches(thread codexAppThreadRecord, session string) bool {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(thread.AgentNickname), session) || strings.EqualFold(strings.TrimSpace(thread.Title), session)
+}
+
+func cleanCodexAppCWD(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return filepath.Clean(value)
+}
+
+func codexAppThreadUpdatedAt(thread codexAppThreadRecord) time.Time {
+	if thread.UpdatedAtMS > 0 {
+		return time.UnixMilli(thread.UpdatedAtMS).UTC()
+	}
+	if thread.UpdatedAt > 0 {
+		return time.Unix(thread.UpdatedAt, 0).UTC()
+	}
+	return time.Time{}
 }
 
 func buildCodexAppEnvelope(userText, selectedAgent string, inboundData map[string]interface{}) CodexAppEnvelope {
@@ -329,18 +944,46 @@ func selectCodexAppCDPTarget(ctx context.Context, endpoint, selector string) (cd
 		return cdpTarget{}, fmt.Errorf("decode CDP targets: %w", err)
 	}
 	selector = strings.TrimSpace(selector)
+	candidates := make([]cdpTarget, 0, len(targets))
 	for _, target := range targets {
 		if target.WebSocketDebuggerURL == "" {
 			continue
 		}
-		if selector == "" && (target.Type == "page" || target.Type == "webview" || target.Type == "other") {
+		if selector != "" && (strings.Contains(target.Title, selector) || strings.Contains(target.URL, selector)) {
 			return target, nil
 		}
-		if selector != "" && (strings.Contains(target.Title, selector) || strings.Contains(target.URL, selector)) {
+		candidates = append(candidates, target)
+	}
+	if selector == "" {
+		if target, ok := preferredCodexAppCDPTarget(candidates); ok {
 			return target, nil
 		}
 	}
 	return cdpTarget{}, fmt.Errorf("no Codex App CDP target matched %q", selector)
+}
+
+func preferredCodexAppCDPTarget(targets []cdpTarget) (cdpTarget, bool) {
+	for _, target := range targets {
+		if target.Type == "page" && target.URL == "app://-/index.html" {
+			return target, true
+		}
+	}
+	for _, target := range targets {
+		if target.Type == "page" && (target.Title == "Codex" || strings.HasPrefix(target.URL, "app://-/")) {
+			return target, true
+		}
+	}
+	for _, target := range targets {
+		if target.Type == "page" {
+			return target, true
+		}
+	}
+	for _, target := range targets {
+		if target.Type == "webview" || target.Type == "other" {
+			return target, true
+		}
+	}
+	return cdpTarget{}, false
 }
 
 func evaluateCDPExpression(ctx context.Context, wsURL, expression string) error {
