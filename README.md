@@ -166,10 +166,27 @@ agents:
     cdpEndpoint: "http://127.0.0.1:9222"
     targetSelector: "Codex"
     hostId: "local"
-    # Empty means use the active /local/<conversationId> in Codex App.
+    # Recommended: route by stable project + named session. The gateway resolves
+    # the current conversation id before each delivery.
+    targetProject:
+      name: "CloudBank"
+      cwd: "/Users/you/Develop/SuLabsOrg/CloudBank"
+      session: "main"
+    # Advanced override: pin to a specific /local/<conversationId>. Empty uses
+    # targetProject when configured, then the active Codex App thread.
     conversationId: ""
-    inboxPath: "/Users/you/work-assistant/.fractalbot/inbox"
+    inboxPath: "/Users/you/Develop/SuLabsOrg/CloudBank/.fractalbot/inbox"
     fallbackToInbox: true
+    # CDP readiness / repair. Empty repairPolicy defaults to "relaunch".
+    # Supported values: "off", "status-only", "new-instance", "relaunch".
+    # With codexAppCDP enabled, the gateway starts the watchdog by default and
+    # relaunches Codex App with --remote-debugging-port when CDP is unavailable.
+    repairPolicy: "relaunch"
+    checkOnIncomingMessage: true
+    watch:
+      enabled: true
+      intervalSeconds: 60
+      cooldownSeconds: 90
     defaultAgent: "main"
     allowedAgents:
       - "main"
@@ -193,11 +210,23 @@ The `codexAppCDP` router delivers through CDP into the running Codex App rendere
    open -na /Applications/Codex.app --args --remote-debugging-port=9222
    ```
 
-2. Open the target work-assistant main thread in Codex App, or set `agents.codexAppCDP.conversationId` to its `/local/<conversationId>` value.
-3. Set `agents.router: codexAppCDP`, `agents.codexAppCDP.enabled: true`, and `agents.codexAppCDP.inboxPath`.
-4. Verify `/status`: it reports `agents.router`, `agents.codex_app_cdp`, and `agents.last_routing` with `backend`, `status`, `envelope_id`, `inbox_path`, and any CDP error.
+2. Configure `agents.codexAppCDP.targetProject.cwd` plus `targetProject.session` so the gateway resolves the current Codex App conversation before each delivery. `session: "main"` uses an exact `agent_nickname` or title match when present, and otherwise resolves to the latest non-archived thread for that project cwd.
+3. Set `agents.router: codexAppCDP`, `agents.codexAppCDP.enabled: true`, and `agents.codexAppCDP.inboxPath`. Leave `conversationId` empty unless you intentionally want a pinned thread override.
+4. By default, `agents.codexAppCDP.repairPolicy` is `relaunch` and `watch.enabled` is true when `codexAppCDP` is enabled. If CDP is unavailable, FractalBot asks Codex App to quit and reopens it with `--remote-debugging-port`. Set `repairPolicy: "status-only"` or `watch.enabled: false` if you only want reporting.
+5. Keep `checkOnIncomingMessage: true` so each inbound Codex App route checks `/json/version` and `/json/list` before delivery. `cooldownSeconds` prevents repeated repair attempts.
+6. Verify `/status`: it reports `agents.router`, `agents.codex_app_cdp`, `agents.codex_app_cdp.target_project`, `agents.codex_app_cdp.resolved_conversation`, `agents.codex_app_cdp.readiness`, and `agents.last_routing` with `backend`, `status`, `envelope_id`, `inbox_path`, and any CDP error.
 
 If CDP is unavailable and `fallbackToInbox` is true, FractalBot atomically writes the normalized envelope to `inboxPath` so the Codex App-side consumer can process it later.
+
+Troubleshooting CDP readiness:
+
+```bash
+curl -fsS http://127.0.0.1:9222/json/version
+curl -fsS http://127.0.0.1:9222/json/list
+curl -sS http://127.0.0.1:18789/status | python3 -m json.tool
+```
+
+The gateway intentionally does not fall back to `codex app-server proxy` or temporary `codex app-server --listen` delivery. Messages that cannot reach the visible Codex App renderer are either reported as errors or queued to `inboxPath` when `fallbackToInbox` is enabled.
 
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)

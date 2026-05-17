@@ -45,6 +45,10 @@ type Manager struct {
 	routingMu         sync.RWMutex
 	lastRouting       *RoutingOutcome
 	codexAppCDPClient codexAppCDPClient
+	cdpMonitorCancel  context.CancelFunc
+	cdpMonitorDone    chan struct{}
+	cdpReadiness      *CodexAppCDPReadinessStatus
+	cdpResolvedTarget *CodexAppCDPResolvedConversationStatus
 }
 
 type RoutingOutcome struct {
@@ -73,13 +77,15 @@ func NewManager(cfg *config.AgentsConfig) *Manager {
 
 // Start initializes resources required by the manager.
 func (m *Manager) Start(ctx context.Context) error {
-	_ = ctx
+	if m.config != nil && m.config.CodexAppCDP != nil && m.config.CodexAppCDP.Enabled {
+		m.startCodexAppCDPWatch(ctx, m.config.CodexAppCDP)
+	}
 	return nil
 }
 
 // Stop releases resources held by the manager.
 func (m *Manager) Stop(ctx context.Context) error {
-	_ = ctx
+	m.stopCodexAppCDPWatch(ctx)
 	return nil
 }
 

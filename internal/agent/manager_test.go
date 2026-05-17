@@ -8,13 +8,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 	"github.com/gorilla/websocket"
 )
+
+type recordingCodexAppCDPClient struct {
+	calls          int32
+	conversationID string
+}
+
+func (c *recordingCodexAppCDPClient) Deliver(ctx context.Context, cfg *config.CodexAppCDPConfig, envelope CodexAppEnvelope, prompt string) error {
+	atomic.AddInt32(&c.calls, 1)
+	c.conversationID = strings.TrimSpace(cfg.ConversationID)
+	return nil
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
 
 func TestValidateOhMyCodeAgentDefaultOnly(t *testing.T) {
 	manager := NewManager(&config.AgentsConfig{
@@ -663,6 +680,9 @@ func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/page/1"
+	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"Browser": "Codex"})
+	})
 	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]cdpTarget{{
 			Type:                 "page",
@@ -694,7 +714,7 @@ func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
 		if err := conn.WriteJSON(map[string]interface{}{
 			"id": req.ID,
 			"result": map[string]interface{}{
-				"result": map[string]interface{}{"type": "object", "value": map[string]interface{}{"ok": true}},
+				"result": map[string]interface{}{"type": "object", "value": map[string]interface{}{"ok": true, "conversationId": "thread-123"}},
 			},
 		}); err != nil {
 			t.Fatalf("write cdp response: %v", err)
@@ -733,6 +753,522 @@ func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
 	telemetry := manager.LastRoutingOutcome()
 	if telemetry == nil || telemetry.Backend != "codexAppCDP" || telemetry.Status != "delivered" || telemetry.EnvelopeID == "" || telemetry.InboxPath != "" {
 		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPBridgeRejectionFallsBackToInbox(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/page/1"
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Codex",
+			URL:                  "app://-/index.html",
+			WebSocketDebuggerURL: wsURL,
+		}})
+	})
+	mux.HandleFunc("/devtools/page/1", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		var req struct {
+			ID int `json:"id"`
+		}
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Fatalf("read cdp request: %v", err)
+		}
+		if err := conn.WriteJSON(map[string]interface{}{
+			"id": req.ID,
+			"result": map[string]interface{}{
+				"result": map[string]interface{}{
+					"type": "object",
+					"value": map[string]interface{}{
+						"ok":             true,
+						"conversationId": "thread-123",
+						"result": map[string]interface{}{
+							"error": map[string]interface{}{
+								"message": "conversation has an active turn",
+							},
+						},
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("write cdp response: %v", err)
+		}
+	})
+
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:         true,
+			CDPEndpoint:     server.URL,
+			ConversationID:  "thread-123",
+			InboxPath:       inbox,
+			FallbackToInbox: true,
+			DefaultAgent:    "main",
+			RepairPolicy:    "off",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "deliver during active turn",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected queued inbox envelope, got %d", len(entries))
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "queued" || telemetry.Error == "" || !strings.Contains(telemetry.Error, "conversation has an active turn") {
+		t.Fatalf("expected queued telemetry with bridge error, got %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPChecksReadinessAndFallsBackToInbox(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "cdp down", http.StatusServiceUnavailable)
+	})
+
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:         true,
+			CDPEndpoint:     server.URL,
+			InboxPath:       inbox,
+			FallbackToInbox: true,
+			DefaultAgent:    "main",
+			RepairPolicy:    "status-only",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "queue when cdp is down",
+			"agent":   "main",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one inbox envelope, got %d", len(entries))
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "queued" || telemetry.Error == "" {
+		t.Fatalf("expected queued telemetry with readiness error, got %#v", telemetry)
+	}
+	ready := manager.CodexAppCDPReadinessStatus()
+	if ready == nil || ready.Available || ready.LastError == "" || ready.RepairPolicy != "status-only" {
+		t.Fatalf("unexpected readiness status: %#v", ready)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPRepairOffSkipsReadinessCheck(t *testing.T) {
+	var versionHits int32
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&versionHits, 1)
+		http.Error(w, "should not be checked", http.StatusInternalServerError)
+	})
+
+	client := &recordingCodexAppCDPClient{}
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:      true,
+			CDPEndpoint:  server.URL,
+			DefaultAgent: "main",
+			RepairPolicy: "off",
+		},
+	})
+	manager.codexAppCDPClient = client
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "deliver without readiness",
+			"agent":   "main",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if atomic.LoadInt32(&versionHits) != 0 {
+		t.Fatalf("expected no readiness calls, got %d", versionHits)
+	}
+	if atomic.LoadInt32(&client.calls) != 1 {
+		t.Fatalf("expected one delivery call, got %d", client.calls)
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "delivered" {
+		t.Fatalf("expected delivered telemetry, got %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPResolvesTargetProjectSession(t *testing.T) {
+	oldQuery := queryCodexAppThreads
+	defer func() { queryCodexAppThreads = oldQuery }()
+	queryCodexAppThreads = func(ctx context.Context, cfg *config.CodexAppCDPConfig) ([]codexAppThreadRecord, string, error) {
+		return []codexAppThreadRecord{
+			{
+				ID:            "thread-old",
+				Title:         "main",
+				AgentNickname: "main",
+				CWD:           "/repo/cloudbank",
+				UpdatedAt:     100,
+			},
+			{
+				ID:            "thread-new",
+				Title:         "main",
+				AgentNickname: "main",
+				CWD:           "/repo/cloudbank",
+				UpdatedAt:     200,
+			},
+		}, "state-db", nil
+	}
+
+	client := &recordingCodexAppCDPClient{}
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:      true,
+			CDPEndpoint:  "http://127.0.0.1:9222",
+			DefaultAgent: "main",
+			RepairPolicy: "off",
+			TargetProject: config.CodexAppCDPTargetProjectConfig{
+				CWD:     "/repo/cloudbank",
+				Session: "main",
+			},
+		},
+	})
+	manager.codexAppCDPClient = client
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "deliver to main",
+			"agent":   "main",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if client.conversationID != "thread-new" {
+		t.Fatalf("conversationID=%q", client.conversationID)
+	}
+	resolved := manager.CodexAppCDPResolvedConversationStatus()
+	if resolved == nil || resolved.ID != "thread-new" || resolved.Source != "state-db:named-session" || resolved.LastError != "" {
+		t.Fatalf("unexpected resolved status: %#v", resolved)
+	}
+}
+
+func TestHandleIncomingCodexAppCDPMissingTargetFallsBackToInbox(t *testing.T) {
+	oldQuery := queryCodexAppThreads
+	defer func() { queryCodexAppThreads = oldQuery }()
+	queryCodexAppThreads = func(ctx context.Context, cfg *config.CodexAppCDPConfig) ([]codexAppThreadRecord, string, error) {
+		return []codexAppThreadRecord{{
+			ID:        "thread-qa",
+			Title:     "qa",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 100,
+		}}, "state-db", nil
+	}
+
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	client := &recordingCodexAppCDPClient{}
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:         true,
+			CDPEndpoint:     "http://127.0.0.1:9222",
+			InboxPath:       inbox,
+			FallbackToInbox: true,
+			DefaultAgent:    "main",
+			RepairPolicy:    "off",
+			TargetProject: config.CodexAppCDPTargetProjectConfig{
+				CWD:     "/repo/cloudbank",
+				Session: "release",
+			},
+		},
+	})
+	manager.codexAppCDPClient = client
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "queue missing target",
+			"agent":   "main",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if atomic.LoadInt32(&client.calls) != 0 {
+		t.Fatalf("expected no delivery calls, got %d", client.calls)
+	}
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected queued envelope, got %d", len(entries))
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "queued" || telemetry.Error == "" {
+		t.Fatalf("expected queued telemetry with resolve error, got %#v", telemetry)
+	}
+	resolved := manager.CodexAppCDPResolvedConversationStatus()
+	if resolved == nil || resolved.LastError == "" {
+		t.Fatalf("expected resolved error status, got %#v", resolved)
+	}
+}
+
+func TestSelectCodexAppTargetThreadMainFallsBackToLatestProjectThread(t *testing.T) {
+	thread, source, err := selectCodexAppTargetThread([]codexAppThreadRecord{
+		{
+			ID:        "older",
+			Title:     "old task",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 100,
+		},
+		{
+			ID:        "newer",
+			Title:     "current task",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 200,
+		},
+	}, &config.CodexAppCDPConfig{
+		TargetProject: config.CodexAppCDPTargetProjectConfig{
+			CWD:     "/repo/cloudbank",
+			Session: "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("select target: %v", err)
+	}
+	if thread.ID != "newer" || source != "main-latest" {
+		t.Fatalf("selected thread=%#v source=%q", thread, source)
+	}
+}
+
+func TestSelectCodexAppTargetThreadUsesSidebarSessionName(t *testing.T) {
+	threads := []codexAppThreadRecord{
+		{
+			ID:        "latest",
+			Title:     "recent task",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 300,
+		},
+		{
+			ID:        "named-main",
+			Title:     "health check",
+			CWD:       "/repo/cloudbank",
+			UpdatedAt: 100,
+		},
+	}
+	mergeCodexAppSidebarThreads(threads, []codexAppSidebarThreadRecord{{
+		ID:    "named-main",
+		Title: "main",
+	}})
+
+	thread, source, err := selectCodexAppTargetThread(threads, &config.CodexAppCDPConfig{
+		TargetProject: config.CodexAppCDPTargetProjectConfig{
+			CWD:     "/repo/cloudbank",
+			Session: "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("select target: %v", err)
+	}
+	if thread.ID != "named-main" || source != "named-session" {
+		t.Fatalf("selected thread=%#v source=%q", thread, source)
+	}
+}
+
+func TestResolveCodexAppConversationUsesExplicitConversationIDOverride(t *testing.T) {
+	oldQuery := queryCodexAppThreads
+	defer func() { queryCodexAppThreads = oldQuery }()
+	queryCodexAppThreads = func(ctx context.Context, cfg *config.CodexAppCDPConfig) ([]codexAppThreadRecord, string, error) {
+		t.Fatal("queryCodexAppThreads should not be called when conversationId is configured")
+		return nil, "", nil
+	}
+
+	manager := NewManager(nil)
+	id, err := manager.resolveCodexAppConversation(context.Background(), &config.CodexAppCDPConfig{
+		ConversationID: "pinned-thread",
+		TargetProject: config.CodexAppCDPTargetProjectConfig{
+			CWD:     "/repo/cloudbank",
+			Session: "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if id != "pinned-thread" {
+		t.Fatalf("id=%q", id)
+	}
+	resolved := manager.CodexAppCDPResolvedConversationStatus()
+	if resolved == nil || resolved.ID != "pinned-thread" || resolved.Source != "config" {
+		t.Fatalf("unexpected resolved status: %#v", resolved)
+	}
+}
+
+func TestCodexAppCDPDefaultsEnableWatchAndRelaunchRepair(t *testing.T) {
+	cfg := &config.CodexAppCDPConfig{
+		Enabled:     true,
+		CDPEndpoint: "http://127.0.0.1:9222",
+	}
+	if got := codexAppRepairPolicy(cfg); got != codexAppCDPRepairRelaunch {
+		t.Fatalf("repair policy=%q", got)
+	}
+	if !codexAppWatchEnabled(cfg) {
+		t.Fatal("expected watch to be enabled by default")
+	}
+
+	cfg.Watch.Enabled = boolPtr(false)
+	if codexAppWatchEnabled(cfg) {
+		t.Fatal("expected explicit watch.enabled=false to disable watch")
+	}
+}
+
+func TestCodexAppCDPWatchUpdatesReadinessAndStops(t *testing.T) {
+	checked := make(chan struct{}, 1)
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"Browser": "Codex"})
+	})
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case checked <- struct{}{}:
+		default:
+		}
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Codex",
+			URL:                  "app://-/index.html",
+			WebSocketDebuggerURL: "ws://127.0.0.1:1/devtools/page/codex",
+		}})
+	})
+
+	manager := NewManager(&config.AgentsConfig{
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:      true,
+			CDPEndpoint:  server.URL,
+			RepairPolicy: "status-only",
+			Watch: config.CodexAppCDPWatchConfig{
+				Enabled:         boolPtr(true),
+				IntervalSeconds: 1,
+				CooldownSeconds: 1,
+			},
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := manager.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	select {
+	case <-checked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for readiness watch")
+	}
+	var ready *CodexAppCDPReadinessStatus
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ready = manager.CodexAppCDPReadinessStatus()
+		if ready != nil && ready.Available && ready.TargetCount == 1 && ready.WatchRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ready == nil || !ready.Available || ready.TargetCount != 1 || !ready.WatchRunning {
+		t.Fatalf("unexpected readiness status: %#v", ready)
+	}
+	if err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	ready = manager.CodexAppCDPReadinessStatus()
+	if ready == nil || ready.WatchRunning {
+		t.Fatalf("expected stopped readiness watch, got %#v", ready)
+	}
+}
+
+func TestSelectCodexAppCDPTargetPrefersCodexPageOverBlankWebview(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{
+			{
+				Type:                 "webview",
+				Title:                "about:blank",
+				URL:                  "about:blank",
+				WebSocketDebuggerURL: "ws://127.0.0.1:1/devtools/webview/blank",
+			},
+			{
+				Type:                 "page",
+				Title:                "Codex",
+				URL:                  "app://-/index.html",
+				WebSocketDebuggerURL: "ws://127.0.0.1:1/devtools/page/codex",
+			},
+		})
+	})
+
+	target, err := selectCodexAppCDPTarget(context.Background(), server.URL, "")
+	if err != nil {
+		t.Fatalf("select target: %v", err)
+	}
+	if target.URL != "app://-/index.html" {
+		t.Fatalf("selected URL=%q", target.URL)
 	}
 }
 

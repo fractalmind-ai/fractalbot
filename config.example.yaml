@@ -145,11 +145,31 @@ agents:
     targetSelector: "Codex"
     # Codex App local host id. Defaults to "local".
     hostId: "local"
-    # Optional: pin to a specific /local/<conversationId>. Empty uses the active Codex App thread.
+    # Recommended: resolve the current target thread by project + named session.
+    targetProject:
+      name: "CloudBank"
+      cwd: "/Users/you/Develop/SuLabsOrg/CloudBank"
+      session: "main"
+      # Optional: pin state DB lookup. Empty uses newest ~/.codex/state_*.sqlite.
+      # stateDb: "/Users/you/.codex/state_5.sqlite"
+    # Advanced override: pin to a specific /local/<conversationId>.
+    # Empty uses targetProject when configured, then the active Codex App thread.
     conversationId: ""
     # Durable MVP queue and fallback when CDP delivery is unavailable.
-    inboxPath: "/Users/you/work-assistant/.fractalbot/inbox"
+    inboxPath: "/Users/you/Develop/SuLabsOrg/CloudBank/.fractalbot/inbox"
     fallbackToInbox: true
+    # CDP readiness policy:
+    # - off: do not check or repair CDP.
+    # - status-only: check and report only.
+    # - new-instance: launch a new Codex App instance with --remote-debugging-port when CDP is down.
+    # - relaunch: quit Codex App and relaunch it with --remote-debugging-port when CDP is down.
+    # Empty defaults to "relaunch"; watch.enabled defaults to true when codexAppCDP is enabled.
+    repairPolicy: "relaunch"
+    checkOnIncomingMessage: true
+    watch:
+      enabled: true
+      intervalSeconds: 60
+      cooldownSeconds: 90
     defaultAgent: "main"
     allowedAgents:
       - "main"

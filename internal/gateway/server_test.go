@@ -767,11 +767,11 @@ func TestStatusEndpointReportsCodexAppCDPRouting(t *testing.T) {
 			Router: "codexAppCDP",
 			CodexAppCDP: &config.CodexAppCDPConfig{
 				Enabled:         true,
-				CDPEndpoint:     "http://127.0.0.1:9222",
 				TargetSelector:  "Codex",
 				HostID:          "local",
 				InboxPath:       inbox,
 				FallbackToInbox: true,
+				RepairPolicy:    "status-only",
 				DefaultAgent:    "main",
 				AllowedAgents:   []string{"main"},
 			},
@@ -814,8 +814,63 @@ func TestStatusEndpointReportsCodexAppCDPRouting(t *testing.T) {
 	if codex["enabled"] != true || codex["default_agent"] != "main" || codex["inbox_configured"] != true {
 		t.Fatalf("unexpected codex status: %#v", codex)
 	}
+	if codex["repair_policy"] != "status-only" || codex["check_on_incoming_message"] != true {
+		t.Fatalf("unexpected codex readiness config: %#v", codex)
+	}
 	routing := agents["last_routing"].(map[string]interface{})
 	if routing["backend"] != "codexAppCDP" || routing["status"] != "queued" || routing["envelope_id"] == "" {
 		t.Fatalf("unexpected routing status: %#v", routing)
+	}
+}
+
+func TestStatusEndpointReportsCodexAppCDPDefaultRepairAndWatch(t *testing.T) {
+	cfg := &config.Config{
+		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{},
+		Agents: &config.AgentsConfig{
+			Router: "codexAppCDP",
+			CodexAppCDP: &config.CodexAppCDPConfig{
+				Enabled:      true,
+				CDPEndpoint:  "http://127.0.0.1:9222",
+				DefaultAgent: "main",
+				TargetProject: config.CodexAppCDPTargetProjectConfig{
+					Name:    "CloudBank",
+					CWD:     "/repo/cloudbank",
+					Session: "main",
+				},
+			},
+		},
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer resp.Body.Close()
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	agents := payload["agents"].(map[string]interface{})
+	codex := agents["codex_app_cdp"].(map[string]interface{})
+	if codex["repair_policy"] != "relaunch" {
+		t.Fatalf("expected relaunch default, got %#v", codex)
+	}
+	watch := codex["watch"].(map[string]interface{})
+	if watch["enabled"] != true {
+		t.Fatalf("expected watch enabled by default, got %#v", watch)
+	}
+	targetProject := codex["target_project"].(map[string]interface{})
+	if targetProject["name"] != "CloudBank" || targetProject["cwd"] != "/repo/cloudbank" || targetProject["session"] != "main" {
+		t.Fatalf("unexpected target_project: %#v", targetProject)
 	}
 }

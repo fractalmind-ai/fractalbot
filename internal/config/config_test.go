@@ -322,7 +322,7 @@ func TestLoadConfigValidatesCodexAppCDPAgentAllowlist(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRequiresCodexAppCDPInboxWhenEnabled(t *testing.T) {
+func TestLoadConfigRequiresCodexAppCDPEndpointOrInboxWhenEnabled(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := []byte("agents:\n  router: codexAppCDP\n  codexAppCDP:\n    enabled: true\n    defaultAgent: \"main\"\n")
@@ -332,9 +332,67 @@ func TestLoadConfigRequiresCodexAppCDPInboxWhenEnabled(t *testing.T) {
 
 	_, err := LoadConfig(path)
 	if err == nil {
-		t.Fatal("expected inboxPath error")
+		t.Fatal("expected endpoint or inboxPath error")
 	}
-	if !strings.Contains(err.Error(), "agents.codexAppCDP.inboxPath") {
-		t.Fatalf("expected inboxPath error, got %v", err)
+	if !strings.Contains(err.Error(), "agents.codexAppCDP.cdpEndpoint") || !strings.Contains(err.Error(), "agents.codexAppCDP.inboxPath") {
+		t.Fatalf("expected endpoint/inboxPath error, got %v", err)
+	}
+}
+
+func TestLoadConfigAcceptsCodexAppCDPReadinessConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`agents:
+  router: codexAppCDP
+  codexAppCDP:
+    enabled: true
+    cdpEndpoint: "http://127.0.0.1:9222"
+    repairPolicy: "status-only"
+    checkOnIncomingMessage: true
+    targetProject:
+      name: "CloudBank"
+      cwd: "/repo/cloudbank"
+      session: "main"
+      stateDb: "/tmp/state.sqlite"
+    watch:
+      enabled: true
+      intervalSeconds: 60
+      cooldownSeconds: 90
+    defaultAgent: "main"
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Agents.CodexAppCDP == nil || cfg.Agents.CodexAppCDP.RepairPolicy != "status-only" {
+		t.Fatalf("unexpected codex config: %#v", cfg.Agents.CodexAppCDP)
+	}
+	if cfg.Agents.CodexAppCDP.CheckOnIncomingMessage == nil || !*cfg.Agents.CodexAppCDP.CheckOnIncomingMessage {
+		t.Fatalf("expected checkOnIncomingMessage=true")
+	}
+	if cfg.Agents.CodexAppCDP.TargetProject.Name != "CloudBank" || cfg.Agents.CodexAppCDP.TargetProject.CWD != "/repo/cloudbank" || cfg.Agents.CodexAppCDP.TargetProject.Session != "main" || cfg.Agents.CodexAppCDP.TargetProject.StateDB != "/tmp/state.sqlite" {
+		t.Fatalf("unexpected targetProject: %#v", cfg.Agents.CodexAppCDP.TargetProject)
+	}
+	if cfg.Agents.CodexAppCDP.Watch.Enabled == nil || !*cfg.Agents.CodexAppCDP.Watch.Enabled || cfg.Agents.CodexAppCDP.Watch.IntervalSeconds != 60 || cfg.Agents.CodexAppCDP.Watch.CooldownSeconds != 90 {
+		t.Fatalf("unexpected watch config: %#v", cfg.Agents.CodexAppCDP.Watch)
+	}
+}
+
+func TestLoadConfigRejectsInvalidCodexAppCDPRepairPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  router: codexAppCDP\n  codexAppCDP:\n    enabled: true\n    cdpEndpoint: \"http://127.0.0.1:9222\"\n    repairPolicy: \"restart-everything\"\n    defaultAgent: \"main\"\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected repairPolicy error")
+	}
+	if !strings.Contains(err.Error(), "agents.codexAppCDP.repairPolicy") {
+		t.Fatalf("expected repairPolicy error, got %v", err)
 	}
 }
