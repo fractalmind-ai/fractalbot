@@ -917,7 +917,7 @@ func (liveCodexAppCDPClient) Deliver(ctx context.Context, cfg *config.CodexAppCD
 		return err
 	}
 	expr := buildCodexAppDeliveryScript(cfg, envelope, prompt)
-	return evaluateCDPExpression(ctx, target.WebSocketDebuggerURL, expr)
+	return evaluateCDPExpression(ctx, target.WebSocketDebuggerURL, expr, strings.TrimSpace(cfg.ConversationID))
 }
 
 func selectCodexAppCDPTarget(ctx context.Context, endpoint, selector string) (cdpTarget, error) {
@@ -986,7 +986,7 @@ func preferredCodexAppCDPTarget(targets []cdpTarget) (cdpTarget, bool) {
 	return cdpTarget{}, false
 }
 
-func evaluateCDPExpression(ctx context.Context, wsURL, expression string) error {
+func evaluateCDPExpression(ctx context.Context, wsURL, expression, expectedConversationID string) error {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("connect CDP websocket: %w", err)
@@ -1024,11 +1024,94 @@ func evaluateCDPExpression(ctx context.Context, wsURL, expression string) error 
 		if response.Result.ExceptionDetails != nil {
 			return fmt.Errorf("Codex App delivery script failed: %s", response.Result.ExceptionDetails.Text)
 		}
-		if response.Result.Result.Type == "object" || response.Result.Result.Type == "boolean" || response.Result.Result.Type == "string" || response.Result.Result.Type == "undefined" {
-			return nil
-		}
-		return nil
+		return validateCodexAppDeliveryValue(response.Result.Result.Value, expectedConversationID)
 	}
+}
+
+func validateCodexAppDeliveryValue(value interface{}, expectedConversationID string) error {
+	result, ok := value.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("Codex App delivery returned %T, expected object", value)
+	}
+	if okValue, ok := result["ok"].(bool); !ok || !okValue {
+		return fmt.Errorf("Codex App delivery was not accepted: %s", codexAppBridgeErrorDetail(result))
+	}
+	conversationID, _ := result["conversationId"].(string)
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return errors.New("Codex App delivery did not return a conversationId")
+	}
+	if expected := strings.TrimSpace(expectedConversationID); expected != "" && conversationID != expected {
+		return fmt.Errorf("Codex App delivery targeted conversation %q, expected %q", conversationID, expected)
+	}
+	if bridgeResultHasError(result["result"]) {
+		return fmt.Errorf("Codex App start-turn-for-host failed: %s", codexAppBridgeErrorDetail(result["result"]))
+	}
+	return nil
+}
+
+func bridgeResultHasError(value interface{}) bool {
+	result, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if okValue, ok := result["ok"].(bool); ok && !okValue {
+		return true
+	}
+	if successValue, ok := result["success"].(bool); ok && !successValue {
+		return true
+	}
+	for _, key := range []string{"error", "errorMessage"} {
+		if errorValue, exists := result[key]; exists && !isEmptyBridgeValue(errorValue) {
+			return true
+		}
+	}
+	if status, ok := result["status"].(string); ok {
+		switch strings.ToLower(strings.TrimSpace(status)) {
+		case "error", "failed", "failure", "rejected":
+			return true
+		}
+	}
+	return false
+}
+
+func isEmptyBridgeValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	return false
+}
+
+func codexAppBridgeErrorDetail(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return "empty result"
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			return text
+		}
+	case map[string]interface{}:
+		for _, key := range []string{"error", "errorMessage", "message", "reason", "status"} {
+			if detail, ok := typed[key]; ok {
+				if text := codexAppBridgeErrorDetail(detail); text != "" && text != "empty result" {
+					return text
+				}
+			}
+		}
+		encoded, err := json.Marshal(typed)
+		if err == nil && len(encoded) > 0 {
+			return string(encoded)
+		}
+	default:
+		encoded, err := json.Marshal(typed)
+		if err == nil && len(encoded) > 0 {
+			return string(encoded)
+		}
+	}
+	return "empty result"
 }
 
 type cdpEvaluateResponse struct {
@@ -1105,6 +1188,13 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     conversationId,
     params: { input }
   });
+  if (result && typeof result === "object") {
+    const status = typeof result.status === "string" ? result.status.toLowerCase() : "";
+    if (result.error || result.errorMessage || result.ok === false || result.success === false || ["error", "failed", "failure", "rejected"].includes(status)) {
+      const detail = result.error?.message || result.errorMessage || result.message || result.reason || status || JSON.stringify(result);
+      throw new Error("Codex App start-turn-for-host failed: " + detail);
+    }
+  }
   return { ok: true, conversationId, result };
 })()`, string(encoded))
 }
