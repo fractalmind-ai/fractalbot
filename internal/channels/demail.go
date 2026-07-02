@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,9 @@ type DemailOptions struct {
 	GasCoin string
 	// PollInterval controls inbound event polling. Zero uses the default (2s).
 	PollInterval time.Duration
+	// CursorFile stores processed Message object ids so historical event replay
+	// on restart cannot re-execute old tasks or re-spend reply gas.
+	CursorFile string
 	// AllowedSenders is an allowlist of Sui addresses. Empty means deny all.
 	AllowedSenders []string
 	// Peers maps a recipient Sui address to its base64 Ed25519 public key.
@@ -72,6 +76,7 @@ type DemailChannel struct {
 	identityKeyFile string
 	sponsorAddress  string
 	gasCoin         string
+	cursorFile      string
 	pollInterval    time.Duration
 
 	allowlist DemailAllowlist
@@ -95,6 +100,9 @@ type DemailChannel struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	processedMu       sync.Mutex
+	processedMessages map[string]struct{}
 
 	telemetryMu  sync.RWMutex
 	lastActivity time.Time
@@ -121,9 +129,24 @@ func NewDemailChannel(opts DemailOptions) (*DemailChannel, error) {
 		}
 	}
 
+	gasCoin := strings.TrimSpace(opts.GasCoin)
+	if gasCoin != "" {
+		// Object ids share the Sui address format; reject anything else
+		// before it can ever reach a CLI argv.
+		if gasCoin, err = normalizeDemailAddress(gasCoin); err != nil {
+			return nil, fmt.Errorf("demail gasCoin: %w", err)
+		}
+	}
+
 	allowlist, err := NewDemailAllowlist(opts.AllowedSenders)
 	if err != nil {
 		return nil, err
+	}
+
+	cursorFile := strings.TrimSpace(opts.CursorFile)
+	processedMessages, err := loadDemailProcessedMessages(cursorFile)
+	if err != nil {
+		return nil, fmt.Errorf("demail cursorFile: %w", err)
 	}
 
 	peers := make(map[string]ed25519.PublicKey, len(opts.Peers))
@@ -148,19 +171,31 @@ func NewDemailChannel(opts DemailOptions) (*DemailChannel, error) {
 	}
 
 	channel := &DemailChannel{
-		rpcURL:          strings.TrimSpace(opts.RPCURL),
-		packageID:       strings.TrimSpace(opts.PackageID),
-		address:         address,
-		identityKeyFile: strings.TrimSpace(opts.IdentityKeyFile),
-		sponsorAddress:  sponsor,
-		gasCoin:         strings.TrimSpace(opts.GasCoin),
-		pollInterval:    pollInterval,
-		allowlist:       allowlist,
-		peers:           peers,
-		nowFn:           time.Now,
+		rpcURL:            strings.TrimSpace(opts.RPCURL),
+		packageID:         strings.TrimSpace(opts.PackageID),
+		address:           address,
+		identityKeyFile:   strings.TrimSpace(opts.IdentityKeyFile),
+		sponsorAddress:    sponsor,
+		gasCoin:           gasCoin,
+		pollInterval:      pollInterval,
+		cursorFile:        cursorFile,
+		allowlist:         allowlist,
+		peers:             peers,
+		processedMessages: processedMessages,
+		nowFn:             time.Now,
 	}
 	channel.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+		if err != nil {
+			// Surface the CLI's own diagnostics (stderr is in CombinedOutput);
+			// cap the tail so errors stay loggable.
+			tail := lastNonEmptyLine(string(output))
+			if len(tail) > 300 {
+				tail = tail[:300]
+			}
+			return output, fmt.Errorf("%w: %s", err, tail)
+		}
+		return output, nil
 	}
 	return channel, nil
 }
@@ -213,6 +248,9 @@ func (b *DemailChannel) markError() {
 
 // Start builds the inbound listener and runs it until Stop or ctx cancel.
 func (b *DemailChannel) Start(ctx context.Context) error {
+	if b.IsRunning() {
+		return errors.New("demail channel already running")
+	}
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
 	runFn := b.runListenerFn
@@ -244,6 +282,8 @@ func (b *DemailChannel) Start(ctx context.Context) error {
 		if err := runFn(b.ctx); err != nil && b.ctx.Err() == nil {
 			log.Printf("demail listener exited: %v", err)
 			b.markError()
+			// The inbound loop is dead; reflect reality for health checks.
+			b.setRunning(false)
 		}
 	}()
 
@@ -271,6 +311,10 @@ func (b *DemailChannel) IsAllowed(senderID string) bool {
 // handleInbound delivers one decrypted message to the shared inbound handler.
 // Input is untrusted even after schema sanitization; it must never panic.
 func (b *DemailChannel) handleInbound(messageID string, msg *schema.Plaintext) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID != "" && b.isProcessed(messageID) {
+		return
+	}
 	if msg == nil {
 		return
 	}
@@ -299,10 +343,81 @@ func (b *DemailChannel) handleInbound(messageID string, msg *schema.Plaintext) {
 	}
 	b.markActivity()
 
+	defer func() {
+		if messageID != "" {
+			b.markProcessed(messageID)
+		}
+	}()
+
+	// Loop guard: only "task" messages get an automatic on-chain reply.
+	// Outbound sends are stamped type "reply", so two mutually-allowlisted
+	// gateways cannot ping-pong sponsored transactions forever.
+	if msg.Type != schema.TypeTask {
+		return
+	}
 	if trimmed := strings.TrimSpace(reply); trimmed != "" {
 		if _, err := b.Send(ctx, OutboundMessage{To: from, Text: trimmed}); err != nil {
 			log.Printf("demail reply send failed: %v", err)
 		}
+	}
+}
+
+func loadDemailProcessedMessages(path string) (map[string]struct{}, error) {
+	processed := make(map[string]struct{})
+	if path == "" {
+		return processed, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return processed, nil
+		}
+		return nil, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		processed[line] = struct{}{}
+	}
+	return processed, nil
+}
+
+func (b *DemailChannel) isProcessed(messageID string) bool {
+	b.processedMu.Lock()
+	defer b.processedMu.Unlock()
+	_, ok := b.processedMessages[messageID]
+	return ok
+}
+
+func (b *DemailChannel) markProcessed(messageID string) {
+	b.processedMu.Lock()
+	if _, ok := b.processedMessages[messageID]; ok {
+		b.processedMu.Unlock()
+		return
+	}
+	b.processedMessages[messageID] = struct{}{}
+	b.processedMu.Unlock()
+
+	if b.cursorFile == "" {
+		return
+	}
+	dir := filepath.Dir(b.cursorFile)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			log.Printf("demail cursor mkdir failed: %v", err)
+			return
+		}
+	}
+	f, err := os.OpenFile(b.cursorFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		log.Printf("demail cursor open failed: %v", err)
+		return
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintln(f, messageID); err != nil {
+		log.Printf("demail cursor write failed: %v", err)
 	}
 }
 

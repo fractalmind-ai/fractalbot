@@ -385,6 +385,7 @@ func (m *Manager) registerConfiguredChannels() error {
 			SponsorAddress:  m.cfg.Demail.SponsorAddress,
 			GasCoin:         m.cfg.Demail.GasCoin,
 			PollInterval:    time.Duration(m.cfg.Demail.PollIntervalSeconds) * time.Second,
+			CursorFile:      m.cfg.Demail.CursorFile,
 			AllowedSenders:  m.cfg.Demail.AllowedSenders,
 			Peers:           m.cfg.Demail.Peers,
 		})

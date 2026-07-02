@@ -106,6 +106,8 @@ channels:
   #   gasCoin: "0x<gas-coin-object-id>"
   #   # Inbound event poll interval (seconds). Default: 2.
   #   pollIntervalSeconds: 2
+  #   # Processed Message object id journal; prevents historical replay on restart.
+  #   cursorFile: "~/.local/state/fractalbot/demail-processed.log"
   #   # Allowed sender Sui addresses (empty means deny all)
   #   allowedSenders:
   #     - "0x<peer-address>"

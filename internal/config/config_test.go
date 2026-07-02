@@ -410,6 +410,7 @@ func TestLoadConfigParsesDemailChannel(t *testing.T) {
 		"    sponsorAddress: \"0xdef\"",
 		"    gasCoin: \"0xgas\"",
 		"    pollIntervalSeconds: 7",
+		"    cursorFile: \"/tmp/demail-cursor.log\"",
 		"    allowedSenders:",
 		"      - \"0xpeer\"",
 		"    peers:",
@@ -445,6 +446,9 @@ func TestLoadConfigParsesDemailChannel(t *testing.T) {
 	}
 	if demail.PollIntervalSeconds != 7 {
 		t.Fatalf("unexpected pollIntervalSeconds: %d", demail.PollIntervalSeconds)
+	}
+	if demail.CursorFile != "/tmp/demail-cursor.log" {
+		t.Fatalf("unexpected cursorFile: %q", demail.CursorFile)
 	}
 	if len(demail.AllowedSenders) != 1 || demail.AllowedSenders[0] != "0xpeer" {
 		t.Fatalf("unexpected allowedSenders: %v", demail.AllowedSenders)

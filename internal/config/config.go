@@ -139,6 +139,8 @@ type DemailConfig struct {
 	GasCoin string `yaml:"gasCoin,omitempty"`
 	// PollIntervalSeconds controls inbound event polling. Default: 2.
 	PollIntervalSeconds int `yaml:"pollIntervalSeconds,omitempty"`
+	// CursorFile persists processed Message object ids to prevent replay on restart.
+	CursorFile string `yaml:"cursorFile,omitempty"`
 	// AllowedSenders is an allowlist of sender Sui addresses. Empty means deny all.
 	AllowedSenders []string `yaml:"allowedSenders,omitempty"`
 	// Peers maps a recipient Sui address to its base64 Ed25519 public key.

@@ -240,6 +240,66 @@ func TestDemailInboundSurvivesMalformedInput(t *testing.T) {
 	}
 }
 
+func TestDemailDoesNotAutoReplyToReplyMessages(t *testing.T) {
+	handler := &fakeDemailHandler{reply: "pong"}
+	channel := newTestDemailChannel(t, DemailOptions{
+		AllowedSenders: []string{demailTestPeer},
+		SponsorAddress: demailTestSponsor,
+		GasCoin:        demailTestGasCoin,
+	})
+	channel.SetHandler(handler)
+	channel.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("reply-type inbound must not trigger outbound send, got %s %v", name, args)
+		return nil, nil
+	}
+
+	channel.handleInbound("0xreply-msg", &schema.Plaintext{
+		Type: schema.TypeReply,
+		From: demailTestPeer,
+		To:   demailTestAddress,
+		Body: "already a reply",
+		TS:   1234,
+	})
+
+	if handler.calls != 1 {
+		t.Fatalf("expected handler to see the reply once, got %d", handler.calls)
+	}
+}
+
+func TestDemailProcessedMessageDedupPersists(t *testing.T) {
+	cursor := filepath.Join(t.TempDir(), "demail-processed.log")
+	msg := &schema.Plaintext{
+		Type: schema.TypeTask,
+		From: demailTestPeer,
+		To:   demailTestAddress,
+		Body: "run once",
+		TS:   1234,
+	}
+
+	firstHandler := &fakeDemailHandler{}
+	first := newTestDemailChannel(t, DemailOptions{CursorFile: cursor, AllowedSenders: []string{demailTestPeer}})
+	first.SetHandler(firstHandler)
+	first.handleInbound("0xmsg-dedup", msg)
+	if firstHandler.calls != 1 {
+		t.Fatalf("expected first handler call, got %d", firstHandler.calls)
+	}
+	data, err := os.ReadFile(cursor)
+	if err != nil {
+		t.Fatalf("read cursor: %v", err)
+	}
+	if !strings.Contains(string(data), "0xmsg-dedup") {
+		t.Fatalf("cursor missing message id: %q", data)
+	}
+
+	secondHandler := &fakeDemailHandler{}
+	second := newTestDemailChannel(t, DemailOptions{CursorFile: cursor, AllowedSenders: []string{demailTestPeer}})
+	second.SetHandler(secondHandler)
+	second.handleInbound("0xmsg-dedup", msg)
+	if secondHandler.calls != 0 {
+		t.Fatalf("expected duplicate replay to be skipped, got %d calls", secondHandler.calls)
+	}
+}
+
 func TestDemailStopTerminatesListener(t *testing.T) {
 	channel := newTestDemailChannel(t, DemailOptions{})
 	stopped := make(chan struct{})
