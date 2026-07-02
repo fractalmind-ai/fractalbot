@@ -34,6 +34,7 @@ type ChannelsConfig struct {
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 	IMessage *IMessageConfig `yaml:"imessage,omitempty"`
+	Demail   *DemailConfig   `yaml:"demail,omitempty"`
 }
 
 // TelegramConfig contains Telegram channel settings.
@@ -118,6 +119,31 @@ type IMessageConfig struct {
 	PollingLimit int `yaml:"pollingLimit,omitempty"`
 	// DatabasePath overrides Messages DB path. Default: ~/Library/Messages/chat.db.
 	DatabasePath string `yaml:"databasePath,omitempty"`
+}
+
+// DemailConfig contains fractal-demail (on-chain agent mail on Sui) settings.
+type DemailConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// RPCURL is the Sui JSON-RPC endpoint (e.g. https://fullnode.testnet.sui.io:443).
+	RPCURL string `yaml:"rpcUrl,omitempty"`
+	// PackageID is the fractal-demail Move package id.
+	PackageID string `yaml:"packageId,omitempty"`
+	// Address is this node's Sui address (inbound recipient / outbound sender).
+	Address string `yaml:"address,omitempty"`
+	// IdentityKeyFile is a path to a file containing the node's base64 Ed25519
+	// private key (32-byte seed or 64-byte key). Read at channel start; never logged.
+	IdentityKeyFile string `yaml:"identityKeyFile,omitempty"`
+	// SponsorAddress is the gas sponsor Sui address for outbound sends.
+	SponsorAddress string `yaml:"sponsorAddress,omitempty"`
+	// GasCoin is the sponsor-owned gas coin object id for outbound sends.
+	GasCoin string `yaml:"gasCoin,omitempty"`
+	// PollIntervalSeconds controls inbound event polling. Default: 2.
+	PollIntervalSeconds int `yaml:"pollIntervalSeconds,omitempty"`
+	// AllowedSenders is an allowlist of sender Sui addresses. Empty means deny all.
+	AllowedSenders []string `yaml:"allowedSenders,omitempty"`
+	// Peers maps a recipient Sui address to its base64 Ed25519 public key.
+	// Required per outbound recipient: a public key cannot be derived from a Sui address.
+	Peers map[string]string `yaml:"peers,omitempty"`
 }
 
 // OhMyCodeConfig contains integration settings for the oh-my-code workspace.

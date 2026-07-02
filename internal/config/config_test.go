@@ -396,3 +396,76 @@ func TestLoadConfigRejectsInvalidCodexAppCDPRepairPolicy(t *testing.T) {
 		t.Fatalf("expected repairPolicy error, got %v", err)
 	}
 }
+
+func TestLoadConfigParsesDemailChannel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(strings.Join([]string{
+		"channels:",
+		"  demail:",
+		"    enabled: true",
+		"    rpcUrl: \"https://fullnode.testnet.sui.io:443\"",
+		"    packageId: \"0xpkg\"",
+		"    address: \"0xabc\"",
+		"    identityKeyFile: \"/tmp/identity.key\"",
+		"    sponsorAddress: \"0xdef\"",
+		"    gasCoin: \"0xgas\"",
+		"    pollIntervalSeconds: 7",
+		"    allowedSenders:",
+		"      - \"0xpeer\"",
+		"    peers:",
+		"      \"0xpeer\": \"cHVibGljLWtleQ==\"",
+		"",
+	}, "\n"))
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Channels == nil || cfg.Channels.Demail == nil {
+		t.Fatal("expected channels.demail to be parsed")
+	}
+	demail := cfg.Channels.Demail
+	if !demail.Enabled {
+		t.Fatal("expected demail.enabled true")
+	}
+	if demail.RPCURL != "https://fullnode.testnet.sui.io:443" {
+		t.Fatalf("unexpected rpcUrl: %q", demail.RPCURL)
+	}
+	if demail.PackageID != "0xpkg" || demail.Address != "0xabc" {
+		t.Fatalf("unexpected packageId/address: %q %q", demail.PackageID, demail.Address)
+	}
+	if demail.IdentityKeyFile != "/tmp/identity.key" {
+		t.Fatalf("unexpected identityKeyFile: %q", demail.IdentityKeyFile)
+	}
+	if demail.SponsorAddress != "0xdef" || demail.GasCoin != "0xgas" {
+		t.Fatalf("unexpected sponsorAddress/gasCoin: %q %q", demail.SponsorAddress, demail.GasCoin)
+	}
+	if demail.PollIntervalSeconds != 7 {
+		t.Fatalf("unexpected pollIntervalSeconds: %d", demail.PollIntervalSeconds)
+	}
+	if len(demail.AllowedSenders) != 1 || demail.AllowedSenders[0] != "0xpeer" {
+		t.Fatalf("unexpected allowedSenders: %v", demail.AllowedSenders)
+	}
+	if demail.Peers["0xpeer"] != "cHVibGljLWtleQ==" {
+		t.Fatalf("unexpected peers: %v", demail.Peers)
+	}
+}
+
+func TestLoadConfigDemailDisabledByDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("channels:\n  telegram:\n    enabled: false\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Channels.Demail != nil {
+		t.Fatalf("expected nil demail config, got %#v", cfg.Channels.Demail)
+	}
+}

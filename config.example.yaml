@@ -86,6 +86,34 @@ channels:
     allowedUsers:
       - "123456789012345678"
 
+  # demail channel configuration (optional)
+  # On-chain agent mail via fractal-demail (Sui). Inbound messages are polled
+  # from MessageSent events and decrypted with this node's identity key;
+  # outbound sends are sponsored transactions signed via the local sui CLI.
+  # demail:
+  #   enabled: true
+  #   # Sui JSON-RPC endpoint
+  #   rpcUrl: "https://fullnode.testnet.sui.io:443"
+  #   # fractal-demail Move package id
+  #   packageId: "0x<package-id>"
+  #   # This node's Sui address (inbound recipient / outbound sender)
+  #   address: "0x<our-address>"
+  #   # File containing this node's base64 Ed25519 private key
+  #   # (32-byte seed or 64-byte key). Read at start; never logged.
+  #   identityKeyFile: "~/.config/fractalbot/demail-identity.key"
+  #   # Gas sponsor Sui address and sponsor-owned gas coin object id (outbound)
+  #   sponsorAddress: "0x<sponsor-address>"
+  #   gasCoin: "0x<gas-coin-object-id>"
+  #   # Inbound event poll interval (seconds). Default: 2.
+  #   pollIntervalSeconds: 2
+  #   # Allowed sender Sui addresses (empty means deny all)
+  #   allowedSenders:
+  #     - "0x<peer-address>"
+  #   # Recipient Sui address -> base64 Ed25519 public key.
+  #   # Required per outbound recipient (a pubkey cannot be derived from an address).
+  #   peers:
+  #     "0x<peer-address>": "<base64-ed25519-public-key>"
+
   # iMessage channel configuration (macOS only, optional)
   imessage:
     enabled: true
