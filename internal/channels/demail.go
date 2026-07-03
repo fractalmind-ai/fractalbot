@@ -260,12 +260,20 @@ func (b *DemailChannel) Start(ctx context.Context) error {
 			b.cancel()
 			return err
 		}
+		listenerCursorFile := ""
+		if b.cursorFile != "" {
+			// The journal file stores processed Message ids; the listener keeps
+			// its RPC poll cursor in a sibling file so a restart resumes from
+			// the last processed event instead of rescanning history.
+			listenerCursorFile = b.cursorFile + ".cursor"
+		}
 		inbound, err := listener.New(listener.Config{
 			RPCURL:       b.rpcURL,
 			PackageID:    b.packageID,
 			Recipient:    b.address,
 			IdentityKey:  identityKey,
 			PollInterval: b.pollInterval,
+			CursorFile:   listenerCursorFile,
 		}, func(messageID string, msg *schema.Plaintext) {
 			b.handleInbound(messageID, msg)
 		})

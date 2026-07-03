@@ -4,7 +4,7 @@ go 1.25.6
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/fractalmind-ai/fractal-demail/client-go v0.0.0-20260702210713-01db07216ca4
+	github.com/fractalmind-ai/fractal-demail/client-go v0.0.0-20260703020049-57bd0a76fcd4
 	github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260702210713-01db07216ca4
 	github.com/gorilla/websocket v1.5.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
