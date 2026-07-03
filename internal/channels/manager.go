@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 )
@@ -365,6 +366,35 @@ func (m *Manager) registerConfiguredChannels() error {
 
 		if err := m.Register(bot); err != nil {
 			return fmt.Errorf("failed to register imessage bot: %w", err)
+		}
+	}
+
+	if m.cfg.Demail != nil && m.cfg.Demail.Enabled {
+		if m.Get("demail") != nil {
+			return nil
+		}
+		if strings.TrimSpace(m.cfg.Demail.RPCURL) == "" || strings.TrimSpace(m.cfg.Demail.PackageID) == "" || strings.TrimSpace(m.cfg.Demail.Address) == "" {
+			return errors.New("channels.demail.rpcUrl, channels.demail.packageId and channels.demail.address are required when demail is enabled")
+		}
+
+		channel, err := NewDemailChannel(DemailOptions{
+			RPCURL:          m.cfg.Demail.RPCURL,
+			PackageID:       m.cfg.Demail.PackageID,
+			Address:         m.cfg.Demail.Address,
+			IdentityKeyFile: m.cfg.Demail.IdentityKeyFile,
+			SponsorAddress:  m.cfg.Demail.SponsorAddress,
+			GasCoin:         m.cfg.Demail.GasCoin,
+			PollInterval:    time.Duration(m.cfg.Demail.PollIntervalSeconds) * time.Second,
+			CursorFile:      m.cfg.Demail.CursorFile,
+			AllowedSenders:  m.cfg.Demail.AllowedSenders,
+			Peers:           m.cfg.Demail.Peers,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to init demail channel: %w", err)
+		}
+
+		if err := m.Register(channel); err != nil {
+			return fmt.Errorf("failed to register demail channel: %w", err)
 		}
 	}
 
