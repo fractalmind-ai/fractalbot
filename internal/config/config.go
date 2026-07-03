@@ -134,6 +134,8 @@ type DemailConfig struct {
 	// private key (32-byte seed or 64-byte key). Read at channel start; never logged.
 	IdentityKeyFile string `yaml:"identityKeyFile,omitempty"`
 	// SponsorAddress is the gas sponsor Sui address for outbound sends.
+	// It may equal Address (self-sponsored: the node pays its own gas with a
+	// single signature); a distinct sponsor uses the dual-signature route.
 	SponsorAddress string `yaml:"sponsorAddress,omitempty"`
 	// GasCoin is the sponsor-owned gas coin object id for outbound sends.
 	GasCoin string `yaml:"gasCoin,omitempty"`

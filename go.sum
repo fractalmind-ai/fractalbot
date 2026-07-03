@@ -6,8 +6,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/fractalmind-ai/fractal-demail/client-go v0.0.0-20260703072745-61cb7759e4b9 h1:BMdph+YO4wXNkn53/GvkGdnCrikkKmXyLfcjKV8Vrxw=
 github.com/fractalmind-ai/fractal-demail/client-go v0.0.0-20260703072745-61cb7759e4b9/go.mod h1:te9w6GASyunKCjWbSUByl/eaP+8E3Vy16u0SOK78GRQ=
-github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260702210713-01db07216ca4 h1:yU8EgEww0HJDYu9p/jWbWTRzhCktwVk5yAtV+X8dlrs=
-github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260702210713-01db07216ca4/go.mod h1:WbNInBdabo2hStb2F+dznTRThh1ttZtFbegMs8Kcnsk=
+github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260703092431-07048eacc6b7 h1:gpoJY53+Fx4RxavrEC/sFg+vjr2nPhCPXyYK+hCDEjg=
+github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260703092431-07048eacc6b7/go.mod h1:WbNInBdabo2hStb2F+dznTRThh1ttZtFbegMs8Kcnsk=
 github.com/go-test/deep v1.1.1 h1:0r/53hagsehfO4bzD2Pgr/+RgHqhmf+k1Bpse2cTu1U=
 github.com/go-test/deep v1.1.1/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/gogo/protobuf v1.3.2 h1:Ov1cvc58UF3b5XjBnZv7+opcTcQFZebYjWzi34vdm4Q=

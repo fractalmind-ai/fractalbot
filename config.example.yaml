@@ -101,7 +101,9 @@ channels:
   #   # File containing this node's base64 Ed25519 private key
   #   # (32-byte seed or 64-byte key). Read at start; never logged.
   #   identityKeyFile: "~/.config/fractalbot/demail-identity.key"
-  #   # Gas sponsor Sui address and sponsor-owned gas coin object id (outbound)
+  #   # Gas sponsor Sui address and sponsor-owned gas coin object id (outbound).
+  #   # sponsorAddress may equal address: that is a supported self-sponsored
+  #   # route where this node pays its own gas and sends a single signature.
   #   sponsorAddress: "0x<sponsor-address>"
   #   gasCoin: "0x<gas-coin-object-id>"
   #   # Inbound event poll interval (seconds). Default: 2.
