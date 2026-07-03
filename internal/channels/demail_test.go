@@ -15,6 +15,7 @@ import (
 
 	"github.com/fractalmind-ai/fractal-demail/client-go/envelope"
 	"github.com/fractalmind-ai/fractal-demail/client-go/schema"
+	gasstation "github.com/fractalmind-ai/fractal-demail/gas-station-adapter"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
 )
@@ -542,6 +543,95 @@ func TestDemailSendCLISequence(t *testing.T) {
 	}
 	if parsed.TS != 1750000000000 {
 		t.Fatalf("expected ts 1750000000000, got %d", parsed.TS)
+	}
+}
+
+func TestDemailSendSelfSponsoredSingleSignature(t *testing.T) {
+	recipientPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate recipient key: %v", err)
+	}
+
+	// Self-sponsored route: sponsorAddress == address is a supported
+	// configuration where the node pays its own gas with a single signature.
+	channel := newTestDemailChannel(t, DemailOptions{
+		SponsorAddress: demailTestAddress,
+		GasCoin:        demailTestGasCoin,
+		Peers: map[string]string{
+			demailTestPeer: base64.StdEncoding.EncodeToString(recipientPub),
+		},
+	})
+	channel.nowFn = func() time.Time { return time.UnixMilli(1750000000000) }
+
+	const txBytes = "dGVzdC10eC1ieXRlcw=="
+	var calls []demailExecCall
+	channel.execFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_ = ctx
+		calls = append(calls, demailExecCall{name: name, args: append([]string{}, args...)})
+		switch {
+		case len(args) > 1 && args[0] == "client" && args[1] == "ptb":
+			return []byte(txBytes + "\n"), nil
+		case len(args) > 1 && args[0] == "keytool" && args[1] == "sign":
+			return []byte(`{"suiSignature":"sig-sender"}`), nil
+		case len(args) > 1 && args[0] == "client" && args[1] == "execute-signed-tx":
+			return []byte(`{"digest":"DIGEST456"}`), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+
+	result, err := channel.Send(context.Background(), OutboundMessage{To: demailTestPeer, Text: "hello peer"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if result.MessageTS != "DIGEST456" {
+		t.Fatalf("expected digest in MessageTS, got %q", result.MessageTS)
+	}
+
+	// Exactly one keytool sign: the sender signature is the only signature
+	// on a self-sponsored route, so no second sign runs for the sponsor.
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 CLI calls (ptb, sign, execute), got %d: %v", len(calls), calls)
+	}
+	signCalls := 0
+	for _, call := range calls {
+		if len(call.args) > 1 && call.args[0] == "keytool" && call.args[1] == "sign" {
+			signCalls++
+		}
+	}
+	if signCalls != 1 {
+		t.Fatalf("expected exactly 1 keytool sign call, got %d", signCalls)
+	}
+	expectedSign := []string{"keytool", "sign", "--address", demailTestAddress, "--data", txBytes, "--json"}
+	if !reflect.DeepEqual(calls[1].args, expectedSign) {
+		t.Fatalf("unexpected sign args:\n got %v\nwant %v", calls[1].args, expectedSign)
+	}
+
+	// Execution submits exactly one --signatures pair (the sender signature).
+	expectedExecute := []string{
+		"client", "execute-signed-tx",
+		"--tx-bytes", txBytes,
+		"--signatures", "sig-sender",
+		"--json",
+	}
+	if !reflect.DeepEqual(calls[2].args, expectedExecute) {
+		t.Fatalf("unexpected execute args:\n got %v\nwant %v", calls[2].args, expectedExecute)
+	}
+}
+
+func TestDemailCLITransportRejectsEmptySignatures(t *testing.T) {
+	transport := &demailCLITransport{
+		execFn: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("no CLI command should run, got %s %v", name, args)
+			return nil, nil
+		},
+	}
+	err := transport.Relay(context.Background(), gasstation.RelayRequest{
+		Route:      gasstation.Route{Sender: demailTestAddress, GasSponsor: demailTestSponsor},
+		UnsignedTx: []byte("dGVzdC10eC1ieXRlcw=="),
+	})
+	if err == nil || !strings.Contains(err.Error(), "no non-empty signatures") {
+		t.Fatalf("expected zero-signature rejection, got %v", err)
 	}
 }
 

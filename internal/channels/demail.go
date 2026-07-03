@@ -42,6 +42,8 @@ type DemailOptions struct {
 	// or 64-byte key). It is read at Start and never logged.
 	IdentityKeyFile string
 	// SponsorAddress is the gas sponsor Sui address for outbound sends.
+	// It may equal Address: that is a supported self-sponsored route where
+	// the sender pays its own gas and only one signature is produced.
 	SponsorAddress string
 	// GasCoin is the sponsor-owned gas coin object id used by outbound sends.
 	GasCoin string
@@ -516,12 +518,21 @@ func (b *DemailChannel) Send(ctx context.Context, msg OutboundMessage) (*SendRes
 	}
 
 	transport := &demailCLITransport{execFn: b.execFn}
-	relay, err := gasstation.New(gasstation.Route{Sender: b.address, GasSponsor: b.sponsorAddress}, transport)
+	route := gasstation.Route{Sender: b.address, GasSponsor: b.sponsorAddress}
+	relay, err := gasstation.New(route, transport)
 	if err != nil {
 		return nil, fmt.Errorf("demail relay init failed: %w", err)
 	}
 
-	request, err := relay.Sponsor(ctx, []byte(txBytes), b.suiSigner(b.address), b.suiSigner(b.sponsorAddress))
+	// Self-sponsored route (sponsorAddress == address): Sui expects exactly
+	// one signature, so pass a nil sponsor signer and let the adapter collect
+	// only the sender signature (a single keytool sign call).
+	var sponsorSigner gasstation.Signer
+	if !route.SelfSponsored() {
+		sponsorSigner = b.suiSigner(b.sponsorAddress)
+	}
+
+	request, err := relay.Sponsor(ctx, []byte(txBytes), b.suiSigner(b.address), sponsorSigner)
 	if err != nil {
 		b.markError()
 		return nil, fmt.Errorf("demail sponsor signing failed: %w", err)
@@ -586,21 +597,39 @@ func (b *DemailChannel) suiSigner(address string) gasstation.Signer {
 	}
 }
 
-// demailCLITransport executes the dual-signed transaction via the sui CLI,
+// demailCLITransport executes the signed transaction via the sui CLI,
 // keeping the gasstation route/signature invariants on the outbound path.
+// Per the gasstation transport contract it submits only non-empty
+// signatures: two on a distinct-sponsor route, one on a self-sponsored
+// route (where SponsorSignature is empty).
 type demailCLITransport struct {
 	execFn func(ctx context.Context, name string, args ...string) ([]byte, error)
 	digest string
 }
 
 func (t *demailCLITransport) Relay(ctx context.Context, req gasstation.RelayRequest) error {
-	output, err := t.execFn(ctx, "sui",
+	args := []string{
 		"client", "execute-signed-tx",
 		"--tx-bytes", string(req.UnsignedTx),
-		"--signatures", string(req.SenderSignature),
-		"--signatures", string(req.SponsorSignature),
-		"--json",
-	)
+	}
+	// Sender first, then sponsor: Sui expects the sender signature ahead of
+	// the sponsor signature on a dual-signed transaction. The adapter
+	// validates signature presence, but stay defensive: never submit an
+	// empty --signatures value and never submit zero signatures.
+	signatures := 0
+	for _, sig := range [][]byte{req.SenderSignature, req.SponsorSignature} {
+		if len(sig) == 0 {
+			continue
+		}
+		args = append(args, "--signatures", string(sig))
+		signatures++
+	}
+	if signatures == 0 {
+		return errors.New("demail transport: relay request has no non-empty signatures")
+	}
+	args = append(args, "--json")
+
+	output, err := t.execFn(ctx, "sui", args...)
 	if err != nil {
 		return fmt.Errorf("sui execute-signed-tx failed: %w", err)
 	}
