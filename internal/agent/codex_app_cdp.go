@@ -1237,11 +1237,40 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     throw new Error("No active Codex App /local/<conversationId> route; configure agents.codexAppCDP.conversationId or open the target thread.");
   }
 
-  const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
+  const toURLArray = (value) => {
+    const normalize = (item) => {
+      if (!item) {
+        return "";
+      }
+      if (typeof item === "string") {
+        return item;
+      }
+      return item.src || item.name || "";
+    };
+    if (!value) {
+      return [];
+    }
+    try {
+      return Array.from(value).map(normalize).filter(Boolean);
+    } catch (_) {
+      if (typeof value.length === "number") {
+        const out = [];
+        for (let i = 0; i < value.length; i += 1) {
+          const normalized = normalize(value[i]);
+          if (normalized) {
+            out.push(normalized);
+          }
+        }
+        return out;
+      }
+    }
+    return [];
+  };
+  const resources = toURLArray(performance.getEntriesByType("resource"));
   let signalsUrl = resources.find((name) => /app-server-manager-signals-[^/]+\.js$/.test(name));
   if (!signalsUrl) {
-    const scripts = Array.from(document.querySelectorAll("script[src]")).map((script) => script.src);
-    const candidates = [...scripts, ...resources].filter((src) => /\/assets\/[^/]+\.js$/.test(src));
+    const scripts = toURLArray(document.querySelectorAll("script[src]"));
+    const candidates = scripts.concat(resources).filter((src) => /\/assets\/[^/]+\.js$/.test(src));
     for (const candidate of candidates) {
       try {
         const source = await fetch(candidate).then((response) => response.text());
@@ -1258,12 +1287,26 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
   }
 
   const signals = await import(signalsUrl);
+  const isSendRequestBridge = (fn) => {
+    if (typeof fn !== "function") {
+      return false;
+    }
+    try {
+      const source = String(fn).replace(/\s+/g, "");
+      return /^asyncfunction\w*\([^)]*\)\{return\w+\.sendRequest\([^)]*\)\}$/.test(source) ||
+        /^function\w*\([^)]*\)\{return\w+\.sendRequest\([^)]*\)\}$/.test(source);
+    } catch (_) {
+      return false;
+    }
+  };
   const requestCandidates = [
+    ["ln", signals.ln],
     ["on", signals.on],
     ["Kn", signals.Kn],
     ["rn", signals.rn]
   ];
-  const candidate = requestCandidates.find(([, fn]) => typeof fn === "function");
+  const candidate = requestCandidates.find(([, fn]) => isSendRequestBridge(fn)) ||
+    Object.entries(signals).find(([, fn]) => isSendRequestBridge(fn));
   const sendRequest = candidate ? candidate[1] : null;
   if (typeof sendRequest !== "function") {
     throw new Error("Codex App app-server request bridge is unavailable.");

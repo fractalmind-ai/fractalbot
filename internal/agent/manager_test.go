@@ -756,6 +756,31 @@ func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
 	}
 }
 
+func TestBuildCodexAppDeliveryScriptUsesArrayLikeSafeURLCollection(t *testing.T) {
+	script := buildCodexAppDeliveryScript(&config.CodexAppCDPConfig{
+		HostID:         "local",
+		ConversationID: "thread-123",
+	}, CodexAppEnvelope{ID: "env-1", Text: "hello"}, "hello")
+
+	if strings.Contains(script, "[...scripts, ...resources]") {
+		t.Fatalf("delivery script still uses spread over possibly array-like values")
+	}
+	for _, expected := range []string{
+		"const toURLArray = (value) =>",
+		"Array.from(value).map(normalize).filter(Boolean)",
+		"typeof value.length === \"number\"",
+		"scripts.concat(resources)",
+		"const isSendRequestBridge = (fn) =>",
+		"return /^asyncfunction",
+		"[\"ln\", signals.ln]",
+		"Object.entries(signals).find",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("delivery script missing %q:\n%s", expected, script)
+		}
+	}
+}
+
 func TestHandleIncomingCodexAppCDPBridgeRejectionFallsBackToInbox(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	mux := http.NewServeMux()
