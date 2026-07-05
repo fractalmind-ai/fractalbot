@@ -44,6 +44,7 @@ type SlackBot struct {
 	sendMessageFn            func(ctx context.Context, channelID, text string) (*SendResult, error)
 	sendMessageWithOptionsFn func(ctx context.Context, channelID, text, threadTS string) (*SendResult, error)
 	fetchHistoryFn           func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error)
+	fetchMessageFilesFn      func(ctx context.Context, channelID, threadTS, ts string) ([]slack.File, error)
 
 	socketClientFactoryFn func(apiClient *slack.Client) *socketmode.Client
 	runSocketModeFn       func(ctx context.Context, socketClient *socketmode.Client) error
@@ -412,6 +413,7 @@ func (b *SlackBot) handleEventsAPIEvent(ctx context.Context, event slackevents.E
 		if msg == nil {
 			return
 		}
+		msg.attachments = b.appMentionAttachments(ctx, ev, event)
 		replyText := b.slashCommandReply(ctx, msg)
 		if strings.TrimSpace(replyText) == "" {
 			return
@@ -1090,7 +1092,94 @@ func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attac
 	if event == nil || event.Message == nil {
 		return nil
 	}
-	attachments := make([]protocol.Attachment, 0, len(event.Message.Files)+len(event.Message.Attachments))
+	return slackAttachmentsFromFiles(event.Message.Files, event.Message.Attachments)
+}
+
+// appMentionAttachments extracts file attachments for a channel app_mention.
+// The slack-go AppMentionEvent struct does not expose the "files" array that
+// Slack includes when the mentioning message carries attachments, so the raw
+// inner event JSON is re-parsed. If the payload has no files (Slack does not
+// guarantee them on app_mention), fall back to fetching the message itself
+// from the conversation history.
+func (b *SlackBot) appMentionAttachments(ctx context.Context, ev *slackevents.AppMentionEvent, apiEvent slackevents.EventsAPIEvent) []protocol.Attachment {
+	if attachments := slackAttachmentsFromCallbackEvent(apiEvent); len(attachments) > 0 {
+		return attachments
+	}
+	files, err := b.fetchMessageFiles(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp)
+	if err != nil {
+		log.Printf("slack: failed to fetch files for mention in %s at %s: %v", ev.Channel, ev.TimeStamp, err)
+		return nil
+	}
+	return slackAttachmentsFromFiles(files, nil)
+}
+
+// slackAttachmentsFromCallbackEvent re-parses the raw inner event JSON of an
+// Events API callback into a slack.Msg to recover the files/attachments
+// arrays that typed event structs may not expose.
+func slackAttachmentsFromCallbackEvent(apiEvent slackevents.EventsAPIEvent) []protocol.Attachment {
+	cbEvent, ok := apiEvent.Data.(*slackevents.EventsAPICallbackEvent)
+	if !ok || cbEvent == nil || cbEvent.InnerEvent == nil {
+		return nil
+	}
+	var msg slack.Msg
+	if err := json.Unmarshal(*cbEvent.InnerEvent, &msg); err != nil {
+		return nil
+	}
+	return slackAttachmentsFromFiles(msg.Files, msg.Attachments)
+}
+
+func (b *SlackBot) fetchMessageFiles(ctx context.Context, channelID, threadTS, ts string) ([]slack.File, error) {
+	fetchFn := b.fetchMessageFilesFn
+	if fetchFn == nil {
+		fetchFn = b.defaultFetchMessageFiles
+	}
+	return fetchFn(ctx, channelID, threadTS, ts)
+}
+
+func (b *SlackBot) defaultFetchMessageFiles(ctx context.Context, channelID, threadTS, ts string) ([]slack.File, error) {
+	if strings.TrimSpace(ts) == "" {
+		return nil, nil
+	}
+	if b.apiClient == nil {
+		return nil, errors.New("slack api client not initialized")
+	}
+	var messages []slack.Message
+	if strings.TrimSpace(threadTS) != "" {
+		msgs, _, _, err := b.apiClient.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+			ChannelID: channelID,
+			Timestamp: threadTS,
+			Latest:    ts,
+			Oldest:    ts,
+			Inclusive: true,
+			Limit:     1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		messages = msgs
+	} else {
+		resp, err := b.apiClient.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+			ChannelID: channelID,
+			Latest:    ts,
+			Oldest:    ts,
+			Inclusive: true,
+			Limit:     1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		messages = resp.Messages
+	}
+	for _, m := range messages {
+		if m.Timestamp == ts {
+			return m.Files, nil
+		}
+	}
+	return nil, nil
+}
+
+func slackAttachmentsFromFiles(files []slack.File, legacy []slack.Attachment) []protocol.Attachment {
+	attachments := make([]protocol.Attachment, 0, len(files)+len(legacy))
 	seenURL := make(map[string]struct{})
 	appendAttachment := func(attachment protocol.Attachment) {
 		if attachment.URL == "" {
@@ -1103,7 +1192,7 @@ func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attac
 		attachments = append(attachments, attachment)
 	}
 
-	for _, file := range event.Message.Files {
+	for _, file := range files {
 		url := strings.TrimSpace(file.URLPrivate)
 		if url == "" {
 			url = strings.TrimSpace(file.URLPrivateDownload)
@@ -1127,12 +1216,12 @@ func slackAttachmentsFromEvent(event *slackevents.MessageEvent) []protocol.Attac
 		})
 	}
 
-	for _, legacy := range event.Message.Attachments {
-		url := slackLegacyAttachmentURL(legacy)
+	for _, legacyAttachment := range legacy {
+		url := slackLegacyAttachmentURL(legacyAttachment)
 		if url == "" {
 			continue
 		}
-		filename := strings.TrimSpace(legacy.Title)
+		filename := strings.TrimSpace(legacyAttachment.Title)
 		if filename == "" {
 			filename = slackFilenameFromURL(url)
 		}

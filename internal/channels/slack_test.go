@@ -2011,3 +2011,236 @@ func TestSendTextWithOptionsResolvesMentions(t *testing.T) {
 		t.Fatalf("sent text = %q, want %q", sentText, "Hey <@U111>, check this")
 	}
 }
+
+func newSlackAppMentionTestBot(t *testing.T) (*SlackBot, *fakeSlackHandler) {
+	t.Helper()
+	bot, err := NewSlackBot("xoxb-token", "xapp-token", []string{"U123"}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewSlackBot: %v", err)
+	}
+	bot.sendMessageFn = func(ctx context.Context, channelID, text string) (*SendResult, error) {
+		return nil, nil
+	}
+	bot.fetchHistoryFn = func(ctx context.Context, channelID string, limit int) ([]map[string]interface{}, error) {
+		return nil, nil
+	}
+	bot.fetchMessageFilesFn = func(ctx context.Context, channelID, threadTS, ts string) ([]slack.File, error) {
+		return nil, nil
+	}
+	handler := &fakeSlackHandler{reply: "ok"}
+	bot.SetHandler(handler)
+	return bot, handler
+}
+
+func TestSlackAppMentionChannelImageAttachment(t *testing.T) {
+	// Reproduces issue #361: a channel message mentioning the bot with an
+	// image attached must route with the attachment, exactly like the DM path.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "app_mention",
+			"text": "<@U0BOT> look at this screenshot",
+			"user": "U123",
+			"channel": "C0AH3NZH5R9",
+			"ts": "1783179559.001819",
+			"event_ts": "1783179559.001819",
+			"files": [
+				{
+					"id": "F0BF3KS2VCN",
+					"name": "455.png",
+					"mimetype": "image/png",
+					"filetype": "png",
+					"url_private": "https://files.slack.com/files-pri/T123-F0BF3KS2VCN/455.png"
+				}
+			]
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	bot, handler := newSlackAppMentionTestBot(t)
+	bot.handleEventsAPIEvent(context.Background(), event)
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if len(handler.last.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(handler.last.Attachments))
+	}
+	att := handler.last.Attachments[0]
+	if att.Type != "image" {
+		t.Fatalf("attachment.Type=%q, want image (image types must not be filtered)", att.Type)
+	}
+	if att.Filename != "455.png" {
+		t.Fatalf("attachment.Filename=%q", att.Filename)
+	}
+	if att.MimeType != "image/png" {
+		t.Fatalf("attachment.MimeType=%q", att.MimeType)
+	}
+	if att.URL != "https://files.slack.com/files-pri/T123-F0BF3KS2VCN/455.png" {
+		t.Fatalf("attachment.URL=%q", att.URL)
+	}
+	if att.Channel != "slack" {
+		t.Fatalf("attachment.Channel=%q", att.Channel)
+	}
+
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	if _, ok := data["attachments"]; !ok {
+		t.Fatalf("expected attachments key in routed data")
+	}
+}
+
+func TestSlackAppMentionChannelFileAttachment(t *testing.T) {
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "app_mention",
+			"text": "<@U0BOT> review this doc",
+			"user": "U123",
+			"channel": "C0AH3NZH5R9",
+			"ts": "1783179559.001820",
+			"event_ts": "1783179559.001820",
+			"files": [
+				{
+					"id": "F456",
+					"name": "spec.pdf",
+					"mimetype": "application/pdf",
+					"filetype": "pdf",
+					"url_private": "https://files.slack.com/files-pri/T123-F456/spec.pdf"
+				}
+			]
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	bot, handler := newSlackAppMentionTestBot(t)
+	bot.handleEventsAPIEvent(context.Background(), event)
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if len(handler.last.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(handler.last.Attachments))
+	}
+	att := handler.last.Attachments[0]
+	if att.Type != "file" {
+		t.Fatalf("attachment.Type=%q, want file", att.Type)
+	}
+	if att.Filename != "spec.pdf" {
+		t.Fatalf("attachment.Filename=%q", att.Filename)
+	}
+	if att.URL != "https://files.slack.com/files-pri/T123-F456/spec.pdf" {
+		t.Fatalf("attachment.URL=%q", att.URL)
+	}
+}
+
+func TestSlackAppMentionAttachmentsFallbackToHistory(t *testing.T) {
+	// When the app_mention payload carries no files, the bot must fall back
+	// to fetching the mentioning message from the conversation history.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "app_mention",
+			"text": "<@U0BOT> look at the screenshot",
+			"user": "U123",
+			"channel": "C0AH3NZH5R9",
+			"thread_ts": "1783179000.000100",
+			"ts": "1783179559.001819",
+			"event_ts": "1783179559.001819"
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	bot, handler := newSlackAppMentionTestBot(t)
+	var gotChannel, gotThreadTS, gotTS string
+	bot.fetchMessageFilesFn = func(ctx context.Context, channelID, threadTS, ts string) ([]slack.File, error) {
+		gotChannel, gotThreadTS, gotTS = channelID, threadTS, ts
+		return []slack.File{
+			{
+				ID:         "F789",
+				Name:       "screen.png",
+				Mimetype:   "image/png",
+				Filetype:   "png",
+				URLPrivate: "https://files.slack.com/files-pri/T123-F789/screen.png",
+			},
+		}, nil
+	}
+	bot.handleEventsAPIEvent(context.Background(), event)
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if gotChannel != "C0AH3NZH5R9" || gotThreadTS != "1783179000.000100" || gotTS != "1783179559.001819" {
+		t.Fatalf("fetchMessageFiles called with channel=%q threadTS=%q ts=%q", gotChannel, gotThreadTS, gotTS)
+	}
+	if len(handler.last.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment from history fallback, got %d", len(handler.last.Attachments))
+	}
+	att := handler.last.Attachments[0]
+	if att.Type != "image" || att.Filename != "screen.png" {
+		t.Fatalf("attachment=%+v", att)
+	}
+}
+
+func TestSlackAppMentionWithoutAttachments(t *testing.T) {
+	// A plain mention with no files must still route, with no attachments key.
+	eventJSON := `{
+		"token": "test-token",
+		"team_id": "T123",
+		"api_app_id": "A123",
+		"type": "event_callback",
+		"event": {
+			"type": "app_mention",
+			"text": "<@U0BOT> just words",
+			"user": "U123",
+			"channel": "C0AH3NZH5R9",
+			"ts": "1783179559.001821",
+			"event_ts": "1783179559.001821"
+		}
+	}`
+
+	event, err := slackevents.ParseEvent(json.RawMessage(eventJSON), slackevents.OptionNoVerifyToken())
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+
+	bot, handler := newSlackAppMentionTestBot(t)
+	bot.handleEventsAPIEvent(context.Background(), event)
+
+	if !handler.called {
+		t.Fatalf("expected handler to be called")
+	}
+	if len(handler.last.Attachments) != 0 {
+		t.Fatalf("expected no attachments, got %d", len(handler.last.Attachments))
+	}
+	data, ok := handler.last.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", handler.last.Data)
+	}
+	if _, ok := data["attachments"]; ok {
+		t.Fatalf("expected no attachments key in routed data")
+	}
+}
