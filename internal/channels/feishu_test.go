@@ -83,6 +83,34 @@ func TestFeishuHelpIncludesToAlias(t *testing.T) {
 	}
 }
 
+func TestFeishuDropsAppSenderMessages(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sent feishuSendCapture
+	sendCalls := 0
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sendCalls++
+		sent = feishuSendCapture{receiveIDType: receiveIDType, receiveID: receiveID, text: text}
+		return nil
+	}
+
+	handler := &fakeFeishuHandler{reply: "ok"}
+	bot.SetHandler(handler)
+
+	// Even when the open_id passes the allowlist, an app-sent message must
+	// never reach the agent handler (echo/self-reply loop guard).
+	bot.handleMessageEvent(context.Background(), buildFeishuEventWithSenderType("hello", "p2p", "ou_allowed", "u1", "chat1", "app"))
+	if handler.called {
+		t.Fatalf("expected handler not called for app sender")
+	}
+	if sendCalls != 0 {
+		t.Fatalf("expected no replies for app sender, got %d (%q)", sendCalls, sent.text)
+	}
+}
+
 func TestFeishuAllowlist(t *testing.T) {
 	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_allowed"}, "", nil)
 	if err != nil {
@@ -423,6 +451,10 @@ func TestFeishuReplyTruncation(t *testing.T) {
 }
 
 func buildFeishuEvent(text, chatType, openID, userID, chatID string) *larkim.P2MessageReceiveV1 {
+	return buildFeishuEventWithSenderType(text, chatType, openID, userID, chatID, "user")
+}
+
+func buildFeishuEventWithSenderType(text, chatType, openID, userID, chatID, senderType string) *larkim.P2MessageReceiveV1 {
 	content := fmt.Sprintf(`{"text":%q}`, text)
 	return &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
@@ -431,6 +463,7 @@ func buildFeishuEvent(text, chatType, openID, userID, chatID string) *larkim.P2M
 					OpenId: strPtr(openID),
 					UserId: strPtr(userID),
 				},
+				SenderType: strPtr(senderType),
 			},
 			Message: &larkim.EventMessage{
 				MessageId:   strPtr("msg_1"),
