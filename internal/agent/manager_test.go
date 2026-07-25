@@ -673,6 +673,216 @@ func TestHandleIncomingCodexAppCDPWritesInboxEnvelope(t *testing.T) {
 	}
 }
 
+func TestHandleIncomingClaudeDesktopWritesInboxEnvelope(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	manager := NewManager(&config.AgentsConfig{
+		Router: "claudeDesktop",
+		ClaudeDesktop: &config.ClaudeDesktopConfig{
+			Enabled:      true,
+			InboxPath:    inbox,
+			DefaultAgent: "main",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "hello Claude Desktop",
+			"agent":   "main",
+			"chat_id": "oc_123",
+			"open_id": "ou_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != claudeDesktopAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one inbox envelope, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(inbox, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	var queued claudeDesktopInboxEnvelope
+	if err := json.Unmarshal(data, &queued); err != nil {
+		t.Fatalf("decode inbox envelope: %v", err)
+	}
+	if queued.Envelope.Channel != "feishu" || queued.Envelope.ChatID != "oc_123" || queued.Envelope.UserID != "ou_123" || queued.Envelope.SelectedAgent != "main" || queued.Envelope.Text != "hello Claude Desktop" {
+		t.Fatalf("unexpected envelope: %#v", queued.Envelope)
+	}
+	if !strings.Contains(queued.Prompt, "delivered by FractalBot into Claude Desktop") {
+		t.Fatalf("expected Claude Desktop prompt, got %q", queued.Prompt)
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Backend != "claudeDesktop" || telemetry.Status != "queued" || telemetry.EnvelopeID == "" || telemetry.InboxPath == "" {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingClaudeDesktopDeliversViaCDP(t *testing.T) {
+	var evaluated string
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/page/1"
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Claude",
+			URL:                  "https://claude.ai/new",
+			WebSocketDebuggerURL: wsURL,
+		}})
+	})
+	mux.HandleFunc("/devtools/page/1", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Expression string `json:"expression"`
+			} `json:"params"`
+		}
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Fatalf("read CDP request: %v", err)
+		}
+		evaluated = req.Params.Expression
+		if req.Method != "Runtime.evaluate" {
+			t.Fatalf("method=%q", req.Method)
+		}
+		if err := conn.WriteJSON(map[string]interface{}{
+			"id": req.ID,
+			"result": map[string]interface{}{
+				"result": map[string]interface{}{"type": "object", "value": map[string]interface{}{"ok": true, "submitted": true}},
+			},
+		}); err != nil {
+			t.Fatalf("write CDP response: %v", err)
+		}
+	})
+
+	manager := NewManager(&config.AgentsConfig{
+		Router: "claudeDesktop",
+		ClaudeDesktop: &config.ClaudeDesktopConfig{
+			Enabled:      true,
+			CDPEndpoint:  server.URL,
+			InboxPath:    filepath.Join(t.TempDir(), "inbox"),
+			DefaultAgent: "main",
+		},
+	})
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{Data: map[string]interface{}{
+		"channel": "slack",
+		"text":    "deliver to Claude",
+		"chat_id": "D123",
+		"user_id": "U123",
+	}})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != claudeDesktopAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if !strings.Contains(evaluated, "deliver to Claude") || !strings.Contains(evaluated, "No visible Claude Desktop input found") {
+		t.Fatalf("unexpected evaluated script: %s", evaluated)
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Backend != "claudeDesktop" || telemetry.Status != "delivered" || telemetry.Error != "" || telemetry.InboxPath != "" {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestHandleIncomingClaudeDesktopLoginFallsBackToInbox(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Sign in",
+			URL:                  "https://claude.ai/login",
+			WebSocketDebuggerURL: "ws://127.0.0.1:19334/devtools/page/login",
+		}})
+	})
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	manager := NewManager(&config.AgentsConfig{
+		Router: "claudeDesktop",
+		ClaudeDesktop: &config.ClaudeDesktopConfig{
+			Enabled:         true,
+			CDPEndpoint:     server.URL,
+			InboxPath:       inbox,
+			FallbackToInbox: true,
+			DefaultAgent:    "main",
+		},
+	})
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{Data: map[string]interface{}{
+		"channel": "feishu",
+		"text":    "queue when logged out",
+		"chat_id": "oc_123",
+	}})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != claudeDesktopAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one inbox envelope, got %d", len(entries))
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "queued" || !strings.Contains(telemetry.Error, "authenticated chat target") {
+		t.Fatalf("unexpected telemetry: %#v", telemetry)
+	}
+}
+
+func TestIsClaudeDesktopChatTarget(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target cdpTarget
+		want   bool
+	}{
+		{
+			name:   "authenticated Claude chat",
+			target: cdpTarget{Type: "page", URL: "https://claude.ai/new", WebSocketDebuggerURL: "ws://127.0.0.1/page/1"},
+			want:   true,
+		},
+		{
+			name:   "login page",
+			target: cdpTarget{Type: "page", Title: "Sign in", URL: "https://claude.ai/new", WebSocketDebuggerURL: "ws://127.0.0.1/page/1"},
+			want:   false,
+		},
+		{
+			name:   "non Claude host",
+			target: cdpTarget{Type: "page", URL: "https://example.com", WebSocketDebuggerURL: "ws://127.0.0.1/page/1"},
+			want:   false,
+		},
+		{
+			name:   "non-page target",
+			target: cdpTarget{Type: "worker", URL: "https://claude.ai/new", WebSocketDebuggerURL: "ws://127.0.0.1/page/1"},
+			want:   false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isClaudeDesktopChatTarget(test.target); got != test.want {
+				t.Fatalf("isClaudeDesktopChatTarget(%#v)=%t, want %t", test.target, got, test.want)
+			}
+		})
+	}
+}
+
 func TestHandleIncomingCodexAppCDPDeliversViaCDP(t *testing.T) {
 	var evaluated string
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}

@@ -414,12 +414,13 @@ type channelStatus struct {
 }
 
 type agentStatus struct {
-	WorkspaceConfigured bool                `json:"workspace_configured"`
-	MaxConcurrent       int                 `json:"max_concurrent,omitempty"`
-	Router              string              `json:"router,omitempty"`
-	LastRouting         *agentRoutingStatus `json:"last_routing,omitempty"`
-	OhMyCode            *ohMyCodeStatus     `json:"oh_my_code,omitempty"`
-	CodexAppCDP         *codexAppCDPStatus  `json:"codex_app_cdp,omitempty"`
+	WorkspaceConfigured bool                 `json:"workspace_configured"`
+	MaxConcurrent       int                  `json:"max_concurrent,omitempty"`
+	Router              string               `json:"router,omitempty"`
+	LastRouting         *agentRoutingStatus  `json:"last_routing,omitempty"`
+	OhMyCode            *ohMyCodeStatus      `json:"oh_my_code,omitempty"`
+	CodexAppCDP         *codexAppCDPStatus   `json:"codex_app_cdp,omitempty"`
+	ClaudeDesktop       *claudeDesktopStatus `json:"claude_desktop,omitempty"`
 }
 
 type agentRoutingStatus struct {
@@ -463,6 +464,17 @@ type codexAppCDPStatus struct {
 	DefaultAgent         string                     `json:"default_agent,omitempty"`
 	AllowedAgents        []string                   `json:"allowed_agents,omitempty"`
 	LastRouting          *agentRoutingStatus        `json:"last_routing,omitempty"`
+}
+
+type claudeDesktopStatus struct {
+	Enabled          bool     `json:"enabled"`
+	CDPEndpoint      string   `json:"cdp_endpoint,omitempty"`
+	TargetSelector   string   `json:"target_selector,omitempty"`
+	InboxConfigured  bool     `json:"inbox_configured"`
+	FallbackToInbox  bool     `json:"fallback_to_inbox"`
+	DefaultAgent     string   `json:"default_agent,omitempty"`
+	AllowedAgents    []string `json:"allowed_agents,omitempty"`
+	DeliveryTimeoutS int      `json:"delivery_timeout_seconds,omitempty"`
 }
 
 type codexAppCDPTargetProject struct {
@@ -722,6 +734,22 @@ func (s *Server) agentStatus() *agentStatus {
 		}
 	}
 
+	if s.config.Agents.ClaudeDesktop != nil {
+		claude := s.config.Agents.ClaudeDesktop
+		status.ClaudeDesktop = &claudeDesktopStatus{
+			Enabled:          claude.Enabled,
+			CDPEndpoint:      strings.TrimSpace(claude.CDPEndpoint),
+			TargetSelector:   strings.TrimSpace(claude.TargetSelector),
+			InboxConfigured:  strings.TrimSpace(claude.InboxPath) != "",
+			FallbackToInbox:  claude.FallbackToInbox,
+			DefaultAgent:     strings.TrimSpace(claude.DefaultAgent),
+			DeliveryTimeoutS: claude.DeliveryTimeoutSeconds,
+		}
+		if len(claude.AllowedAgents) > 0 {
+			status.ClaudeDesktop.AllowedAgents = append([]string{}, claude.AllowedAgents...)
+		}
+	}
+
 	return status
 }
 
@@ -737,6 +765,9 @@ func activeAgentRouterName(cfg *config.AgentsConfig) string {
 	}
 	if cfg.CodexAppCDP != nil && cfg.CodexAppCDP.Enabled {
 		return "codexAppCDP"
+	}
+	if cfg.ClaudeDesktop != nil && cfg.ClaudeDesktop.Enabled {
+		return "claudeDesktop"
 	}
 	return ""
 }

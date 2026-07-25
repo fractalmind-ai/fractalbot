@@ -38,17 +38,18 @@ const (
 
 // Manager is a minimal stub for agent lifecycle management.
 type Manager struct {
-	config            *config.AgentsConfig
-	ChannelManager    *channels.Manager
-	mu                sync.RWMutex
-	agents            map[string]protocol.AgentInfo
-	routingMu         sync.RWMutex
-	lastRouting       *RoutingOutcome
-	codexAppCDPClient codexAppCDPClient
-	cdpMonitorCancel  context.CancelFunc
-	cdpMonitorDone    chan struct{}
-	cdpReadiness      *CodexAppCDPReadinessStatus
-	cdpResolvedTarget *CodexAppCDPResolvedConversationStatus
+	config              *config.AgentsConfig
+	ChannelManager      *channels.Manager
+	mu                  sync.RWMutex
+	agents              map[string]protocol.AgentInfo
+	routingMu           sync.RWMutex
+	lastRouting         *RoutingOutcome
+	codexAppCDPClient   codexAppCDPClient
+	claudeDesktopClient claudeDesktopClient
+	cdpMonitorCancel    context.CancelFunc
+	cdpMonitorDone      chan struct{}
+	cdpReadiness        *CodexAppCDPReadinessStatus
+	cdpResolvedTarget   *CodexAppCDPResolvedConversationStatus
 }
 
 type RoutingOutcome struct {
@@ -164,6 +165,22 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		return out, nil
 	}
 
+	if m.activeRouter() == "claudeDesktop" && m.isClaudeDesktopEnabled() {
+		agentName, _ := data["agent"].(string)
+		out, err := m.assignClaudeDesktop(ctx, text, agentName, data)
+		if err != nil {
+			return "", err
+		}
+		out = normalizeUserReply(out)
+		if out == "" {
+			return "", nil
+		}
+		if channel == "telegram" {
+			return channels.TruncateTelegramReply(out), nil
+		}
+		return out, nil
+	}
+
 	if m.isOhMyCodeEnabled() {
 		agentName, _ := data["agent"].(string)
 		out, err := m.assignOhMyCode(ctx, text, agentName, data)
@@ -196,6 +213,9 @@ func (m *Manager) activeRouter() string {
 	}
 	if m.config.CodexAppCDP != nil && m.config.CodexAppCDP.Enabled {
 		return "codexAppCDP"
+	}
+	if m.config.ClaudeDesktop != nil && m.config.ClaudeDesktop.Enabled {
+		return "claudeDesktop"
 	}
 	return ""
 }

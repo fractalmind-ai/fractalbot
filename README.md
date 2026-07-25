@@ -138,7 +138,7 @@ agents:
   workspace: ./workspace
   maxConcurrent: 4
 
-  # Select the inbound agent runtime: "ohMyCode" or "codexAppCDP".
+  # Select the inbound agent runtime: "ohMyCode", "codexAppCDP", or "claudeDesktop".
   # Empty preserves legacy auto-selection.
   router: "ohMyCode"
 
@@ -191,6 +191,19 @@ agents:
     allowedAgents:
       - "main"
     deliveryTimeoutSeconds: 20
+
+  # Optional: route channel messages into an already-authenticated Claude
+  # Desktop chat target. CDP failures fall back to this private inbox.
+  claudeDesktop:
+    enabled: false
+    cdpEndpoint: "http://127.0.0.1:19334"
+    targetSelector: ""
+    inboxPath: "/Users/you/.fractalbot/claude-desktop-inbox"
+    fallbackToInbox: true
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+    deliveryTimeoutSeconds: 20
 ```
 
 ### Routing Model
@@ -227,6 +240,21 @@ curl -sS http://127.0.0.1:18789/status | python3 -m json.tool
 ```
 
 The gateway intentionally does not fall back to `codex app-server proxy` or temporary `codex app-server --listen` delivery. Messages that cannot reach the visible Codex App renderer are either reported as errors or queued to `inboxPath` when `fallbackToInbox` is enabled.
+
+#### Claude Desktop route
+
+The `claudeDesktop` router delivers an inbound prompt only to an authenticated Claude chat page exposed by an existing CDP endpoint. It does not launch Claude Desktop with debugging flags, patch the app, bypass its CDP auth guard, scrape chat history, or use AppleScript UI injection.
+
+1. Confirm CDP exposes a signed-in Claude chat target, not a login page:
+
+   ```bash
+   curl -fsS http://127.0.0.1:19334/json/version
+   curl -fsS http://127.0.0.1:19334/json/list
+   ```
+
+2. Set `agents.router: claudeDesktop`, enable `agents.claudeDesktop`, and configure both `cdpEndpoint` and an `inboxPath` with `fallbackToInbox: true`.
+3. FractalBot writes the normalized envelope and delivery prompt atomically with private file permissions when Claude Desktop is unavailable, logged out, lacks a visible compose box, or rejects the submit action.
+4. Check `/status`: `agents.claude_desktop` exposes the non-secret configuration and `agents.last_routing` records `delivered`, `queued`, or `error` with the envelope and inbox paths.
 
 Additional lifecycle commands:
 - `/agents` (list allowed agent names)

@@ -254,13 +254,43 @@ type CodexAppCDPWatchConfig struct {
 	CooldownSeconds int `yaml:"cooldownSeconds,omitempty"`
 }
 
+// ClaudeDesktopConfig contains routing settings for Claude Desktop delivery.
+// FractalBot only uses an already-authenticated Claude chat target exposed by
+// CDP. It does not launch, patch, or otherwise bypass Claude Desktop.
+type ClaudeDesktopConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// CDPEndpoint is the Chromium DevTools endpoint exposed by Claude Desktop.
+	// Example: "http://127.0.0.1:19334".
+	CDPEndpoint string `yaml:"cdpEndpoint,omitempty"`
+
+	// TargetSelector optionally matches a Claude chat target title or URL.
+	TargetSelector string `yaml:"targetSelector,omitempty"`
+
+	// InboxPath is a durable queue used when CDP delivery is unavailable.
+	InboxPath string `yaml:"inboxPath,omitempty"`
+
+	// FallbackToInbox queues to InboxPath when CDP delivery fails.
+	FallbackToInbox bool `yaml:"fallbackToInbox,omitempty"`
+
+	// DefaultAgent is used when the inbound message omits /agent.
+	DefaultAgent string `yaml:"defaultAgent,omitempty"`
+
+	// AllowedAgents restricts which agents can be targeted by channel messages.
+	AllowedAgents []string `yaml:"allowedAgents,omitempty"`
+
+	// DeliveryTimeoutSeconds limits CDP delivery. Defaults to 20 seconds.
+	DeliveryTimeoutSeconds int `yaml:"deliveryTimeoutSeconds,omitempty"`
+}
+
 // AgentsConfig contains gateway-side agent routing settings.
 type AgentsConfig struct {
-	Workspace     string             `yaml:"workspace"`
-	MaxConcurrent int                `yaml:"maxConcurrent"`
-	Router        string             `yaml:"router,omitempty"`
-	OhMyCode      *OhMyCodeConfig    `yaml:"ohMyCode,omitempty"`
-	CodexAppCDP   *CodexAppCDPConfig `yaml:"codexAppCDP,omitempty"`
+	Workspace     string               `yaml:"workspace"`
+	MaxConcurrent int                  `yaml:"maxConcurrent"`
+	Router        string               `yaml:"router,omitempty"`
+	OhMyCode      *OhMyCodeConfig      `yaml:"ohMyCode,omitempty"`
+	CodexAppCDP   *CodexAppCDPConfig   `yaml:"codexAppCDP,omitempty"`
+	ClaudeDesktop *ClaudeDesktopConfig `yaml:"claudeDesktop,omitempty"`
 }
 
 // ResolveConfigPath returns the config file path using this priority:
@@ -349,6 +379,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateCodexAppCDPConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateClaudeDesktopConfig(cfg); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -357,10 +390,30 @@ func validateRouterConfig(cfg *Config) error {
 		return nil
 	}
 	router := strings.TrimSpace(cfg.Agents.Router)
-	if router == "" || router == "ohMyCode" || router == "codexAppCDP" {
+	if router == "" || router == "ohMyCode" || router == "codexAppCDP" || router == "claudeDesktop" {
 		return nil
 	}
 	return fmt.Errorf("agents.router: unsupported router %q", router)
+}
+
+func validateClaudeDesktopConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.ClaudeDesktop == nil {
+		return nil
+	}
+	claude := cfg.Agents.ClaudeDesktop
+	if err := validateRoutingAgents("agents.claudeDesktop", claude.DefaultAgent, claude.AllowedAgents); err != nil {
+		return err
+	}
+	if !claude.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(claude.CDPEndpoint) == "" && strings.TrimSpace(claude.InboxPath) == "" {
+		return fmt.Errorf("agents.claudeDesktop.cdpEndpoint or agents.claudeDesktop.inboxPath: required when agents.claudeDesktop.enabled is true")
+	}
+	if claude.DeliveryTimeoutSeconds < 0 {
+		return fmt.Errorf("agents.claudeDesktop.deliveryTimeoutSeconds: must be >= 0")
+	}
+	return nil
 }
 
 func validateOhMyCodeConfig(cfg *Config) error {
