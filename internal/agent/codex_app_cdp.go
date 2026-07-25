@@ -1237,6 +1237,61 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     throw new Error("No active Codex App /local/<conversationId> route; configure agents.codexAppCDP.conversationId or open the target thread.");
   }
 
+  const sendVscodeAppServerRequest = async (method, params) => {
+    const bridge = window.electronBridge;
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") {
+      throw new Error("Codex App Electron bridge is unavailable.");
+    }
+    const requestId = crypto.randomUUID();
+    return await new Promise(async (resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        window.removeEventListener("message", onMessage);
+      };
+      const finish = (callback, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        callback(value);
+      };
+      const timer = setTimeout(() => {
+        finish(reject, new Error("Timed out waiting for Codex App Electron bridge response."));
+      }, 15000);
+      const onMessage = (event) => {
+        const message = event.data;
+        if (!message || message.type !== "fetch-response" || message.requestId !== requestId) {
+          return;
+        }
+        clearTimeout(timer);
+        if (message.responseType !== "success" || message.status < 200 || message.status >= 300) {
+          finish(reject, new Error(message.error || message.bodyJsonString || "Codex App Electron bridge request failed."));
+          return;
+        }
+        try {
+          finish(resolve, message.bodyJsonString ? JSON.parse(message.bodyJsonString) : {});
+        } catch (error) {
+          finish(reject, new Error("Codex App Electron bridge returned invalid JSON: " + String(error)));
+        }
+      };
+      window.addEventListener("message", onMessage);
+      try {
+        await bridge.sendMessageFromView({
+          type: "fetch",
+          requestId,
+          method: "POST",
+          url: "vscode://codex/" + method,
+          headers: {},
+          body: JSON.stringify(params)
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        finish(reject, error);
+      }
+    });
+  };
+
   const toURLArray = (value) => {
     const normalize = (item) => {
       if (!item) {
@@ -1282,8 +1337,15 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
       } catch (_) {}
     }
   }
+  const input = [{ type: "text", text: payload.prompt, text_elements: [] }];
+  const request = {
+    hostId: payload.hostId || "local",
+    conversationId,
+    params: { input }
+  };
   if (!signalsUrl) {
-    throw new Error("Unable to locate Codex App app-server-manager-signals bundle.");
+    const result = await sendVscodeAppServerRequest("start-turn-for-host", request);
+    return { ok: true, conversationId, bridge: "vscode-fetch", result };
   }
 
   const signals = await import(signalsUrl);
@@ -1312,12 +1374,7 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     throw new Error("Codex App app-server request bridge is unavailable.");
   }
 
-  const input = [{ type: "text", text: payload.prompt, text_elements: [] }];
-  const result = await sendRequest("start-turn-for-host", {
-    hostId: payload.hostId || "local",
-    conversationId,
-    params: { input }
-  });
+  const result = await sendRequest("start-turn-for-host", request);
   if (result && typeof result === "object") {
     const status = typeof result.status === "string" ? result.status.toLowerCase() : "";
     if (result.error || result.errorMessage || result.ok === false || result.success === false || ["error", "failed", "failure", "rejected"].includes(status)) {
