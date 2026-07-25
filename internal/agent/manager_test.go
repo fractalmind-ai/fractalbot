@@ -766,6 +766,12 @@ func TestBuildCodexAppDeliveryScriptUsesArrayLikeSafeURLCollection(t *testing.T)
 		t.Fatalf("delivery script still uses spread over possibly array-like values")
 	}
 	for _, expected := range []string{
+		"const sendVscodeAppServerRequest = async (method, params) =>",
+		"window.electronBridge",
+		"type: \"fetch\"",
+		"url: \"vscode://codex/\" + method",
+		"message.type !== \"fetch-response\"",
+		"bridge: \"vscode-fetch\"",
 		"const toURLArray = (value) =>",
 		"Array.from(value).map(normalize).filter(Boolean)",
 		"typeof value.length === \"number\"",
