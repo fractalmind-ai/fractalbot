@@ -1323,15 +1323,26 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
   };
   const resources = toURLArray(performance.getEntriesByType("resource"));
   let signalsUrl = resources.find((name) => /app-server-manager-signals-[^/]+\.js$/.test(name));
-  if (!signalsUrl) {
+  let appInitialUrl = resources.find((name) => /app-initial-[^/]+\.js$/.test(name));
+  if (!signalsUrl || !appInitialUrl) {
     const scripts = toURLArray(document.querySelectorAll("script[src]"));
     const candidates = scripts.concat(resources).filter((src) => /\/assets\/[^/]+\.js$/.test(src));
     for (const candidate of candidates) {
       try {
         const source = await fetch(candidate).then((response) => response.text());
-        const match = source.match(/["'](\.\/app-server-manager-signals-[^"']+\.js)["']/);
-        if (match) {
-          signalsUrl = new URL(match[1], candidate).href;
+        if (!signalsUrl) {
+          const match = source.match(/["'](\.\/app-server-manager-signals-[^"']+\.js)["']/);
+          if (match) {
+            signalsUrl = new URL(match[1], candidate).href;
+          }
+        }
+        if (!appInitialUrl) {
+          const match = source.match(/["'](\.\/app-initial-[^"']+\.js)["']/);
+          if (match) {
+            appInitialUrl = new URL(match[1], candidate).href;
+          }
+        }
+        if (signalsUrl && appInitialUrl) {
           break;
         }
       } catch (_) {}
@@ -1343,6 +1354,23 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     conversationId,
     params: { input }
   };
+  if (appInitialUrl) {
+    try {
+      const source = await fetch(appInitialUrl).then((response) => response.text());
+      const bridgeMatch = source.match(/function\s+([A-Za-z_$][\w$]*)\([^)]*\)\s*\{\s*return\s+[A-Za-z_$][\w$]*\.sendRequest\([^)]*\)\s*\}/);
+      if (bridgeMatch) {
+        const exportMatch = source.match(new RegExp("\\b" + bridgeMatch[1] + "\\s+as\\s+([A-Za-z_$][\\w$]*)"));
+        if (exportMatch) {
+          const appInitialModule = await import(appInitialUrl);
+          const sendRequest = appInitialModule[exportMatch[1]];
+          if (typeof sendRequest === "function") {
+            const result = await sendRequest("start-turn-for-host", request);
+            return { ok: true, conversationId, bridge: "app-initial", result };
+          }
+        }
+      }
+    } catch (_) {}
+  }
   if (!signalsUrl) {
     const result = await sendVscodeAppServerRequest("start-turn-for-host", request);
     return { ok: true, conversationId, bridge: "vscode-fetch", result };
