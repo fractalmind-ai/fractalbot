@@ -280,6 +280,12 @@ func (b *FeishuBot) handleMessageEvent(ctx context.Context, event *larkim.P2Mess
 	if msg == nil {
 		return nil
 	}
+	// Drop app-sent messages explicitly. Without this, anything the bot (or
+	// another app in the chat) sends can re-enter as agent input whenever the
+	// sender happens to pass the allowlist, producing echo/self-reply loops.
+	if msg.senderType == "app" {
+		return nil
+	}
 	if b.isContentDuplicate(msg.openID, msg.text) {
 		return nil
 	}
@@ -485,6 +491,7 @@ type feishuInboundMessage struct {
 	text        string
 	openID      string
 	userID      string
+	senderType  string
 	chatID      string
 	chatType    string
 	messageID   string
@@ -520,6 +527,7 @@ func parseFeishuInbound(event *larkim.P2MessageReceiveV1) (*feishuInboundMessage
 
 	openID := derefString(event.Event.Sender.SenderId.OpenId)
 	userID := derefString(event.Event.Sender.SenderId.UserId)
+	senderType := derefString(event.Event.Sender.SenderType)
 	chatID := derefString(msg.ChatId)
 	chatType := derefString(msg.ChatType)
 	messageID := derefString(msg.MessageId)
@@ -535,6 +543,7 @@ func parseFeishuInbound(event *larkim.P2MessageReceiveV1) (*feishuInboundMessage
 		text:        text,
 		openID:      openID,
 		userID:      userID,
+		senderType:  senderType,
 		chatID:      chatID,
 		chatType:    chatType,
 		messageID:   messageID,
