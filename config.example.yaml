@@ -133,7 +133,7 @@ agents:
   maxConcurrent: 4
 
   # Select the inbound agent runtime. Empty preserves legacy auto-selection.
-  # Supported values: "ohMyCode", "codexAppCDP".
+  # Supported values: "ohMyCode", "codexAppCDP", "claudeDesktop".
   router: "ohMyCode"
 
   # Optional: oh-my-code integration (legacy tmux/agent-manager route)
@@ -202,6 +202,21 @@ agents:
       enabled: true
       intervalSeconds: 60
       cooldownSeconds: 90
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+    deliveryTimeoutSeconds: 20
+
+  # Optional: route channel messages into an already-authenticated Claude
+  # Desktop chat target exposed by CDP. FractalBot does not launch, patch, or
+  # bypass Claude Desktop's CDP auth guard. Failed delivery is queued to inbox.
+  claudeDesktop:
+    enabled: false
+    cdpEndpoint: "http://127.0.0.1:19334"
+    # Optional title or URL match. Empty selects the first authenticated chat page.
+    targetSelector: ""
+    inboxPath: "/Users/you/.fractalbot/claude-desktop-inbox"
+    fallbackToInbox: true
     defaultAgent: "main"
     allowedAgents:
       - "main"

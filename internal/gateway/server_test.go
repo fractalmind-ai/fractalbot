@@ -143,6 +143,16 @@ type statusPayload struct {
 				RecordedAt    string `json:"recorded_at"`
 			} `json:"last_routing"`
 		} `json:"oh_my_code"`
+		ClaudeDesktop *struct {
+			Enabled          bool     `json:"enabled"`
+			CDPEndpoint      string   `json:"cdp_endpoint"`
+			TargetSelector   string   `json:"target_selector"`
+			InboxConfigured  bool     `json:"inbox_configured"`
+			FallbackToInbox  bool     `json:"fallback_to_inbox"`
+			DefaultAgent     string   `json:"default_agent"`
+			AllowedAgents    []string `json:"allowed_agents"`
+			DeliveryTimeoutS int      `json:"delivery_timeout_seconds"`
+		} `json:"claude_desktop"`
 	} `json:"agents"`
 }
 
@@ -362,6 +372,45 @@ func TestStatusIncludesChannelTelemetry(t *testing.T) {
 	}
 	if got := statusResp.Channels[0].LastActivity; got != lastActivity.Format(time.RFC3339) {
 		t.Fatalf("last_activity=%q", got)
+	}
+}
+
+func TestStatusIncludesClaudeDesktopConfig(t *testing.T) {
+	cfg := &config.Config{
+		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{},
+		Agents: &config.AgentsConfig{
+			Router: "claudeDesktop",
+			ClaudeDesktop: &config.ClaudeDesktopConfig{
+				Enabled:                true,
+				CDPEndpoint:            "http://127.0.0.1:19334",
+				TargetSelector:         "Claude",
+				InboxPath:              "/tmp/claude-inbox",
+				FallbackToInbox:        true,
+				DefaultAgent:           "main",
+				AllowedAgents:          []string{"main"},
+				DeliveryTimeoutSeconds: 20,
+			},
+		},
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", server.handleStatus)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	statusResp, err := fetchStatus(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("fetch status: %v", err)
+	}
+	claude := statusResp.Agents.ClaudeDesktop
+	if claude == nil || !claude.Enabled || claude.CDPEndpoint != "http://127.0.0.1:19334" || claude.TargetSelector != "Claude" || !claude.InboxConfigured || !claude.FallbackToInbox || claude.DefaultAgent != "main" || claude.DeliveryTimeoutS != 20 {
+		t.Fatalf("unexpected Claude Desktop status: %#v", claude)
+	}
+	if len(claude.AllowedAgents) != 1 || claude.AllowedAgents[0] != "main" {
+		t.Fatalf("unexpected allowed agents: %#v", claude.AllowedAgents)
 	}
 }
 

@@ -397,6 +397,51 @@ func TestLoadConfigRejectsInvalidCodexAppCDPRepairPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsClaudeDesktopRouter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`agents:
+  router: claudeDesktop
+  claudeDesktop:
+    enabled: true
+    cdpEndpoint: "http://127.0.0.1:19334"
+    targetSelector: "Claude"
+    inboxPath: "/tmp/claude-inbox"
+    fallbackToInbox: true
+    defaultAgent: "main"
+    allowedAgents:
+      - "main"
+    deliveryTimeoutSeconds: 20
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Agents.Router != "claudeDesktop" || cfg.Agents.ClaudeDesktop == nil {
+		t.Fatalf("unexpected Claude Desktop config: %#v", cfg.Agents)
+	}
+	if cfg.Agents.ClaudeDesktop.TargetSelector != "Claude" || !cfg.Agents.ClaudeDesktop.FallbackToInbox || cfg.Agents.ClaudeDesktop.DeliveryTimeoutSeconds != 20 {
+		t.Fatalf("unexpected Claude Desktop settings: %#v", cfg.Agents.ClaudeDesktop)
+	}
+}
+
+func TestLoadConfigRequiresClaudeDesktopEndpointOrInboxWhenEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("agents:\n  router: claudeDesktop\n  claudeDesktop:\n    enabled: true\n    defaultAgent: main\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected endpoint or inboxPath error")
+	}
+	if !strings.Contains(err.Error(), "agents.claudeDesktop.cdpEndpoint") || !strings.Contains(err.Error(), "agents.claudeDesktop.inboxPath") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfigParsesDemailChannel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := []byte(strings.Join([]string{

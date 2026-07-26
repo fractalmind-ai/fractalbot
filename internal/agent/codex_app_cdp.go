@@ -40,7 +40,9 @@ const (
 	codexAppCDPRepairRelaunch    = "relaunch"
 )
 
-type CodexAppEnvelope struct {
+// InboundAppEnvelope is the shared normalized representation used by desktop
+// application routers and their durable inbox fallbacks.
+type InboundAppEnvelope struct {
 	ID            string                `json:"id"`
 	ReceivedAt    string                `json:"received_at"`
 	Channel       string                `json:"channel"`
@@ -54,6 +56,9 @@ type CodexAppEnvelope struct {
 	BodyFile      string                `json:"body_file,omitempty"`
 	Attachments   []protocol.Attachment `json:"attachments,omitempty"`
 }
+
+// CodexAppEnvelope is retained for the Codex App router API.
+type CodexAppEnvelope = InboundAppEnvelope
 
 type codexAppDeliveryResult struct {
 	EnvelopeID     string
@@ -858,7 +863,11 @@ func codexAppThreadUpdatedAt(thread codexAppThreadRecord) time.Time {
 }
 
 func buildCodexAppEnvelope(userText, selectedAgent string, inboundData map[string]interface{}) CodexAppEnvelope {
-	return CodexAppEnvelope{
+	return buildInboundAppEnvelope(userText, selectedAgent, inboundData)
+}
+
+func buildInboundAppEnvelope(userText, selectedAgent string, inboundData map[string]interface{}) InboundAppEnvelope {
+	return InboundAppEnvelope{
 		ID:            newEnvelopeID(),
 		ReceivedAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		Channel:       promptContextValue(inboundData, "channel"),
