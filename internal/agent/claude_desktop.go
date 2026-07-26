@@ -209,7 +209,7 @@ func writeClaudeDesktopInboxEnvelope(inboxPath string, envelope ClaudeDesktopEnv
 	if err := os.MkdirAll(inboxPath, 0700); err != nil {
 		return "", fmt.Errorf("create Claude Desktop inbox: %w", err)
 	}
-	name := fmt.Sprintf("%s-%s.json", time.Now().UTC().Format("20060102T150405.000000000Z"), envelope.ID)
+	name := appInboxEnvelopeName(envelope)
 	finalPath := filepath.Join(inboxPath, name)
 	tmp, err := os.CreateTemp(inboxPath, "."+name+"-*.tmp")
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/fractalmind-ai/fractalbot/internal/bus"
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
+	"github.com/fractalmind-ai/fractalbot/internal/heartbeat"
 	"github.com/gorilla/websocket"
 )
 
@@ -30,6 +32,7 @@ type Server struct {
 	httpServer   *http.Server
 	agentManager *agent.Manager
 	messageBus   *bus.MessageBus
+	heartbeat    *heartbeat.Scheduler
 	startTime    time.Time
 }
 
@@ -45,6 +48,20 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Initialize agent manager
 	agentManager := agent.NewManager(cfg.Agents)
 	agentManager.ChannelManager = channelManager
+
+	var heartbeatConfig *config.HeartbeatConfig
+	var workspace string
+	if cfg.Agents != nil {
+		heartbeatConfig = cfg.Agents.Heartbeat
+		workspace = cfg.Agents.Workspace
+	}
+	heartbeatScheduler, err := heartbeat.New(heartbeatConfig, workspace, agentManager)
+	if err != nil {
+		return nil, fmt.Errorf("initialize heartbeat scheduler: %w", err)
+	}
+	if heartbeatScheduler != nil {
+		agentManager.SetInboundRoutedHook(heartbeatScheduler.ResetForInbound)
+	}
 
 	// Initialize message bus — decouples channels from agent router
 	messageBus := bus.New(agentManager, channelManager, 64, 64)
@@ -63,6 +80,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		clients:      make(map[string]*Client),
 		agentManager: agentManager,
 		messageBus:   messageBus,
+		heartbeat:    heartbeatScheduler,
 	}, nil
 }
 
@@ -79,6 +97,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Status endpoint
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/api/v1/message/send", s.handleMessageSend)
+	mux.HandleFunc("/api/v1/heartbeat/jobs/", s.handleHeartbeatCron)
 
 	if s.startTime.IsZero() {
 		s.startTime = time.Now()
@@ -104,6 +123,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.agentManager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start agent manager: %w", err)
 	}
+	if err := s.heartbeat.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start heartbeat scheduler: %w", err)
+	}
 
 	go func() {
 		log.Printf("🌐 HTTP server listening on %s", s.httpServer.Addr)
@@ -120,6 +142,10 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if err := s.heartbeat.Stop(ctx); err != nil {
+		return fmt.Errorf("failed to stop heartbeat scheduler: %w", err)
+	}
 
 	// Close bus first — drain pending messages while channels still run
 	if s.messageBus != nil {
@@ -277,11 +303,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	Status        string          `json:"status"`
-	ActiveClients int             `json:"active_clients"`
-	Uptime        string          `json:"uptime"`
-	Channels      []channelStatus `json:"channels,omitempty"`
-	Agents        *agentStatus    `json:"agents,omitempty"`
+	Status        string            `json:"status"`
+	ActiveClients int               `json:"active_clients"`
+	Uptime        string            `json:"uptime"`
+	Channels      []channelStatus   `json:"channels,omitempty"`
+	Agents        *agentStatus      `json:"agents,omitempty"`
+	Heartbeat     *heartbeat.Status `json:"heartbeat,omitempty"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +323,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Uptime:        uptime.String(),
 		Channels:      s.channelStatus(),
 		Agents:        s.agentStatus(),
+		Heartbeat:     s.heartbeat.Status(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -387,6 +415,92 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type heartbeatCronRequest struct {
+	Profile string `json:"profile"`
+	Reason  string `json:"reason"`
+}
+
+type heartbeatCronResponse struct {
+	Status string               `json:"status"`
+	Job    *heartbeat.JobStatus `json:"job,omitempty"`
+	Error  string               `json:"error,omitempty"`
+}
+
+func (s *Server) handleHeartbeatCron(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		writeJSON(w, http.StatusForbidden, heartbeatCronResponse{Status: "error", Error: "heartbeat schedule API is restricted to loopback clients"})
+		return
+	}
+	if r.Method != http.MethodPut && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodPut+", "+http.MethodDelete)
+		writeJSON(w, http.StatusMethodNotAllowed, heartbeatCronResponse{Status: "error", Error: "method not allowed"})
+		return
+	}
+
+	jobID, ok := heartbeatJobIDFromPath(r.URL.Path)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, heartbeatCronResponse{Status: "error", Error: "heartbeat cron endpoint not found"})
+		return
+	}
+	heartbeatStatus := s.heartbeat.Status()
+	if heartbeatStatus == nil || !heartbeatStatus.Enabled {
+		writeJSON(w, http.StatusServiceUnavailable, heartbeatCronResponse{Status: "error", Error: "heartbeat scheduler is disabled"})
+		return
+	}
+
+	var (
+		status heartbeat.JobStatus
+		err    error
+	)
+	if r.Method == http.MethodPut {
+		var request heartbeatCronRequest
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, heartbeatCronResponse{Status: "error", Error: "invalid JSON payload"})
+			return
+		}
+		status, err = s.heartbeat.SetProfile(jobID, request.Profile, request.Reason, "local-api")
+	} else {
+		status, err = s.heartbeat.ResetProfile(jobID, "manual reset", "local-api")
+	}
+	if err != nil {
+		statusCode := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			statusCode = http.StatusNotFound
+		}
+		writeJSON(w, statusCode, heartbeatCronResponse{Status: "error", Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, heartbeatCronResponse{Status: "ok", Job: &status})
+}
+
+func heartbeatJobIDFromPath(path string) (string, bool) {
+	const prefix = "/api/v1/heartbeat/jobs/"
+	const suffix = "/cron"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	jobID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	jobID = strings.Trim(jobID, "/")
+	if jobID == "" || strings.Contains(jobID, "/") {
+		return "", false
+	}
+	return jobID, true
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(r.RemoteAddr), "[]")
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {

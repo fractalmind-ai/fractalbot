@@ -8,6 +8,7 @@ require (
 	github.com/fractalmind-ai/fractal-demail/gas-station-adapter v0.0.0-20260703092431-07048eacc6b7
 	github.com/gorilla/websocket v1.5.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/slack-go/slack v0.17.3
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1

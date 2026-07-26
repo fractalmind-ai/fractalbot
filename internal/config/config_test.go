@@ -442,6 +442,203 @@ func TestLoadConfigRequiresClaudeDesktopEndpointOrInboxWhenEnabled(t *testing.T)
 	}
 }
 
+func TestLoadConfigAcceptsHeartbeatJobs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`agents:
+  workspace: ./workspace
+  codexAppCDP:
+    enabled: true
+    inboxPath: ./workspace/codex-inbox
+    defaultAgent: main
+    allowedAgents: [main]
+  heartbeat:
+    enabled: true
+    statePath: ./workspace/heartbeat-state.json
+    maxConcurrent: 2
+    jobs:
+      - id: " cloudbank-main "
+        runtime: " codexAppCDP "
+        agent: " main "
+        text: " Inspect actionable work. "
+        cron: " */10 * * * * "
+        timezone: " Asia/Shanghai "
+        agentCronProfiles:
+          " idle ": " 0 * * * * "
+        resetCronOnInbound: true
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	job := cfg.Agents.Heartbeat.Jobs[0]
+	if job.ID != "cloudbank-main" || job.Runtime != "codexAppCDP" || job.Agent != "main" {
+		t.Fatalf("heartbeat target was not normalized: %#v", job)
+	}
+	if job.Text != "Inspect actionable work." || job.Cron != "*/10 * * * *" || job.Timezone != "Asia/Shanghai" {
+		t.Fatalf("heartbeat fields were not normalized: %#v", job)
+	}
+	if got := job.AgentCronProfiles["idle"]; got != "0 * * * *" || len(job.AgentCronProfiles) != 1 {
+		t.Fatalf("profiles=%#v", job.AgentCronProfiles)
+	}
+}
+
+func TestValidateHeartbeatConfigRejectsInvalidJobs(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*Config)
+		wantError string
+	}{
+		{
+			name: "missing jobs",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs = nil
+			},
+			wantError: "at least one job",
+		},
+		{
+			name: "invalid cron",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].Cron = "sometimes"
+			},
+			wantError: ".cron",
+		},
+		{
+			name: "missing timezone",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].Timezone = ""
+			},
+			wantError: ".timezone: required",
+		},
+		{
+			name: "invalid timezone",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].Timezone = "Mars/Olympus"
+			},
+			wantError: ".timezone",
+		},
+		{
+			name: "unsupported runtime",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].Runtime = "other"
+			},
+			wantError: "unsupported runtime",
+		},
+		{
+			name: "runtime disabled",
+			mutate: func(cfg *Config) {
+				cfg.Agents.CodexAppCDP.Enabled = false
+			},
+			wantError: "runtime is not enabled",
+		},
+		{
+			name: "agent not allowed",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].Agent = "other"
+			},
+			wantError: "not allowed",
+		},
+		{
+			name: "duplicate job id",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs = append(cfg.Agents.Heartbeat.Jobs, cfg.Agents.Heartbeat.Jobs[0])
+			},
+			wantError: "duplicate heartbeat job",
+		},
+		{
+			name: "invalid profile cron",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].AgentCronProfiles["idle"] = "never"
+			},
+			wantError: "agentCronProfiles",
+		},
+		{
+			name: "duplicate normalized profile",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].AgentCronProfiles[" idle "] = "0 */2 * * *"
+			},
+			wantError: "duplicate profile",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validHeartbeatConfig()
+			test.mutate(cfg)
+			err := validateConfig(cfg)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error=%v want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateHeartbeatSupportsEveryRuntime(t *testing.T) {
+	tests := []struct {
+		name    string
+		runtime string
+		setup   func(*AgentsConfig)
+	}{
+		{
+			name:    "ohMyCode",
+			runtime: "ohMyCode",
+			setup: func(agents *AgentsConfig) {
+				agents.OhMyCode = &OhMyCodeConfig{Enabled: true, Workspace: "/tmp/oh-my-code", DefaultAgent: "main", AllowedAgents: []string{"main"}}
+			},
+		},
+		{
+			name:    "codexAppCDP",
+			runtime: "codexAppCDP",
+			setup:   func(*AgentsConfig) {},
+		},
+		{
+			name:    "claudeDesktop",
+			runtime: "claudeDesktop",
+			setup: func(agents *AgentsConfig) {
+				agents.ClaudeDesktop = &ClaudeDesktopConfig{Enabled: true, InboxPath: "/tmp/claude-inbox", DefaultAgent: "main", AllowedAgents: []string{"main"}}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validHeartbeatConfig()
+			test.setup(cfg.Agents)
+			cfg.Agents.Heartbeat.Jobs[0].Runtime = test.runtime
+			if err := validateConfig(cfg); err != nil {
+				t.Fatalf("validateConfig: %v", err)
+			}
+		})
+	}
+}
+
+func validHeartbeatConfig() *Config {
+	return &Config{Agents: &AgentsConfig{
+		CodexAppCDP: &CodexAppCDPConfig{
+			Enabled:       true,
+			InboxPath:     "/tmp/codex-inbox",
+			DefaultAgent:  "main",
+			AllowedAgents: []string{"main"},
+		},
+		Heartbeat: &HeartbeatConfig{
+			Enabled:       true,
+			MaxConcurrent: 2,
+			Jobs: []HeartbeatJobConfig{{
+				ID:       "cloudbank-main",
+				Runtime:  "codexAppCDP",
+				Agent:    "main",
+				Text:     "Inspect actionable work.",
+				Cron:     "*/10 * * * *",
+				Timezone: "Asia/Shanghai",
+				AgentCronProfiles: map[string]string{
+					"idle": "0 * * * *",
+				},
+			}},
+		},
+	}}
+}
+
 func TestLoadConfigParsesDemailChannel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := []byte(strings.Join([]string{

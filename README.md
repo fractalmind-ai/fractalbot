@@ -46,6 +46,7 @@ flowchart LR
     CM[Channel Manager]
     MB[Message Bus]
     AR{Agent Router}
+    HB[Cron Heartbeat Scheduler]
 
     subgraph Targets[Routing targets]
         OMC[oh-my-code]
@@ -62,6 +63,9 @@ flowchart LR
     DM -. Agent ingress pending .-> CM
     CM <--> MB
     MB -->|Supported ingress| AR
+    HB -->|Explicit runtime and agent| OMC
+    HB -->|Explicit runtime and agent| CA
+    HB -->|Explicit runtime and agent| CD
     AR --> OMC
     AR --> CA
     AR --> CD
@@ -105,6 +109,7 @@ Start with [`config.example.yaml`](config.example.yaml), then read [Agent routin
 
 - [Architecture](docs/architecture.md)
 - [Agent routing](docs/routing.md)
+- [Agent heartbeats](docs/heartbeat.md)
 - [Development and local demo](docs/development.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Slack setup](docs/slack.md)

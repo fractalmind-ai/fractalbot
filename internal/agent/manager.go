@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fractalmind-ai/fractalbot/internal/agentruntime"
 	"github.com/fractalmind-ai/fractalbot/internal/channels"
 	"github.com/fractalmind-ai/fractalbot/internal/config"
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
@@ -50,6 +51,8 @@ type Manager struct {
 	cdpMonitorDone      chan struct{}
 	cdpReadiness        *CodexAppCDPReadinessStatus
 	cdpResolvedTarget   *CodexAppCDPResolvedConversationStatus
+	inboundHookMu       sync.RWMutex
+	inboundRoutedHook   func(runtimeName, agentName string)
 }
 
 type RoutingOutcome struct {
@@ -155,6 +158,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
+		m.notifyInboundRouted(agentruntime.CodexAppCDP, agentName)
 		out = normalizeUserReply(out)
 		if out == "" {
 			return "", nil
@@ -171,6 +175,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
+		m.notifyInboundRouted(agentruntime.ClaudeDesktop, agentName)
 		out = normalizeUserReply(out)
 		if out == "" {
 			return "", nil
@@ -187,6 +192,7 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 		if err != nil {
 			return "", err
 		}
+		m.notifyInboundRouted(agentruntime.OhMyCode, agentName)
 		out = normalizeUserReply(out)
 		if out == "" {
 			return "", nil
@@ -198,6 +204,40 @@ func (m *Manager) HandleIncoming(ctx context.Context, msg *protocol.Message) (st
 	}
 
 	return fmt.Sprintf("echo: %s", text), nil
+}
+
+// SetInboundRoutedHook registers a callback invoked after a normal channel
+// message is successfully dispatched to an Agent Runtime.
+func (m *Manager) SetInboundRoutedHook(hook func(runtimeName, agentName string)) {
+	m.inboundHookMu.Lock()
+	m.inboundRoutedHook = hook
+	m.inboundHookMu.Unlock()
+}
+
+func (m *Manager) notifyInboundRouted(runtimeName, agentName string) {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" && m.config != nil {
+		switch runtimeName {
+		case agentruntime.OhMyCode:
+			if m.config.OhMyCode != nil {
+				agentName = strings.TrimSpace(m.config.OhMyCode.DefaultAgent)
+			}
+		case agentruntime.CodexAppCDP:
+			if m.config.CodexAppCDP != nil {
+				agentName = strings.TrimSpace(m.config.CodexAppCDP.DefaultAgent)
+			}
+		case agentruntime.ClaudeDesktop:
+			if m.config.ClaudeDesktop != nil {
+				agentName = strings.TrimSpace(m.config.ClaudeDesktop.DefaultAgent)
+			}
+		}
+	}
+	m.inboundHookMu.RLock()
+	hook := m.inboundRoutedHook
+	m.inboundHookMu.RUnlock()
+	if hook != nil {
+		hook(runtimeName, agentName)
+	}
 }
 
 func (m *Manager) activeRouter() string {
