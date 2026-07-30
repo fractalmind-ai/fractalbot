@@ -20,10 +20,12 @@ flowchart LR
         Bus[Message Bus]
         Router{Agent Router}
         Server[Gateway Server]
+        Heartbeat[Cron Heartbeat Scheduler]
     end
 
     CLI[CLI] --> HTTP[HTTP API]
     HTTP --> Bus
+    HTTP -->|Local cron profile control| Heartbeat
     WS[WebSocket control] --> Server
     Server --> CM
 
@@ -51,6 +53,9 @@ flowchart LR
     Router --> Codex
     Router --> Claude
     Router --> Echo
+    Heartbeat -->|Explicit runtime and agent| OMC
+    Heartbeat -->|Explicit runtime and agent| Codex
+    Heartbeat -->|Explicit runtime and agent| Claude
     Codex -. delivery failure .-> CodexInbox
     Claude -. delivery failure .-> ClaudeInbox
 ```
@@ -63,6 +68,7 @@ flowchart LR
 | Channel Manager | Registers enabled adapters, gives each adapter an isolated lifecycle context, and sends outbound messages through per-channel workers. |
 | Message Bus | Buffers inbound and outbound work while preserving the synchronous reply contract used by channel adapters. |
 | Agent Manager | Applies the configured router, validates the selected agent, records routing telemetry, and returns an acknowledgement or reply. |
+| Heartbeat Scheduler | Calculates explicit-timezone cron jobs, persists effective profiles, and dispatches autonomous wakeups directly to a configured Runtime and Agent. |
 | Channel adapters | Handle transport authentication, allowlists, normalization, provider-specific replies, and telemetry. |
 
 The six registered adapters are Telegram, Feishu/Lark, Slack, Discord, iMessage, and Demail. The first five currently enter the generic Agent Router. Demail is a bidirectional transport adapter, but its normalized `demail` messages are currently ignored by `agent.Manager.HandleIncoming`; generic Demail-to-agent routing is not yet enabled.
@@ -78,6 +84,12 @@ The six registered adapters are Telegram, Feishu/Lark, Slack, Discord, iMessage,
 ## Outbound flow
 
 The CLI calls the gateway's HTTP send endpoint. HTTP and in-process callers publish an outbound envelope to the Message Bus, which selects the named channel and sends through its worker. Workers isolate provider rate limiting and return provider metadata such as message and thread IDs when available.
+
+## Heartbeat flow
+
+Heartbeat jobs bypass the selected Agent Router and address `ohMyCode`, `codexAppCDP`, or `claudeDesktop` explicitly. The scheduler sends an autonomous envelope with job, run, schedule, expiry, target Agent, and inline instruction metadata. It does not synthesize a channel or chat identity and never sends a channel acknowledgement.
+
+Desktop fallback inboxes coalesce queued heartbeats by job so an unavailable app does not accumulate stale wakeups. Agents normally do not report back to the scheduler. Only an Agent that finds no actionable work may select an operator-approved lower-frequency cron profile through the loopback API; matching user activity can restore the configured default cron. See [Agent heartbeats](heartbeat.md).
 
 ## Reliability and security boundaries
 

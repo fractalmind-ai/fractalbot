@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -283,6 +285,26 @@ type ClaudeDesktopConfig struct {
 	DeliveryTimeoutSeconds int `yaml:"deliveryTimeoutSeconds,omitempty"`
 }
 
+// HeartbeatConfig schedules runtime-neutral agent wakeups.
+type HeartbeatConfig struct {
+	Enabled       bool                 `yaml:"enabled,omitempty"`
+	StatePath     string               `yaml:"statePath,omitempty"`
+	MaxConcurrent int                  `yaml:"maxConcurrent,omitempty"`
+	Jobs          []HeartbeatJobConfig `yaml:"jobs,omitempty"`
+}
+
+// HeartbeatJobConfig targets one Agent Runtime and agent on a cron schedule.
+type HeartbeatJobConfig struct {
+	ID                 string            `yaml:"id"`
+	Runtime            string            `yaml:"runtime"`
+	Agent              string            `yaml:"agent"`
+	Text               string            `yaml:"text"`
+	Cron               string            `yaml:"cron"`
+	Timezone           string            `yaml:"timezone"`
+	AgentCronProfiles  map[string]string `yaml:"agentCronProfiles,omitempty"`
+	ResetCronOnInbound bool              `yaml:"resetCronOnInbound,omitempty"`
+}
+
 // AgentsConfig contains gateway-side agent routing settings.
 type AgentsConfig struct {
 	Workspace     string               `yaml:"workspace"`
@@ -291,6 +313,7 @@ type AgentsConfig struct {
 	OhMyCode      *OhMyCodeConfig      `yaml:"ohMyCode,omitempty"`
 	CodexAppCDP   *CodexAppCDPConfig   `yaml:"codexAppCDP,omitempty"`
 	ClaudeDesktop *ClaudeDesktopConfig `yaml:"claudeDesktop,omitempty"`
+	Heartbeat     *HeartbeatConfig     `yaml:"heartbeat,omitempty"`
 }
 
 // ResolveConfigPath returns the config file path using this priority:
@@ -382,6 +405,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateClaudeDesktopConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateHeartbeatConfig(cfg); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -414,6 +440,135 @@ func validateClaudeDesktopConfig(cfg *Config) error {
 		return fmt.Errorf("agents.claudeDesktop.deliveryTimeoutSeconds: must be >= 0")
 	}
 	return nil
+}
+
+func validateHeartbeatConfig(cfg *Config) error {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.Heartbeat == nil {
+		return nil
+	}
+	heartbeat := cfg.Agents.Heartbeat
+	if heartbeat.MaxConcurrent < 0 {
+		return fmt.Errorf("agents.heartbeat.maxConcurrent: must be >= 0")
+	}
+	if !heartbeat.Enabled {
+		return nil
+	}
+	if len(heartbeat.Jobs) == 0 {
+		return fmt.Errorf("agents.heartbeat.jobs: at least one job is required when heartbeat is enabled")
+	}
+
+	seenIDs := make(map[string]struct{}, len(heartbeat.Jobs))
+	for idx := range heartbeat.Jobs {
+		job := &heartbeat.Jobs[idx]
+		prefix := fmt.Sprintf("agents.heartbeat.jobs[%d]", idx)
+		job.ID = strings.TrimSpace(job.ID)
+		job.Runtime = strings.TrimSpace(job.Runtime)
+		job.Agent = strings.TrimSpace(job.Agent)
+		job.Text = strings.TrimSpace(job.Text)
+		job.Cron = strings.TrimSpace(job.Cron)
+		job.Timezone = strings.TrimSpace(job.Timezone)
+
+		if job.ID == "" {
+			return fmt.Errorf("%s.id: required", prefix)
+		}
+		if err := validateAgentName(job.ID); err != nil {
+			return fmt.Errorf("%s.id: %w", prefix, err)
+		}
+		if _, exists := seenIDs[job.ID]; exists {
+			return fmt.Errorf("%s.id: duplicate heartbeat job %q", prefix, job.ID)
+		}
+		seenIDs[job.ID] = struct{}{}
+
+		if job.Agent == "" {
+			return fmt.Errorf("%s.agent: required", prefix)
+		}
+		if err := validateAgentName(job.Agent); err != nil {
+			return fmt.Errorf("%s.agent: %w", prefix, err)
+		}
+		if job.Text == "" {
+			return fmt.Errorf("%s.text: required", prefix)
+		}
+		if job.Cron == "" {
+			return fmt.Errorf("%s.cron: required", prefix)
+		}
+		if job.Timezone == "" {
+			return fmt.Errorf("%s.timezone: required", prefix)
+		}
+		if _, err := time.LoadLocation(job.Timezone); err != nil {
+			return fmt.Errorf("%s.timezone: %w", prefix, err)
+		}
+		if _, err := parseHeartbeatCron(job.Cron, job.Timezone); err != nil {
+			return fmt.Errorf("%s.cron: %w", prefix, err)
+		}
+		if err := validateHeartbeatRuntimeTarget(cfg.Agents, job.Runtime, job.Agent); err != nil {
+			return fmt.Errorf("%s.runtime: %w", prefix, err)
+		}
+
+		normalizedProfiles := make(map[string]string, len(job.AgentCronProfiles))
+		for rawProfile, rawExpression := range job.AgentCronProfiles {
+			profile := strings.TrimSpace(rawProfile)
+			expression := strings.TrimSpace(rawExpression)
+			if profile == "" {
+				return fmt.Errorf("%s.agentCronProfiles: profile name is required", prefix)
+			}
+			if err := validateAgentName(profile); err != nil {
+				return fmt.Errorf("%s.agentCronProfiles[%q]: %w", prefix, profile, err)
+			}
+			if expression == "" {
+				return fmt.Errorf("%s.agentCronProfiles[%q]: cron expression is required", prefix, profile)
+			}
+			if _, err := parseHeartbeatCron(expression, job.Timezone); err != nil {
+				return fmt.Errorf("%s.agentCronProfiles[%q]: %w", prefix, profile, err)
+			}
+			if _, exists := normalizedProfiles[profile]; exists {
+				return fmt.Errorf("%s.agentCronProfiles: duplicate profile %q", prefix, profile)
+			}
+			normalizedProfiles[profile] = expression
+		}
+		job.AgentCronProfiles = normalizedProfiles
+	}
+	return nil
+}
+
+func parseHeartbeatCron(expression, timezone string) (cron.Schedule, error) {
+	return cron.ParseStandard("CRON_TZ=" + strings.TrimSpace(timezone) + " " + strings.TrimSpace(expression))
+}
+
+func validateHeartbeatRuntimeTarget(agents *AgentsConfig, runtimeName, agentName string) error {
+	switch runtimeName {
+	case "ohMyCode":
+		if agents.OhMyCode == nil || !agents.OhMyCode.Enabled {
+			return fmt.Errorf("ohMyCode runtime is not enabled")
+		}
+		return validateHeartbeatAgentAllowed("agents.ohMyCode", agentName, agents.OhMyCode.DefaultAgent, agents.OhMyCode.AllowedAgents)
+	case "codexAppCDP":
+		if agents.CodexAppCDP == nil || !agents.CodexAppCDP.Enabled {
+			return fmt.Errorf("codexAppCDP runtime is not enabled")
+		}
+		return validateHeartbeatAgentAllowed("agents.codexAppCDP", agentName, agents.CodexAppCDP.DefaultAgent, agents.CodexAppCDP.AllowedAgents)
+	case "claudeDesktop":
+		if agents.ClaudeDesktop == nil || !agents.ClaudeDesktop.Enabled {
+			return fmt.Errorf("claudeDesktop runtime is not enabled")
+		}
+		return validateHeartbeatAgentAllowed("agents.claudeDesktop", agentName, agents.ClaudeDesktop.DefaultAgent, agents.ClaudeDesktop.AllowedAgents)
+	default:
+		return fmt.Errorf("unsupported runtime %q", runtimeName)
+	}
+}
+
+func validateHeartbeatAgentAllowed(prefix, agentName, defaultAgent string, allowedAgents []string) error {
+	if len(allowedAgents) == 0 {
+		if strings.TrimSpace(defaultAgent) != agentName {
+			return fmt.Errorf("agent %q is not allowed by %s", agentName, prefix)
+		}
+		return nil
+	}
+	for _, allowed := range allowedAgents {
+		if strings.TrimSpace(allowed) == agentName {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent %q is not allowed by %s.allowedAgents", agentName, prefix)
 }
 
 func validateOhMyCodeConfig(cfg *Config) error {

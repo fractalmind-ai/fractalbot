@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,6 +25,8 @@ import (
 
 var messageSendFn = sendMessageViaGatewayAPI
 var fileDownloadFn = downloadFileViaHTTP
+var heartbeatCronSetFn = setHeartbeatCronViaGatewayAPI
+var heartbeatCronResetFn = resetHeartbeatCronViaGatewayAPI
 
 const exitCodeRestartRequested = 75
 
@@ -141,8 +144,73 @@ func runCommand(ctx context.Context, cfg *config.Config, args []string, out io.W
 		return runMessageCommand(ctx, cfg, args[1:], out, logger)
 	case "file":
 		return runFileCommand(ctx, cfg, args[1:], out, logger)
+	case "heartbeat":
+		return runHeartbeatCommand(ctx, cfg, args[1:], out, logger)
 	default:
 		logger.Printf("unknown command: %s", args[0])
+		return 1
+	}
+}
+
+func runHeartbeatCommand(ctx context.Context, cfg *config.Config, args []string, out io.Writer, logger *log.Logger) int {
+	if len(args) < 2 || strings.ToLower(strings.TrimSpace(args[0])) != "cron" {
+		logger.Printf("heartbeat command requires a cron subcommand (set or reset)")
+		return 1
+	}
+
+	switch strings.ToLower(strings.TrimSpace(args[1])) {
+	case "set":
+		setFS := flag.NewFlagSet("heartbeat cron set", flag.ContinueOnError)
+		setFS.SetOutput(out)
+		job := setFS.String("job", "", "heartbeat job ID")
+		profile := setFS.String("profile", "", "operator-approved cron profile")
+		reason := setFS.String("reason", "", "reason for reducing heartbeat frequency")
+		if err := setFS.Parse(args[2:]); err != nil {
+			return 1
+		}
+		jobID := strings.TrimSpace(*job)
+		profileName := strings.TrimSpace(*profile)
+		reasonText := strings.TrimSpace(*reason)
+		if jobID == "" {
+			logger.Printf("--job is required")
+			return 1
+		}
+		if profileName == "" {
+			logger.Printf("--profile is required")
+			return 1
+		}
+		if reasonText == "" {
+			logger.Printf("--reason is required")
+			return 1
+		}
+		if err := heartbeatCronSetFn(ctx, cfg, jobID, profileName, reasonText); err != nil {
+			logger.Printf("failed to set heartbeat cron: %v", err)
+			return 1
+		}
+		fmt.Fprintf(out, "Heartbeat job %s now uses cron profile %s\n", jobID, profileName)
+		return 0
+
+	case "reset":
+		resetFS := flag.NewFlagSet("heartbeat cron reset", flag.ContinueOnError)
+		resetFS.SetOutput(out)
+		job := resetFS.String("job", "", "heartbeat job ID")
+		if err := resetFS.Parse(args[2:]); err != nil {
+			return 1
+		}
+		jobID := strings.TrimSpace(*job)
+		if jobID == "" {
+			logger.Printf("--job is required")
+			return 1
+		}
+		if err := heartbeatCronResetFn(ctx, cfg, jobID); err != nil {
+			logger.Printf("failed to reset heartbeat cron: %v", err)
+			return 1
+		}
+		fmt.Fprintf(out, "Heartbeat job %s restored to its default cron\n", jobID)
+		return 0
+
+	default:
+		logger.Printf("unknown heartbeat cron subcommand: %s", args[1])
 		return 1
 	}
 }
@@ -300,6 +368,10 @@ func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel s
 }
 
 func gatewaySendEndpoint(cfg *config.Config) string {
+	return gatewayAPIEndpoint(cfg, "/api/v1/message/send")
+}
+
+func gatewayAPIEndpoint(cfg *config.Config, path string) string {
 	bind := "127.0.0.1"
 	port := 18789
 
@@ -316,7 +388,58 @@ func gatewaySendEndpoint(cfg *config.Config) string {
 		bind = "127.0.0.1"
 	}
 
-	return fmt.Sprintf("http://%s/api/v1/message/send", net.JoinHostPort(bind, strconv.Itoa(port)))
+	return fmt.Sprintf("http://%s%s", net.JoinHostPort(bind, strconv.Itoa(port)), path)
+}
+
+func setHeartbeatCronViaGatewayAPI(ctx context.Context, cfg *config.Config, jobID, profile, reason string) error {
+	payload, err := json.Marshal(heartbeatCronRequest{Profile: profile, Reason: reason})
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	return callHeartbeatCronAPI(ctx, cfg, http.MethodPut, jobID, bytes.NewReader(payload))
+}
+
+func resetHeartbeatCronViaGatewayAPI(ctx context.Context, cfg *config.Config, jobID string) error {
+	return callHeartbeatCronAPI(ctx, cfg, http.MethodDelete, jobID, nil)
+}
+
+type heartbeatCronRequest struct {
+	Profile string `json:"profile"`
+	Reason  string `json:"reason"`
+}
+
+func callHeartbeatCronAPI(ctx context.Context, cfg *config.Config, method, jobID string, body io.Reader) error {
+	path := "/api/v1/heartbeat/jobs/" + url.PathEscape(strings.TrimSpace(jobID)) + "/cron"
+	endpoint := gatewayAPIEndpoint(cfg, path)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("request %s failed: %w", endpoint, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+		message := strings.TrimSpace(string(responseBody))
+		var parsed struct {
+			Error string `json:"error"`
+		}
+		if len(responseBody) > 0 && json.Unmarshal(responseBody, &parsed) == nil && strings.TrimSpace(parsed.Error) != "" {
+			message = parsed.Error
+		}
+		if message == "" {
+			message = http.StatusText(response.StatusCode)
+		}
+		return fmt.Errorf("gateway API error (%d): %s", response.StatusCode, message)
+	}
+	return nil
 }
 
 func downloadFileViaHTTP(ctx context.Context, cfg *config.Config, channel, fileURL, outputPath string) error {

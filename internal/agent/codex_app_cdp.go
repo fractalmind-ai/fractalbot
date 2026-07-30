@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,12 @@ const (
 type InboundAppEnvelope struct {
 	ID            string                `json:"id"`
 	ReceivedAt    string                `json:"received_at"`
+	Source        string                `json:"source,omitempty"`
+	JobID         string                `json:"job_id,omitempty"`
+	RunID         string                `json:"run_id,omitempty"`
+	ScheduledAt   string                `json:"scheduled_at,omitempty"`
+	ExpiresAt     string                `json:"expires_at,omitempty"`
+	CoalesceKey   string                `json:"coalesce_key,omitempty"`
 	Channel       string                `json:"channel"`
 	ChatID        string                `json:"chat_id,omitempty"`
 	ThreadTS      string                `json:"thread_ts,omitempty"`
@@ -962,7 +969,7 @@ func writeCodexAppInboxEnvelope(inboxPath string, envelope CodexAppEnvelope) (st
 	if err := os.MkdirAll(inboxPath, 0700); err != nil {
 		return "", fmt.Errorf("create Codex App inbox: %w", err)
 	}
-	name := fmt.Sprintf("%s-%s.json", time.Now().UTC().Format("20060102T150405.000000000Z"), envelope.ID)
+	name := appInboxEnvelopeName(envelope)
 	finalPath := filepath.Join(inboxPath, name)
 	tmp, err := os.CreateTemp(inboxPath, "."+name+"-*.tmp")
 	if err != nil {
@@ -984,6 +991,14 @@ func writeCodexAppInboxEnvelope(inboxPath string, envelope CodexAppEnvelope) (st
 		return "", fmt.Errorf("commit Codex App inbox envelope: %w", err)
 	}
 	return finalPath, nil
+}
+
+func appInboxEnvelopeName(envelope InboundAppEnvelope) string {
+	if key := strings.TrimSpace(envelope.CoalesceKey); key != "" {
+		digest := sha256.Sum256([]byte(key))
+		return fmt.Sprintf("heartbeat-%x.json", digest[:12])
+	}
+	return fmt.Sprintf("%s-%s.json", time.Now().UTC().Format("20060102T150405.000000000Z"), envelope.ID)
 }
 
 type cdpTarget struct {

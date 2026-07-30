@@ -221,3 +221,25 @@ agents:
     allowedAgents:
       - "main"
     deliveryTimeoutSeconds: 20
+
+  # Optional: cron-based autonomous wakeups. Each job explicitly targets one
+  # enabled runtime and an agent allowed by that runtime. Heartbeats do not use
+  # agents.router and do not impersonate a messaging channel.
+  # heartbeat:
+  #   enabled: true
+  #   statePath: "./workspace/heartbeat-state.json"
+  #   maxConcurrent: 2
+  #   jobs:
+  #     - id: "cloudbank-main"
+  #       runtime: "codexAppCDP"
+  #       agent: "main"
+  #       # Inline text only; file-backed instructions are not supported.
+  #       text: "Inspect the current project and continue any actionable work."
+  #       cron: "*/10 * * * *"
+  #       timezone: "Asia/Shanghai"
+  #       # The Agent may select only these operator-approved schedules, and
+  #       # only when it determines that there is no actionable work.
+  #       agentCronProfiles:
+  #         idle: "0 * * * *"
+  #         deep-idle: "0 */6 * * *"
+  #       resetCronOnInbound: true

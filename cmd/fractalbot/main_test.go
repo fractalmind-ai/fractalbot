@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -336,6 +339,134 @@ func TestRunFileDownload(t *testing.T) {
 			t.Fatalf("unexpected output: %q", buf.String())
 		}
 	})
+}
+
+func TestRunHeartbeatCronCommands(t *testing.T) {
+	configPath := writeMinimalConfig(t)
+	originalSet := heartbeatCronSetFn
+	originalReset := heartbeatCronResetFn
+	t.Cleanup(func() {
+		heartbeatCronSetFn = originalSet
+		heartbeatCronResetFn = originalReset
+	})
+
+	t.Run("set", func(t *testing.T) {
+		called := false
+		heartbeatCronSetFn = func(ctx context.Context, cfg *config.Config, jobID, profile, reason string) error {
+			called = true
+			if jobID != "cloudbank-main" || profile != "idle" || reason != "no actionable tasks" {
+				t.Fatalf("unexpected set arguments: job=%q profile=%q reason=%q", jobID, profile, reason)
+			}
+			return nil
+		}
+		var output bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"heartbeat", "cron", "set",
+			"--job", "cloudbank-main",
+			"--profile", "idle",
+			"--reason", "no actionable tasks",
+		}, &output)
+		if code != 0 || !called {
+			t.Fatalf("code=%d called=%t output=%q", code, called, output.String())
+		}
+		if !strings.Contains(output.String(), "now uses cron profile idle") {
+			t.Fatalf("unexpected output: %q", output.String())
+		}
+	})
+
+	t.Run("reset", func(t *testing.T) {
+		called := false
+		heartbeatCronResetFn = func(ctx context.Context, cfg *config.Config, jobID string) error {
+			called = true
+			if jobID != "cloudbank-main" {
+				t.Fatalf("jobID=%q", jobID)
+			}
+			return nil
+		}
+		var output bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"heartbeat", "cron", "reset",
+			"--job", "cloudbank-main",
+		}, &output)
+		if code != 0 || !called {
+			t.Fatalf("code=%d called=%t output=%q", code, called, output.String())
+		}
+		if !strings.Contains(output.String(), "restored to its default cron") {
+			t.Fatalf("unexpected output: %q", output.String())
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		for _, test := range []struct {
+			name string
+			args []string
+			want string
+		}{
+			{name: "missing job", args: []string{"heartbeat", "cron", "set", "--profile", "idle", "--reason", "idle"}, want: "--job is required"},
+			{name: "missing profile", args: []string{"heartbeat", "cron", "set", "--job", "job-1", "--reason", "idle"}, want: "--profile is required"},
+			{name: "missing reason", args: []string{"heartbeat", "cron", "set", "--job", "job-1", "--profile", "idle"}, want: "--reason is required"},
+			{name: "reset missing job", args: []string{"heartbeat", "cron", "reset"}, want: "--job is required"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				var output bytes.Buffer
+				args := append([]string{"--config", configPath}, test.args...)
+				if code := runWithContext(context.Background(), args, &output); code == 0 || !strings.Contains(output.String(), test.want) {
+					t.Fatalf("code=%d output=%q want=%q", code, output.String(), test.want)
+				}
+			})
+		}
+	})
+}
+
+func TestHeartbeatCronGatewayAPIRequests(t *testing.T) {
+	type observedRequest struct {
+		method  string
+		path    string
+		profile string
+		reason  string
+	}
+	observed := make(chan observedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := observedRequest{method: r.Method, path: r.URL.Path}
+		if r.Method == http.MethodPut {
+			var payload heartbeatCronRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			request.profile = payload.Profile
+			request.reason = payload.Reason
+		}
+		observed <- request
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Gateway: &config.GatewayConfig{Bind: host, Port: port}}
+	if err := setHeartbeatCronViaGatewayAPI(context.Background(), cfg, "cloudbank-main", "idle", "no actionable tasks"); err != nil {
+		t.Fatalf("setHeartbeatCronViaGatewayAPI: %v", err)
+	}
+	if err := resetHeartbeatCronViaGatewayAPI(context.Background(), cfg, "cloudbank-main"); err != nil {
+		t.Fatalf("resetHeartbeatCronViaGatewayAPI: %v", err)
+	}
+	setRequest := <-observed
+	resetRequest := <-observed
+	if setRequest.method != http.MethodPut || setRequest.path != "/api/v1/heartbeat/jobs/cloudbank-main/cron" || setRequest.profile != "idle" || setRequest.reason != "no actionable tasks" {
+		t.Fatalf("unexpected set request: %#v", setRequest)
+	}
+	if resetRequest.method != http.MethodDelete || resetRequest.path != "/api/v1/heartbeat/jobs/cloudbank-main/cron" {
+		t.Fatalf("unexpected reset request: %#v", resetRequest)
+	}
 }
 
 func TestDownloadFileViaHTTPSlackAuth(t *testing.T) {

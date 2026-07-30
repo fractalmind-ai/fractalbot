@@ -923,3 +923,171 @@ func TestStatusEndpointReportsCodexAppCDPDefaultRepairAndWatch(t *testing.T) {
 		t.Fatalf("unexpected target_project: %#v", targetProject)
 	}
 }
+
+func TestHeartbeatCronAPIAndStatus(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	cfg := heartbeatGatewayConfig(t, inbox)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/heartbeat/jobs/", server.handleHeartbeatCron)
+	mux.HandleFunc("/status", server.handleStatus)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	request, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/heartbeat/jobs/cloudbank-main/cron", strings.NewReader(`{"profile":"idle","reason":"no actionable tasks"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("set profile request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("set profile status=%d body=%s", response.StatusCode, body)
+	}
+	var setPayload heartbeatCronResponse
+	if err := json.NewDecoder(response.Body).Decode(&setPayload); err != nil {
+		t.Fatalf("decode set response: %v", err)
+	}
+	if setPayload.Job == nil || setPayload.Job.EffectiveProfile != "idle" || setPayload.Job.EffectiveCron != "0 * * * *" {
+		t.Fatalf("unexpected set response: %#v", setPayload)
+	}
+
+	statusResponse, err := http.Get(ts.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	statusData, err := io.ReadAll(statusResponse.Body)
+	statusResponse.Body.Close()
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if !strings.Contains(string(statusData), `"effective_profile":"idle"`) || !strings.Contains(string(statusData), `"last_schedule_reason":"no actionable tasks"`) {
+		t.Fatalf("status missing heartbeat profile: %s", statusData)
+	}
+	if strings.Contains(string(statusData), "secret heartbeat instruction") {
+		t.Fatalf("status leaked heartbeat instruction: %s", statusData)
+	}
+
+	resetRequest, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/heartbeat/jobs/cloudbank-main/cron", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetResponse, err := http.DefaultClient.Do(resetRequest)
+	if err != nil {
+		t.Fatalf("reset profile request: %v", err)
+	}
+	defer resetResponse.Body.Close()
+	if resetResponse.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resetResponse.Body)
+		t.Fatalf("reset profile status=%d body=%s", resetResponse.StatusCode, body)
+	}
+	var resetPayload heartbeatCronResponse
+	if err := json.NewDecoder(resetResponse.Body).Decode(&resetPayload); err != nil {
+		t.Fatalf("decode reset response: %v", err)
+	}
+	if resetPayload.Job == nil || resetPayload.Job.EffectiveProfile != "" || resetPayload.Job.EffectiveCron != "*/10 * * * *" {
+		t.Fatalf("unexpected reset response: %#v", resetPayload)
+	}
+}
+
+func TestHeartbeatCronAPIRejectsInvalidAndRemoteRequests(t *testing.T) {
+	server, err := NewServer(heartbeatGatewayConfig(t, filepath.Join(t.TempDir(), "inbox")))
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	t.Run("invalid profile", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/heartbeat/jobs/cloudbank-main/cron", strings.NewReader(`{"profile":"arbitrary","reason":"idle"}`))
+		request.RemoteAddr = "127.0.0.1:12345"
+		response := httptest.NewRecorder()
+		server.handleHeartbeatCron(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "not allowed") {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("missing reason", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/heartbeat/jobs/cloudbank-main/cron", strings.NewReader(`{"profile":"idle"}`))
+		request.RemoteAddr = "[::1]:12345"
+		response := httptest.NewRecorder()
+		server.handleHeartbeatCron(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "reason is required") {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("remote client", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/heartbeat/jobs/cloudbank-main/cron", strings.NewReader(`{"profile":"idle","reason":"idle"}`))
+		request.RemoteAddr = "203.0.113.20:4567"
+		response := httptest.NewRecorder()
+		server.handleHeartbeatCron(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+}
+
+func TestHeartbeatProfileResetsAfterMatchingInboundRoute(t *testing.T) {
+	server, err := NewServer(heartbeatGatewayConfig(t, filepath.Join(t.TempDir(), "inbox")))
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if _, err := server.heartbeat.SetProfile("cloudbank-main", "idle", "no actionable tasks", "agent"); err != nil {
+		t.Fatalf("SetProfile: %v", err)
+	}
+
+	_, err = server.agentManager.HandleIncoming(context.Background(), &protocol.Message{Data: map[string]interface{}{
+		"channel": "feishu",
+		"text":    "new user task",
+		"chat_id": "oc_1",
+	}})
+	if err != nil {
+		t.Fatalf("HandleIncoming: %v", err)
+	}
+	job := server.heartbeat.Status().Jobs[0]
+	if job.EffectiveProfile != "" || job.LastScheduleReason != "normal inbound activity" {
+		t.Fatalf("matching inbound did not reset heartbeat: %#v", job)
+	}
+}
+
+func heartbeatGatewayConfig(t *testing.T, inbox string) *config.Config {
+	t.Helper()
+	return &config.Config{
+		Gateway:  &config.GatewayConfig{Bind: "127.0.0.1", Port: 0},
+		Channels: &config.ChannelsConfig{},
+		Agents: &config.AgentsConfig{
+			Workspace: t.TempDir(),
+			Router:    "codexAppCDP",
+			CodexAppCDP: &config.CodexAppCDPConfig{
+				Enabled:       true,
+				InboxPath:     inbox,
+				DefaultAgent:  "main",
+				AllowedAgents: []string{"main"},
+			},
+			Heartbeat: &config.HeartbeatConfig{
+				Enabled:       true,
+				MaxConcurrent: 1,
+				Jobs: []config.HeartbeatJobConfig{{
+					ID:       "cloudbank-main",
+					Runtime:  "codexAppCDP",
+					Agent:    "main",
+					Text:     "secret heartbeat instruction",
+					Cron:     "*/10 * * * *",
+					Timezone: "Asia/Shanghai",
+					AgentCronProfiles: map[string]string{
+						"idle": "0 * * * *",
+					},
+					ResetCronOnInbound: true,
+				}},
+			},
+		},
+	}
+}
