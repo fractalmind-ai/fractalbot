@@ -169,8 +169,11 @@ func (b *FeishuBot) Stop(ctx context.Context) error {
 }
 
 func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
-	if b.sendMessageFn == nil || b.uploadImageFn == nil || b.sendImageFn == nil {
+	if b.sendMessageFn == nil {
 		return nil, errors.New("feishu sender not configured")
+	}
+	if len(msg.Images) > 0 && (b.uploadImageFn == nil || b.sendImageFn == nil) {
+		return nil, errors.New("feishu image sender not configured")
 	}
 	if strings.TrimSpace(msg.To) == "" {
 		return nil, errors.New("feishu receive_id is required")
