@@ -557,7 +557,11 @@ func TestFeishuSendImageUploadFailurePropagates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFeishuBot: %v", err)
 	}
-	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error { return nil }
+	textCalls := 0
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		textCalls++
+		return nil
+	}
 	bot.uploadImageFn = func(ctx context.Context, imagePath string) (string, error) {
 		return "", errors.New("upload denied")
 	}
@@ -569,6 +573,45 @@ func TestFeishuSendImageUploadFailurePropagates(t *testing.T) {
 	_, err = bot.Send(context.Background(), OutboundMessage{To: "oc_1", Text: "caption", Images: []string{"/tmp/a.png"}})
 	if err == nil || !strings.Contains(err.Error(), "upload denied") {
 		t.Fatalf("expected upload error to propagate, got %v", err)
+	}
+	if textCalls != 0 {
+		t.Fatalf("expected zero chat-side sends when upload fails (caption must not be delivered), got %d text calls", textCalls)
+	}
+}
+
+func TestFeishuSendImageUploadFailureMidwayLeavesNoSends(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+	textCalls := 0
+	imageSendCalls := 0
+	uploadCalls := 0
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		textCalls++
+		return nil
+	}
+	bot.uploadImageFn = func(ctx context.Context, imagePath string) (string, error) {
+		uploadCalls++
+		if uploadCalls == 2 {
+			return "", errors.New("second upload denied")
+		}
+		return "img_key_" + imagePath, nil
+	}
+	bot.sendImageFn = func(ctx context.Context, receiveIDType, receiveID, imageKey string) error {
+		imageSendCalls++
+		return nil
+	}
+
+	_, err = bot.Send(context.Background(), OutboundMessage{To: "oc_1", Text: "caption", Images: []string{"/tmp/a.png", "/tmp/b.png"}})
+	if err == nil || !strings.Contains(err.Error(), "second upload denied") {
+		t.Fatalf("expected second upload error to propagate, got %v", err)
+	}
+	if textCalls != 0 {
+		t.Fatalf("expected zero caption sends when a later image upload fails, got %d text calls", textCalls)
+	}
+	if imageSendCalls != 0 {
+		t.Fatalf("expected zero image sends when a later image upload fails, got %d image sends", imageSendCalls)
 	}
 }
 
@@ -607,6 +650,14 @@ func TestFeishuUploadImageValidation(t *testing.T) {
 		_, err := bot.uploadImage(context.Background(), path)
 		if err == nil || !strings.Contains(err.Error(), "exceeds 10MB") {
 			t.Fatalf("expected size-limit error, got %v", err)
+		}
+	})
+
+	t.Run("directory path", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := bot.uploadImage(context.Background(), dir)
+		if err == nil || !strings.Contains(err.Error(), "directory") {
+			t.Fatalf("expected directory rejection, got %v", err)
 		}
 	})
 }

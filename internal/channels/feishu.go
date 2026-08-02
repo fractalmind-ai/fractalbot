@@ -182,18 +182,27 @@ func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult,
 	if strings.HasPrefix(msg.To, "oc_") {
 		receiveIDType = "chat_id"
 	}
-	if text := strings.TrimSpace(msg.Text); text != "" {
-		if err := b.sendMessageFn(ctx, receiveIDType, msg.To, text); err != nil {
-			b.markError()
-			return nil, err
-		}
-	}
+
+	// Preflight every image before any chat-side send: an upload failure must
+	// leave zero delivered messages so a retry cannot duplicate the caption or
+	// earlier attachments (QA P1).
+	imageKeys := make([]string, 0, len(msg.Images))
 	for _, imagePath := range msg.Images {
 		imageKey, err := b.uploadImageFn(ctx, imagePath)
 		if err != nil {
 			b.markError()
 			return nil, err
 		}
+		imageKeys = append(imageKeys, imageKey)
+	}
+
+	if text := strings.TrimSpace(msg.Text); text != "" {
+		if err := b.sendMessageFn(ctx, receiveIDType, msg.To, text); err != nil {
+			b.markError()
+			return nil, err
+		}
+	}
+	for _, imageKey := range imageKeys {
 		if err := b.sendImageFn(ctx, receiveIDType, msg.To, imageKey); err != nil {
 			b.markError()
 			return nil, err
@@ -304,6 +313,9 @@ func (b *FeishuBot) uploadImage(ctx context.Context, imagePath string) (string, 
 	info, err := os.Stat(imagePath)
 	if err != nil {
 		return "", fmt.Errorf("feishu image %s: %w", imagePath, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("feishu image %s: path is a directory, not a file", imagePath)
 	}
 	if info.Size() == 0 {
 		return "", fmt.Errorf("feishu image %s: file is empty", imagePath)
