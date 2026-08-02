@@ -626,6 +626,7 @@ type fakeSendChannel struct {
 	lastChat   string
 	lastText   string
 	lastThread string
+	lastImages []string
 	sendErr    error
 }
 
@@ -648,6 +649,7 @@ func (f *fakeSendChannel) Send(ctx context.Context, msg channels.OutboundMessage
 	f.lastChat = msg.To
 	f.lastText = msg.Text
 	f.lastThread = msg.ThreadTS
+	f.lastImages = msg.Images
 	if f.sendErr != nil {
 		return nil, f.sendErr
 	}
@@ -677,6 +679,10 @@ func TestMessageSendAPI(t *testing.T) {
 	fakeSlack := &fakeSendChannel{name: "slack"}
 	if err := server.agentManager.ChannelManager.Register(fakeSlack); err != nil {
 		t.Fatalf("register fake slack channel: %v", err)
+	}
+	fakeFeishu := &fakeSendChannel{name: "feishu"}
+	if err := server.agentManager.ChannelManager.Register(fakeFeishu); err != nil {
+		t.Fatalf("register fake feishu channel: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -803,6 +809,81 @@ func TestMessageSendAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("expected 404, got %d body=%s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("image to unsupported channel returns explicit error", func(t *testing.T) {
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"telegram","to":"12345","text":"caption","images":["/tmp/a.png"]}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 400, got %d body=%s", resp.StatusCode, string(body))
+		}
+		var payload messageSendResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if !strings.Contains(payload.Error, "does not support image attachment") {
+			t.Fatalf("expected explicit unsupported-channel error, got %q", payload.Error)
+		}
+	})
+
+	t.Run("image to feishu passes through with text", func(t *testing.T) {
+		fakeFeishu.lastChat = ""
+		fakeFeishu.lastText = ""
+		fakeFeishu.lastImages = nil
+
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"feishu","to":"oc_1","text":"caption","images":["/tmp/a.png","/tmp/b.png"]}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("unexpected status %d body=%s", resp.StatusCode, string(body))
+		}
+		if fakeFeishu.lastText != "caption" {
+			t.Fatalf("expected caption text, got %q", fakeFeishu.lastText)
+		}
+		if len(fakeFeishu.lastImages) != 2 || fakeFeishu.lastImages[0] != "/tmp/a.png" || fakeFeishu.lastImages[1] != "/tmp/b.png" {
+			t.Fatalf("expected both image paths forwarded, got %v", fakeFeishu.lastImages)
+		}
+	})
+
+	t.Run("images-only send passes validation", func(t *testing.T) {
+		fakeFeishu.lastChat = ""
+		fakeFeishu.lastText = ""
+		fakeFeishu.lastImages = nil
+
+		resp, err := http.Post(
+			ts.URL+"/api/v1/message/send",
+			"application/json",
+			strings.NewReader(`{"channel":"feishu","to":"oc_2","images":["/tmp/a.png"]}`),
+		)
+		if err != nil {
+			t.Fatalf("post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected images-only send to pass, got %d body=%s", resp.StatusCode, string(body))
+		}
+		if len(fakeFeishu.lastImages) != 1 || fakeFeishu.lastImages[0] != "/tmp/a.png" {
+			t.Fatalf("expected image forwarded, got %v", fakeFeishu.lastImages)
 		}
 	})
 }

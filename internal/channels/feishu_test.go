@@ -2,10 +2,14 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"github.com/fractalmind-ai/fractalbot/pkg/protocol"
@@ -474,6 +478,137 @@ func buildFeishuEventWithSenderType(text, chatType, openID, userID, chatID, send
 			},
 		},
 	}
+}
+
+func TestFeishuSendWithImages(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", []string{"ou_1"}, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	var sentTexts []string
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		sentTexts = append(sentTexts, text)
+		return nil
+	}
+
+	var uploaded []string
+	bot.uploadImageFn = func(ctx context.Context, imagePath string) (string, error) {
+		uploaded = append(uploaded, imagePath)
+		return "img_" + imagePath, nil
+	}
+
+	var sentImages []string
+	bot.sendImageFn = func(ctx context.Context, receiveIDType, receiveID, imageKey string) error {
+		sentImages = append(sentImages, imageKey)
+		return nil
+	}
+
+	result, err := bot.Send(context.Background(), OutboundMessage{
+		To:     "oc_1",
+		Text:   "caption",
+		Images: []string{"/tmp/a.png", "/tmp/b.png"},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if result == nil || result.ChannelID != "oc_1" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if len(sentTexts) != 1 || sentTexts[0] != "caption" {
+		t.Fatalf("expected caption text sent first, got %v", sentTexts)
+	}
+	if len(uploaded) != 2 || uploaded[0] != "/tmp/a.png" || uploaded[1] != "/tmp/b.png" {
+		t.Fatalf("expected both images uploaded in order, got %v", uploaded)
+	}
+	if len(sentImages) != 2 || sentImages[0] != "img_/tmp/a.png" || sentImages[1] != "img_/tmp/b.png" {
+		t.Fatalf("expected one image message per uploaded key, got %v", sentImages)
+	}
+}
+
+func TestFeishuSendImagesOnlySkipsText(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+
+	textCalls := 0
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error {
+		textCalls++
+		return nil
+	}
+	bot.uploadImageFn = func(ctx context.Context, imagePath string) (string, error) {
+		return "img_key", nil
+	}
+	bot.sendImageFn = func(ctx context.Context, receiveIDType, receiveID, imageKey string) error {
+		return nil
+	}
+
+	if _, err := bot.Send(context.Background(), OutboundMessage{To: "oc_1", Images: []string{"/tmp/a.png"}}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if textCalls != 0 {
+		t.Fatalf("expected no text message for images-only send, got %d calls", textCalls)
+	}
+}
+
+func TestFeishuSendImageUploadFailurePropagates(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+	bot.sendMessageFn = func(ctx context.Context, receiveIDType, receiveID, text string) error { return nil }
+	bot.uploadImageFn = func(ctx context.Context, imagePath string) (string, error) {
+		return "", errors.New("upload denied")
+	}
+	bot.sendImageFn = func(ctx context.Context, receiveIDType, receiveID, imageKey string) error {
+		t.Fatalf("sendImageFn should not be called when upload fails")
+		return nil
+	}
+
+	_, err = bot.Send(context.Background(), OutboundMessage{To: "oc_1", Text: "caption", Images: []string{"/tmp/a.png"}})
+	if err == nil || !strings.Contains(err.Error(), "upload denied") {
+		t.Fatalf("expected upload error to propagate, got %v", err)
+	}
+}
+
+func TestFeishuUploadImageValidation(t *testing.T) {
+	bot, err := NewFeishuBot("app", "secret", "feishu", nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewFeishuBot: %v", err)
+	}
+	bot.apiClient = lark.NewClient("app", "secret")
+
+	t.Run("missing file", func(t *testing.T) {
+		_, err := bot.uploadImage(context.Background(), filepath.Join(t.TempDir(), "nope.png"))
+		if err == nil {
+			t.Fatalf("expected error for missing file")
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "empty.png")
+		if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+			t.Fatalf("write empty file: %v", err)
+		}
+		_, err := bot.uploadImage(context.Background(), path)
+		if err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Fatalf("expected empty-file error, got %v", err)
+		}
+	})
+
+	t.Run("oversize file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "big.png")
+		if err := os.WriteFile(path, make([]byte, feishuImageMaxBytes+1), 0644); err != nil {
+			t.Fatalf("write big file: %v", err)
+		}
+		_, err := bot.uploadImage(context.Background(), path)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 10MB") {
+			t.Fatalf("expected size-limit error, got %v", err)
+		}
+	})
 }
 
 func strPtr(value string) *string {

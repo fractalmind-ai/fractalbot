@@ -60,7 +60,7 @@ func TestRunMessageSend(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		called := false
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 			_ = ctx
 			_ = cfg
 			called = true
@@ -101,7 +101,7 @@ func TestRunMessageSend(t *testing.T) {
 
 	t.Run("success with thread ts", func(t *testing.T) {
 		called := false
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 			_ = ctx
 			_ = cfg
 			called = true
@@ -138,6 +138,78 @@ func TestRunMessageSend(t *testing.T) {
 		}
 	})
 
+	t.Run("success with repeatable images and text caption", func(t *testing.T) {
+		var gotImages []string
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
+			_ = ctx
+			_ = cfg
+			gotImages = images
+			if channel != "feishu" {
+				t.Fatalf("channel=%q", channel)
+			}
+			if to != "oc_1" {
+				t.Fatalf("to=%s", to)
+			}
+			if text != "架构对比图" {
+				t.Fatalf("text=%q", text)
+			}
+			if len(images) != 2 {
+				t.Fatalf("expected 2 images, got %v", images)
+			}
+			return nil
+		}
+
+		var buf bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"message", "send",
+			"--channel", "feishu",
+			"--to", "oc_1",
+			"--text", "架构对比图",
+			"--image", "/tmp/arch-compare.png",
+			"--image", "/tmp/loss-curve.png",
+		}, &buf)
+
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d output=%q", code, buf.String())
+		}
+		if len(gotImages) != 2 {
+			t.Fatalf("expected images forwarded to send fn, got %v", gotImages)
+		}
+	})
+
+	t.Run("images only (no text)", func(t *testing.T) {
+		called := false
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
+			_ = ctx
+			_ = cfg
+			called = true
+			if text != "" {
+				t.Fatalf("expected empty text, got %q", text)
+			}
+			if len(images) != 1 || images[0] != "/tmp/a.png" {
+				t.Fatalf("unexpected images: %v", images)
+			}
+			return nil
+		}
+
+		var buf bytes.Buffer
+		code := runWithContext(context.Background(), []string{
+			"--config", configPath,
+			"message", "send",
+			"--channel", "feishu",
+			"--to", "oc_2",
+			"--image", "/tmp/a.png",
+		}, &buf)
+
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d output=%q", code, buf.String())
+		}
+		if !called {
+			t.Fatalf("expected message send function to be called")
+		}
+	})
+
 	t.Run("validation errors", func(t *testing.T) {
 		cases := []struct {
 			name          string
@@ -150,15 +222,20 @@ func TestRunMessageSend(t *testing.T) {
 				expectedError: "--to is required",
 			},
 			{
-				name:          "missing text",
+				name:          "missing text and image",
 				args:          []string{"--channel", "telegram", "--to", "5088760910"},
-				expectedError: "--text is required",
+				expectedError: "--text or --image is required",
+			},
+			{
+				name:          "svg image rejected",
+				args:          []string{"--channel", "feishu", "--to", "oc_1", "--text", "caption", "--image", "/tmp/chart.svg"},
+				expectedError: "does not support SVG",
 			},
 		}
 
 		for _, testCase := range cases {
 			t.Run(testCase.name, func(t *testing.T) {
-				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+				messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 					_ = ctx
 					_ = cfg
 					_ = channel
@@ -183,7 +260,7 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("unknown subcommand", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel
@@ -208,7 +285,7 @@ func TestRunMessageSend(t *testing.T) {
 	})
 
 	t.Run("send failure", func(t *testing.T) {
-		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+		messageSendFn = func(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 			_ = ctx
 			_ = cfg
 			_ = channel

@@ -57,6 +57,12 @@ func (s *stringSliceFlag) trimmed() []string {
 	return out
 }
 
+// isSVGPath reports whether path points to an SVG file. Feishu's im/v1/images
+// upload does not accept SVG, and rasterizing it would be the caller's job.
+func isSVGPath(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".svg")
+}
+
 const exitCodeRestartRequested = 75
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
@@ -280,6 +286,12 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	if messageText == "" && len(imageValues) == 0 {
 		logger.Printf("--text or --image is required")
 		return 1
+	}
+	for _, imagePath := range imageValues {
+		if isSVGPath(imagePath) {
+			logger.Printf("unsupported image format: %s\nFeishu image send does not support SVG; convert to PNG/JPEG first (issue #374)", imagePath)
+			return 1
+		}
 	}
 
 	channelName := strings.ToLower(strings.TrimSpace(*channel))

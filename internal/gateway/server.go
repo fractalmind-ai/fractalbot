@@ -388,6 +388,13 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "text or images is required"})
 		return
 	}
+	if len(request.Images) > 0 && !imageSendChannelSupported(request.Channel) {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("channel %q does not support image attachment yet (issue #374); currently supported: feishu", request.Channel),
+		})
+		return
+	}
 
 	if s.messageBus == nil {
 		writeJSON(w, http.StatusServiceUnavailable, messageSendResponse{Status: "error", Error: "message bus unavailable"})
@@ -399,7 +406,8 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		Text:     request.Text,
 		ThreadTS: request.ThreadTS,
 		Images:   request.Images,
-	}); err != nil {
+	})
+	if err != nil {
 		status := http.StatusBadGateway
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
@@ -509,6 +517,13 @@ func isLoopbackRequest(r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// imageSendChannelSupported reports whether a channel can deliver image
+// attachments. Feishu is the first implementation (issue #374); others return
+// explicit errors instead of silently dropping images.
+func imageSendChannelSupported(channel string) bool {
+	return channel == "feishu"
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {

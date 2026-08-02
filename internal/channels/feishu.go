@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ import (
 const (
 	feishuDomainFeishu = "feishu"
 	feishuDomainLark   = "lark"
+
+	// feishuImageMaxBytes mirrors the im/v1/images upload limit (10MB).
+	feishuImageMaxBytes = 10 * 1024 * 1024
 )
 
 type FeishuBot struct {
@@ -39,6 +43,8 @@ type FeishuBot struct {
 	startFn       func(ctx context.Context) error
 	stopFn        func() error
 	sendMessageFn func(ctx context.Context, receiveIDType, receiveID, text string) error
+	uploadImageFn func(ctx context.Context, imagePath string) (string, error)
+	sendImageFn   func(ctx context.Context, receiveIDType, receiveID, imageKey string) error
 
 	runningMu sync.RWMutex
 	running   bool
@@ -163,7 +169,7 @@ func (b *FeishuBot) Stop(ctx context.Context) error {
 }
 
 func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult, error) {
-	if b.sendMessageFn == nil {
+	if b.sendMessageFn == nil || b.uploadImageFn == nil || b.sendImageFn == nil {
 		return nil, errors.New("feishu sender not configured")
 	}
 	if strings.TrimSpace(msg.To) == "" {
@@ -173,9 +179,22 @@ func (b *FeishuBot) Send(ctx context.Context, msg OutboundMessage) (*SendResult,
 	if strings.HasPrefix(msg.To, "oc_") {
 		receiveIDType = "chat_id"
 	}
-	if err := b.sendMessageFn(ctx, receiveIDType, msg.To, msg.Text); err != nil {
-		b.markError()
-		return nil, err
+	if text := strings.TrimSpace(msg.Text); text != "" {
+		if err := b.sendMessageFn(ctx, receiveIDType, msg.To, text); err != nil {
+			b.markError()
+			return nil, err
+		}
+	}
+	for _, imagePath := range msg.Images {
+		imageKey, err := b.uploadImageFn(ctx, imagePath)
+		if err != nil {
+			b.markError()
+			return nil, err
+		}
+		if err := b.sendImageFn(ctx, receiveIDType, msg.To, imageKey); err != nil {
+			b.markError()
+			return nil, err
+		}
 	}
 	b.markActivity()
 	return &SendResult{ChannelID: msg.To}, nil
@@ -207,6 +226,8 @@ func (b *FeishuBot) initClients() {
 	)
 
 	b.sendMessageFn = b.sendText
+	b.uploadImageFn = b.uploadImage
+	b.sendImageFn = b.sendImage
 	b.startFn = b.startLongConnection
 }
 
@@ -267,6 +288,96 @@ func (b *FeishuBot) sendText(ctx context.Context, receiveIDType, receiveID, text
 		return sendErr
 	}
 	b.markActivity()
+	return nil
+}
+
+// uploadImage uploads a local image via im/v1/images and returns its image_key.
+// It validates the file exists and fits within the API's 10MB limit before
+// reading it, so bad paths fail fast instead of hanging the send.
+func (b *FeishuBot) uploadImage(ctx context.Context, imagePath string) (string, error) {
+	if b.apiClient == nil {
+		return "", errors.New("feishu api client not initialized")
+	}
+	info, err := os.Stat(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("feishu image %s: %w", imagePath, err)
+	}
+	if info.Size() == 0 {
+		return "", fmt.Errorf("feishu image %s: file is empty", imagePath)
+	}
+	if info.Size() > feishuImageMaxBytes {
+		return "", fmt.Errorf("feishu image %s: size %d exceeds 10MB upload limit", imagePath, info.Size())
+	}
+
+	body, err := larkim.NewCreateImagePathReqBodyBuilder().
+		ImageType(larkim.ImageTypeMessage).
+		ImagePath(imagePath).
+		Build()
+	if err != nil {
+		return "", fmt.Errorf("feishu build image upload request: %w", err)
+	}
+	req := larkim.NewCreateImageReqBuilder().Body(body).Build()
+
+	resp, err := b.apiClient.Im.V1.Image.Create(ctx, req)
+	if err != nil {
+		if isFeishuTokenError(err) {
+			log.Printf("feishu: token error, refreshing API client: %v", err)
+			b.refreshAPIClient()
+		}
+		return "", fmt.Errorf("feishu image upload %s: %w", imagePath, err)
+	}
+	if !resp.Success() {
+		sendErr := fmt.Errorf("feishu image upload failed: code=%d msg=%s", resp.Code, resp.Msg)
+		if isFeishuTokenError(sendErr) {
+			log.Printf("feishu: token error in response, refreshing API client: %v", sendErr)
+			b.refreshAPIClient()
+		}
+		return "", sendErr
+	}
+	if resp.Data == nil || resp.Data.ImageKey == nil || *resp.Data.ImageKey == "" {
+		return "", fmt.Errorf("feishu image upload %s: empty image_key in response", imagePath)
+	}
+	return *resp.Data.ImageKey, nil
+}
+
+func (b *FeishuBot) sendImage(ctx context.Context, receiveIDType, receiveID, imageKey string) error {
+	if b.apiClient == nil {
+		return errors.New("feishu api client not initialized")
+	}
+	if strings.TrimSpace(receiveID) == "" {
+		return errors.New("feishu receive_id is required")
+	}
+
+	payload, err := json.Marshal(map[string]string{"image_key": imageKey})
+	if err != nil {
+		return fmt.Errorf("failed to marshal feishu image content: %w", err)
+	}
+
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(receiveIDType).
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(receiveID).
+			MsgType("image").
+			Content(string(payload)).
+			Build()).
+		Build()
+
+	resp, err := b.apiClient.Im.V1.Message.Create(ctx, req)
+	if err != nil {
+		if isFeishuTokenError(err) {
+			log.Printf("feishu: token error, refreshing API client: %v", err)
+			b.refreshAPIClient()
+		}
+		return err
+	}
+	if !resp.Success() {
+		sendErr := fmt.Errorf("feishu send image failed: code=%d msg=%s", resp.Code, resp.Msg)
+		if isFeishuTokenError(sendErr) {
+			log.Printf("feishu: token error in response, refreshing API client: %v", sendErr)
+			b.refreshAPIClient()
+		}
+		return sendErr
+	}
 	return nil
 }
 
