@@ -28,7 +28,8 @@ type SendResult struct {
 type OutboundMessage struct {
 	To       string
 	Text     string
-	ThreadTS string // thread/reply context (Slack threads, etc.)
+	ThreadTS string   // thread/reply context (Slack threads, etc.)
+	Images   []string // local file paths to attach as image messages (issue #374)
 }
 
 // MediaPart represents a single media attachment for outbound messages.
