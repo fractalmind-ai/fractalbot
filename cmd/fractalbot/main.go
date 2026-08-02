@@ -28,6 +28,41 @@ var fileDownloadFn = downloadFileViaHTTP
 var heartbeatCronSetFn = setHeartbeatCronViaGatewayAPI
 var heartbeatCronResetFn = resetHeartbeatCronViaGatewayAPI
 
+// stringSliceFlag implements flag.Value so a flag can be specified multiple
+// times (e.g. --image a.png --image b.png) and accumulate into a slice.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	if s == nil {
+		return ""
+	}
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+func (s *stringSliceFlag) trimmed() []string {
+	if s == nil || len(*s) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(*s))
+	for _, value := range *s {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// isSVGPath reports whether path points to an SVG file. Feishu's im/v1/images
+// upload does not accept SVG, and rasterizing it would be the caller's job.
+func isSVGPath(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".svg")
+}
+
 const exitCodeRestartRequested = 75
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
@@ -233,6 +268,8 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	to := sendFS.String("to", "", "target chat ID")
 	text := sendFS.String("text", "", "message text")
 	threadTS := sendFS.String("thread-ts", "", "optional Slack thread timestamp for threaded reply")
+	var imagePaths stringSliceFlag
+	sendFS.Var(&imagePaths, "image", "local image path to attach (repeatable; issue #374)")
 
 	if err := sendFS.Parse(args[1:]); err != nil {
 		return 1
@@ -245,9 +282,16 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 	}
 
 	messageText := strings.TrimSpace(*text)
-	if messageText == "" {
-		logger.Printf("--text is required")
+	imageValues := imagePaths.trimmed()
+	if messageText == "" && len(imageValues) == 0 {
+		logger.Printf("--text or --image is required")
 		return 1
+	}
+	for _, imagePath := range imageValues {
+		if isSVGPath(imagePath) {
+			logger.Printf("unsupported image format: %s\nFeishu image send does not support SVG; convert to PNG/JPEG first (issue #374)", imagePath)
+			return 1
+		}
 	}
 
 	channelName := strings.ToLower(strings.TrimSpace(*channel))
@@ -258,7 +302,7 @@ func runMessageCommand(ctx context.Context, cfg *config.Config, args []string, o
 
 	threadTSValue := strings.TrimSpace(*threadTS)
 
-	if err := messageSendFn(ctx, cfg, channelName, toValue, messageText, threadTSValue); err != nil {
+	if err := messageSendFn(ctx, cfg, channelName, toValue, messageText, threadTSValue, imageValues); err != nil {
 		logger.Printf("failed to send message: %v", err)
 		return 1
 	}
@@ -314,12 +358,13 @@ func runFileCommand(ctx context.Context, cfg *config.Config, args []string, out 
 	return 0
 }
 
-func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string) error {
+func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel string, to string, text string, threadTS string, images []string) error {
 	type requestPayload struct {
-		Channel  string `json:"channel"`
-		To       string `json:"to"`
-		Text     string `json:"text"`
-		ThreadTS string `json:"thread_ts,omitempty"`
+		Channel  string   `json:"channel"`
+		To       string   `json:"to"`
+		Text     string   `json:"text"`
+		ThreadTS string   `json:"thread_ts,omitempty"`
+		Images   []string `json:"images,omitempty"`
 	}
 
 	type responsePayload struct {
@@ -332,6 +377,7 @@ func sendMessageViaGatewayAPI(ctx context.Context, cfg *config.Config, channel s
 		To:       to,
 		Text:     text,
 		ThreadTS: threadTS,
+		Images:   images,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)

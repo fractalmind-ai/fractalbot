@@ -331,10 +331,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type messageSendRequest struct {
-	Channel  string `json:"channel"`
-	To       string `json:"to"`
-	Text     string `json:"text"`
-	ThreadTS string `json:"thread_ts,omitempty"`
+	Channel  string   `json:"channel"`
+	To       string   `json:"to"`
+	Text     string   `json:"text"`
+	ThreadTS string   `json:"thread_ts,omitempty"`
+	Images   []string `json:"images,omitempty"`
 }
 
 type messageSendResponse struct {
@@ -367,6 +368,13 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	request.To = strings.TrimSpace(request.To)
 	request.Text = strings.TrimSpace(request.Text)
 	request.ThreadTS = strings.TrimSpace(request.ThreadTS)
+	trimmedImages := make([]string, 0, len(request.Images))
+	for _, path := range request.Images {
+		if trimmed := strings.TrimSpace(path); trimmed != "" {
+			trimmedImages = append(trimmedImages, trimmed)
+		}
+	}
+	request.Images = trimmedImages
 
 	if request.Channel == "" {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "channel is required"})
@@ -376,8 +384,15 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "to is required"})
 		return
 	}
-	if request.Text == "" {
-		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "text is required"})
+	if request.Text == "" && len(request.Images) == 0 {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{Status: "error", Error: "text or images is required"})
+		return
+	}
+	if len(request.Images) > 0 && !imageSendChannelSupported(request.Channel) {
+		writeJSON(w, http.StatusBadRequest, messageSendResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("channel %q does not support image attachment yet (issue #374); currently supported: feishu", request.Channel),
+		})
 		return
 	}
 
@@ -390,6 +405,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		To:       request.To,
 		Text:     request.Text,
 		ThreadTS: request.ThreadTS,
+		Images:   request.Images,
 	})
 	if err != nil {
 		status := http.StatusBadGateway
@@ -501,6 +517,13 @@ func isLoopbackRequest(r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// imageSendChannelSupported reports whether a channel can deliver image
+// attachments. Feishu is the first implementation (issue #374); others return
+// explicit errors instead of silently dropping images.
+func imageSendChannelSupported(channel string) bool {
+	return channel == "feishu"
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {

@@ -103,6 +103,16 @@ go run ./cmd/fractalbot --config ./config.yaml \
   message send --channel telegram --to 1234567890 --text "hello"
 ```
 
+Attach images (repeat `--image` for multiple; the current implementation supports Feishu):
+
+```bash
+go run ./cmd/fractalbot --config ./config.yaml \
+  message send --channel feishu --to oc_xxx --text "架构对比图" \
+  --image ./arch-compare.png --image ./loss-curve.png
+```
+
+SVG is not accepted for image send — convert to PNG/JPEG first. Channels without image support return an explicit error instead of dropping the attachment.
+
 Start with [`config.example.yaml`](config.example.yaml), then read [Agent routing](docs/routing.md) for runtime-specific configuration.
 
 ## Documentation
