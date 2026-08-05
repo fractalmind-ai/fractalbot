@@ -38,6 +38,67 @@ print("assigned")
 	}
 }
 
+func TestDispatchRuntimeOhMyCodeHeartbeatUsesHeartbeatRun(t *testing.T) {
+	workspace := t.TempDir()
+	script := filepath.Join(workspace, "agent_manager.py")
+	scriptBody := `import sys
+if sys.argv[1:] != ["heartbeat", "run", "main", "--timeout", "7m0s"]:
+    raise SystemExit("unexpected args: " + repr(sys.argv[1:]))
+if sys.stdin.read() != "":
+    raise SystemExit("heartbeat command must not receive an assign prompt")
+print("Heartbeat: main")
+print("   HB_ID: 20260805-001500")
+print("Heartbeat completed successfully")
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0700); err != nil {
+		t.Fatalf("write agent manager: %v", err)
+	}
+	manager := NewManager(&config.AgentsConfig{OhMyCode: &config.OhMyCodeConfig{
+		Enabled:            true,
+		Workspace:          workspace,
+		AgentManagerScript: script,
+		DefaultAgent:       "main",
+		AllowedAgents:      []string{"main"},
+	}})
+
+	request := runtimeTestRequest(agentruntime.OhMyCode, "run-1")
+	request.DispatchMode = agentruntime.DispatchModeHeartbeatRun
+	request.Timeout = 7 * time.Minute
+	request.Text = ""
+	result := manager.DispatchRuntime(context.Background(), request)
+	if result.Status != "heartbeat_terminal" || result.Error != "" || result.Agent != "main" || result.EnvelopeID != "20260805-001500" {
+		t.Fatalf("unexpected heartbeat result: %#v", result)
+	}
+}
+
+func TestDispatchRuntimeOhMyCodeHeartbeatFailureIsTerminal(t *testing.T) {
+	workspace := t.TempDir()
+	script := filepath.Join(workspace, "agent_manager.py")
+	scriptBody := `import sys
+
+print("HB_ID: 20260805-001505")
+print("heartbeat failed")
+raise SystemExit(1)
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0700); err != nil {
+		t.Fatalf("write agent manager: %v", err)
+	}
+	manager := NewManager(&config.AgentsConfig{OhMyCode: &config.OhMyCodeConfig{
+		Enabled:            true,
+		Workspace:          workspace,
+		AgentManagerScript: script,
+		DefaultAgent:       "main",
+		AllowedAgents:      []string{"main"},
+	}})
+
+	request := runtimeTestRequest(agentruntime.OhMyCode, "run-1")
+	request.DispatchMode = agentruntime.DispatchModeHeartbeatRun
+	result := manager.DispatchRuntime(context.Background(), request)
+	if result.Status != "heartbeat_failed" || result.Error == "" || result.EnvelopeID != "20260805-001505" {
+		t.Fatalf("heartbeat failure must be terminal and non-retryable: %#v", result)
+	}
+}
+
 func TestDispatchRuntimeCoalescesCodexAppHeartbeatInbox(t *testing.T) {
 	inbox := filepath.Join(t.TempDir(), "codex-inbox")
 	manager := NewManager(&config.AgentsConfig{CodexAppCDP: &config.CodexAppCDPConfig{
@@ -123,6 +184,20 @@ func TestDispatchRuntimeRejectsInvalidTargetAndText(t *testing.T) {
 	result = manager.DispatchRuntime(context.Background(), request)
 	if result.Status != "error" || !strings.Contains(result.Error, "text is required") {
 		t.Fatalf("unexpected empty text result: %#v", result)
+	}
+
+	request = runtimeTestRequest(agentruntime.CodexAppCDP, "run-1")
+	request.DispatchMode = agentruntime.DispatchModeHeartbeatRun
+	result = manager.DispatchRuntime(context.Background(), request)
+	if result.Status != "error" || !strings.Contains(result.Error, "requires an ohMyCode heartbeat request") {
+		t.Fatalf("unexpected incompatible dispatch mode result: %#v", result)
+	}
+
+	request = runtimeTestRequest(agentruntime.OhMyCode, "run-1")
+	request.DispatchMode = "other"
+	result = manager.DispatchRuntime(context.Background(), request)
+	if result.Status != "error" || !strings.Contains(result.Error, "unsupported runtime dispatch mode") {
+		t.Fatalf("unexpected unsupported dispatch mode result: %#v", result)
 	}
 }
 

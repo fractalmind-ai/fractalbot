@@ -11,6 +11,10 @@ const (
 	OhMyCode      = "ohMyCode"
 	CodexAppCDP   = "codexAppCDP"
 	ClaudeDesktop = "claudeDesktop"
+
+	// DispatchModeHeartbeatRun asks the ohMyCode adapter to execute the
+	// agent-manager heartbeat lifecycle instead of enqueueing a generic task.
+	DispatchModeHeartbeatRun = "heartbeatRun"
 )
 
 // DispatchRequest is an internal agent wakeup that is not associated with a
@@ -26,10 +30,13 @@ type DispatchRequest struct {
 	ExpiresAt    time.Time
 	CoalesceKey  string
 	CronProfiles []string
+	DispatchMode string
+	Timeout      time.Duration
 }
 
-// DispatchResult reports whether a runtime accepted, queued, or rejected a
-// wakeup. It does not imply that the agent completed the resulting work.
+// DispatchResult reports a runtime delivery outcome. Most statuses only mean
+// accepted, queued, or rejected; an explicitly completion-aware dispatch mode
+// may report a terminal lifecycle outcome instead.
 type DispatchResult struct {
 	Runtime    string
 	Agent      string

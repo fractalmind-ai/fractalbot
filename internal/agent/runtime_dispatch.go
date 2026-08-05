@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -11,14 +12,33 @@ import (
 	"github.com/fractalmind-ai/fractalbot/internal/agentruntime"
 )
 
+const (
+	defaultOhMyCodeHeartbeatMaxRuntime = 8 * time.Minute
+	ohMyCodeHeartbeatCommandGrace      = 30 * time.Second
+)
+
+var ohMyCodeHeartbeatIDPattern = regexp.MustCompile(`(?m)^\s*HB_ID:\s*([A-Za-z0-9_-]+)\s*$`)
+
 // DispatchRuntime delivers a non-channel wakeup to an explicitly selected
-// Agent Runtime. The result confirms delivery or queueing, not task completion.
+// Agent Runtime. Generic results confirm delivery or queueing; explicit
+// completion-aware modes may wait for a terminal lifecycle result.
 func (m *Manager) DispatchRuntime(ctx context.Context, request agentruntime.DispatchRequest) agentruntime.DispatchResult {
 	request.Runtime = strings.TrimSpace(request.Runtime)
 	request.Agent = strings.TrimSpace(request.Agent)
 	request.Text = strings.TrimSpace(request.Text)
+	request.DispatchMode = strings.TrimSpace(request.DispatchMode)
 	result := agentruntime.DispatchResult{Runtime: request.Runtime, Agent: request.Agent}
-	if request.Text == "" {
+	if request.DispatchMode != "" && request.DispatchMode != agentruntime.DispatchModeHeartbeatRun {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("unsupported runtime dispatch mode %q", request.DispatchMode)
+		return result
+	}
+	if request.DispatchMode == agentruntime.DispatchModeHeartbeatRun && (request.Runtime != agentruntime.OhMyCode || strings.TrimSpace(request.Source) != "heartbeat") {
+		result.Status = "error"
+		result.Error = "heartbeatRun dispatch mode requires an ohMyCode heartbeat request"
+		return result
+	}
+	if request.Text == "" && request.DispatchMode != agentruntime.DispatchModeHeartbeatRun {
 		result.Status = "error"
 		result.Error = "runtime dispatch text is required"
 		return result
@@ -50,6 +70,39 @@ func (m *Manager) dispatchOhMyCodeRuntime(ctx context.Context, request agentrunt
 	}
 	result.Agent = name
 
+	// Heartbeat scheduler deliveries must retain agent-manager's heartbeat
+	// execution contract. Generic assign only proves that tmux accepted a task;
+	// heartbeat run blocks through the terminal ACK/skip/failure audit outcome.
+	// A terminal failure deliberately uses a non-"error" status so the
+	// scheduler does not inject an unsafe duplicate retry.
+	if request.DispatchMode == agentruntime.DispatchModeHeartbeatRun {
+		maxRuntime := request.Timeout
+		if maxRuntime <= 0 {
+			maxRuntime = defaultOhMyCodeHeartbeatMaxRuntime
+		}
+		dispatchCtx, cancel := context.WithTimeout(ctx, maxRuntime+ohMyCodeHeartbeatCommandGrace)
+		defer cancel()
+		output, runErr := runOhMyCodeAgentManager(
+			dispatchCtx,
+			workspace,
+			script,
+			"",
+			"heartbeat",
+			"run",
+			name,
+			"--timeout",
+			maxRuntime.String(),
+		)
+		result.EnvelopeID = parseOhMyCodeHeartbeatID(output)
+		if runErr != nil {
+			result.Status = "heartbeat_failed"
+			result.Error = runErr.Error()
+			return result
+		}
+		result.Status = "heartbeat_terminal"
+		return result
+	}
+
 	timeout := defaultOhMyCodeAssignTimeout
 	if m.config.OhMyCode.AssignTimeoutSeconds > 0 {
 		timeout = time.Duration(m.config.OhMyCode.AssignTimeoutSeconds) * time.Second
@@ -65,6 +118,14 @@ func (m *Manager) dispatchOhMyCodeRuntime(ctx context.Context, request agentrunt
 	}
 	result.Status = "assigned"
 	return result
+}
+
+func parseOhMyCodeHeartbeatID(output string) string {
+	match := ohMyCodeHeartbeatIDPattern.FindStringSubmatch(output)
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
 }
 
 func (m *Manager) dispatchCodexAppRuntime(ctx context.Context, request agentruntime.DispatchRequest) agentruntime.DispatchResult {

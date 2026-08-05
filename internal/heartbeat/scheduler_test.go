@@ -125,6 +125,36 @@ func TestSchedulerCalculatesTimezoneAndDispatchesRuntimeEnvelope(t *testing.T) {
 	}
 }
 
+func TestSchedulerPassesCompletionAwareDispatchSettings(t *testing.T) {
+	base := time.Date(2026, 7, 26, 1, 55, 0, 0, time.UTC)
+	clock := &testClock{now: base}
+	dispatcher := &recordingDispatcher{result: agentruntime.DispatchResult{Status: "heartbeat_terminal"}}
+	cfg := heartbeatTestConfig("")
+	cfg.Jobs[0].Runtime = agentruntime.OhMyCode
+	cfg.Jobs[0].DispatchMode = agentruntime.DispatchModeHeartbeatRun
+	cfg.Jobs[0].TimeoutSeconds = 480
+	cfg.Jobs[0].Text = ""
+	scheduler, err := newScheduler(cfg, t.TempDir(), dispatcher, clock.Now, time.Hour)
+	if err != nil {
+		t.Fatalf("newScheduler: %v", err)
+	}
+
+	status := scheduler.Status().Jobs[0]
+	if status.DispatchMode != agentruntime.DispatchModeHeartbeatRun || status.TimeoutSeconds != 480 {
+		t.Fatalf("missing completion-aware status: %#v", status)
+	}
+
+	due := time.Date(2026, 7, 26, 2, 0, 0, 0, time.UTC)
+	clock.Set(due)
+	scheduler.runDue(due)
+	waitForScheduler(t, scheduler, func(job JobStatus) bool { return job.LastDispatchStatus == "heartbeat_terminal" })
+
+	requests := dispatcher.Requests()
+	if len(requests) != 1 || requests[0].DispatchMode != agentruntime.DispatchModeHeartbeatRun || requests[0].Timeout != 8*time.Minute {
+		t.Fatalf("unexpected dispatch settings: %#v", requests)
+	}
+}
+
 func TestSchedulerProfileIsIdempotentPersistsAndSkipsMissedRuns(t *testing.T) {
 	statePath := t.TempDir() + "/heartbeat-state.json"
 	base := time.Date(2026, 7, 26, 0, 5, 0, 0, time.UTC)
@@ -292,6 +322,31 @@ func TestSchedulerEnforcesGlobalCapacityAndRecordsFailure(t *testing.T) {
 	})
 	if got := len(dispatcher.Requests()); got != maxDispatchAttempts {
 		t.Fatalf("dispatch attempts=%d want %d", got, maxDispatchAttempts)
+	}
+}
+
+func TestSchedulerDoesNotRetryTerminalHeartbeatFailure(t *testing.T) {
+	base := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	clock := &testClock{now: base}
+	dispatcher := &recordingDispatcher{result: agentruntime.DispatchResult{
+		Status: "heartbeat_failed",
+		Error:  "agent-manager heartbeat failed",
+	}}
+	cfg := heartbeatTestConfig("")
+	cfg.Jobs[0].Cron = "* * * * *"
+	scheduler, err := newScheduler(cfg, t.TempDir(), dispatcher, clock.Now, time.Hour)
+	if err != nil {
+		t.Fatalf("newScheduler: %v", err)
+	}
+	scheduler.retryDelay = func(int) time.Duration { return 0 }
+
+	due := base.Add(time.Minute)
+	clock.Set(due)
+	scheduler.runDue(due)
+	waitForScheduler(t, scheduler, func(job JobStatus) bool { return job.LastDispatchStatus == "heartbeat_failed" })
+
+	if got := len(dispatcher.Requests()); got != 1 {
+		t.Fatalf("terminal heartbeat failure attempts=%d want 1", got)
 	}
 }
 

@@ -40,6 +40,8 @@ type JobStatus struct {
 	ID                    string `json:"id"`
 	Runtime               string `json:"runtime"`
 	Agent                 string `json:"agent"`
+	DispatchMode          string `json:"dispatch_mode,omitempty"`
+	TimeoutSeconds        int    `json:"timeout_seconds,omitempty"`
 	ConfiguredCron        string `json:"configured_cron"`
 	EffectiveProfile      string `json:"effective_profile,omitempty"`
 	EffectiveCron         string `json:"effective_cron"`
@@ -393,6 +395,8 @@ func (s *Scheduler) runDue(now time.Time) {
 					ExpiresAt:    job.state.NextRunAt,
 					CoalesceKey:  "heartbeat:" + id,
 					CronProfiles: profiles,
+					DispatchMode: job.config.DispatchMode,
+					Timeout:      time.Duration(job.config.TimeoutSeconds) * time.Second,
 				},
 			})
 		default:
@@ -484,6 +488,8 @@ func (s *Scheduler) jobStatusLocked(job *compiledJob) JobStatus {
 		ID:                    job.config.ID,
 		Runtime:               job.config.Runtime,
 		Agent:                 job.config.Agent,
+		DispatchMode:          job.config.DispatchMode,
+		TimeoutSeconds:        job.config.TimeoutSeconds,
 		ConfiguredCron:        job.config.Cron,
 		EffectiveProfile:      job.state.EffectiveProfile,
 		EffectiveCron:         job.effectiveCron(),
