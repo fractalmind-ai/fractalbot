@@ -1014,7 +1014,16 @@ func (liveCodexAppCDPClient) Deliver(ctx context.Context, cfg *config.CodexAppCD
 		return err
 	}
 	expr := buildCodexAppDeliveryScript(cfg, envelope, prompt)
-	return evaluateCDPExpression(ctx, target.WebSocketDebuggerURL, expr, strings.TrimSpace(cfg.ConversationID))
+	bridgeErr := evaluateCDPExpression(ctx, target.WebSocketDebuggerURL, expr, strings.TrimSpace(cfg.ConversationID))
+	if bridgeErr == nil {
+		return nil
+	}
+	fallbackExpr := buildCodexAppVisibleComposerDeliveryScript(cfg, envelope, prompt)
+	if fallbackErr := evaluateCDPExpression(ctx, target.WebSocketDebuggerURL, fallbackExpr, strings.TrimSpace(cfg.ConversationID)); fallbackErr == nil {
+		return nil
+	} else {
+		return fmt.Errorf("Codex App bridge delivery failed: %v; visible composer fallback failed: %w", bridgeErr, fallbackErr)
+	}
 }
 
 func selectCodexAppCDPTarget(ctx context.Context, endpoint, selector string) (cdpTarget, error) {
@@ -1435,5 +1444,223 @@ func buildCodexAppDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAp
     }
   }
   return { ok: true, conversationId, bridge: candidate[0], result };
+})()`, string(encoded))
+}
+
+// buildCodexAppVisibleComposerDeliveryScript provides a renderer-only fallback
+// for App releases whose internal start-turn-for-host handler is absent or has
+// changed. It refuses to replace a user's unrelated draft and only reports
+// success once the target conversation renders the unique envelope marker.
+func buildCodexAppVisibleComposerDeliveryScript(cfg *config.CodexAppCDPConfig, envelope CodexAppEnvelope, prompt string) string {
+	conversationID := ""
+	if cfg != nil {
+		conversationID = strings.TrimSpace(cfg.ConversationID)
+	}
+	payload := map[string]string{
+		"conversationId":     conversationID,
+		"prompt":             prompt,
+		"verificationNeedle": "- envelope_id: " + strings.TrimSpace(envelope.ID),
+	}
+	encoded, _ := json.Marshal(payload)
+	return fmt.Sprintf(`(async () => {
+  const payload = %s;
+  const conversationId = payload.conversationId || (() => {
+    const match = window.location.pathname.match(/\/local\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  })();
+  if (!conversationId) {
+    throw new Error("No target Codex App conversation id was provided and no /local/<conversationId> route is active.");
+  }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function waitFor(predicate, timeoutMs = 8000) {
+    const startedAt = Date.now();
+    let lastError;
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const value = await predicate();
+        if (value) return value;
+      } catch (error) {
+        lastError = error;
+      }
+      await sleep(100);
+    }
+    if (lastError) throw lastError;
+    throw new Error("Timed out waiting for Codex/ChatGPT App UI state.");
+  }
+
+  function findSidebarRow(id) {
+    const rows = Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-row], [data-testid*='sidebar'] a, nav a[href*='/local/'], a[href*='/local/']"));
+    return rows.find((row) => {
+      const rawId = row.getAttribute("data-app-action-sidebar-thread-id") || row.getAttribute("data-thread-id") || ((row.getAttribute("href") || "").match(/\/local\/([^/?#]+)/) || [])[1] || "";
+      return decodeURIComponent(rawId).replace(/^local:/, "") === id;
+    }) || null;
+  }
+
+  function isActiveSidebarRow(id) {
+    const row = findSidebarRow(id);
+    return Boolean(row && (row.getAttribute("data-app-action-sidebar-thread-active") === "true" || row.getAttribute("aria-current") === "page" || row.getAttribute("aria-selected") === "true"));
+  }
+
+  async function navigateToConversation(id) {
+    const encodedPath = "/local/" + encodeURIComponent(id);
+    const plainPath = "/local/" + id;
+    if (location.pathname.includes(encodedPath) || location.pathname.includes(plainPath)) return "already-active";
+    const row = findSidebarRow(id);
+    if (row) {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await waitFor(() => isActiveSidebarRow(id) || location.pathname.includes(encodedPath) || location.pathname.includes(plainPath), 7000);
+      return "sidebar-click";
+    }
+    history.pushState({}, "", encodedPath);
+    window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+    await waitFor(() => location.pathname.includes(encodedPath) || location.pathname.includes(plainPath), 7000);
+    return "history-push";
+  }
+
+  function findComposer() {
+    const selectors = [
+      "textarea:not([disabled])",
+      "[contenteditable='true'][role='textbox']",
+      "[contenteditable='true']",
+      "[data-testid='composer'] textarea",
+      "[data-testid='composer'] [contenteditable='true']",
+      "form textarea",
+    ];
+    for (const selector of selectors) {
+      const node = Array.from(document.querySelectorAll(selector)).find((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 20 && rect.height > 10 && !element.closest("[aria-hidden='true']");
+      });
+      if (node) return node;
+    }
+    return null;
+  }
+
+  function composerText(node) {
+    return (node && (node.textContent || node.value) || "").trim();
+  }
+
+  function setComposerText(node, text) {
+    node.focus();
+    if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
+      descriptor?.set?.call(node, text);
+      node.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    range.deleteContents();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if (!document.execCommand("insertText", false, text)) node.textContent = text;
+    node.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    node.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function findSendButton(composer) {
+    const roots = [];
+    for (let node = composer; node && roots.length < 12; node = node.parentElement) {
+      roots.push(node);
+      const className = String(node.className || "");
+      if (node.tagName === "FORM" || node.getAttribute("data-testid") === "composer" || node.getAttribute("role") === "form" || className.includes("composer-surface")) break;
+    }
+    if (roots.length === 0) roots.push(document);
+    const seen = new Set();
+    const buttons = roots.flatMap((root) => Array.from(root.querySelectorAll("button"))).filter((button) => {
+      if (seen.has(button)) return false;
+      seen.add(button);
+      const rect = button.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && !button.disabled && button.getAttribute("aria-disabled") !== "true";
+    });
+    const composerButton = buttons.find((button) => String(button.className || "").includes("size-token-button-composer") && button.querySelector("svg"));
+    if (composerButton) return composerButton;
+    return buttons.find((button) => /send|submit|发送|提交/.test([button.getAttribute("aria-label"), button.getAttribute("title"), button.textContent].filter(Boolean).join(" ").toLowerCase())) || null;
+  }
+
+  function dispatchClick(node) {
+    node.scrollIntoView?.({ block: "center", inline: "center" });
+    node.focus?.();
+    const eventInit = { bubbles: true, cancelable: true, view: window, composed: true };
+    const pointerInit = { ...eventInit, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 1 };
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      try {
+        node.dispatchEvent(type.startsWith("pointer") && typeof PointerEvent === "function" ? new PointerEvent(type, pointerInit) : new MouseEvent(type.replace(/^pointer/, "mouse"), eventInit));
+      } catch (_) {}
+    }
+    node.click?.();
+  }
+
+  function findQueuedSteerButton() {
+    return Array.from(document.querySelectorAll("button")).find((button) => {
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+      const label = [button.getAttribute("aria-label"), button.getAttribute("title"), button.textContent].filter(Boolean).join(" ").trim();
+      return /\bSteer\b/i.test(label);
+    }) || null;
+  }
+
+  function hasQueuedMessageControls() {
+    return Array.from(document.querySelectorAll("button")).some((button) => {
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const label = [button.getAttribute("aria-label"), button.getAttribute("title"), button.textContent].filter(Boolean).join(" ").trim();
+      return /Delete queued message|Queued message actions/i.test(label);
+    });
+  }
+
+  function hasDeliveredMessage(needle) {
+    const selectors = ["[data-user-message-bubble='true']", "[data-message-author-role='user']", "[data-testid*='user-message']"];
+    return selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).some((node) => (node.innerText || node.textContent || "").includes(needle));
+  }
+
+  async function verifyDelivery(composer, needle) {
+    const delivered = () => hasDeliveredMessage(needle) && !composerText(composer).includes(needle) && !hasQueuedMessageControls();
+    try {
+      await waitFor(delivered, 6000);
+    } catch (_) {
+      await navigateToConversation(conversationId);
+      await waitFor(delivered, 9000);
+    }
+  }
+
+  const navigation = await navigateToConversation(conversationId);
+  const composer = await waitFor(findComposer, 7000);
+  const existingDraft = composerText(composer);
+  if (existingDraft && !existingDraft.includes(payload.verificationNeedle)) {
+    throw new Error("Target App composer already contains an unsent draft; refusing to overwrite it.");
+  }
+  setComposerText(composer, payload.prompt);
+  await waitFor(() => composerText(composer).includes(payload.verificationNeedle), 4000);
+  const button = await waitFor(() => findSendButton(composer), 6000).catch(() => null);
+  await sleep(250);
+  let strategy = "visible-composer-keyboard";
+  if (button) {
+    dispatchClick(button);
+    strategy = "visible-composer-button";
+  } else {
+    composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, metaKey: true }));
+    composer.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, metaKey: true }));
+  }
+  try {
+    await waitFor(() => !composerText(composer).includes(payload.verificationNeedle), 6000);
+  } catch (_) {
+    composer.focus();
+    composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, metaKey: true }));
+    composer.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, metaKey: true }));
+    if (button) dispatchClick(button);
+    await waitFor(() => !composerText(composer).includes(payload.verificationNeedle), 6000);
+    strategy += "-retry";
+  }
+  if (hasQueuedMessageControls()) {
+    dispatchClick(await waitFor(findQueuedSteerButton, 6000));
+    await waitFor(() => !hasQueuedMessageControls(), 6000);
+    strategy += "-steer";
+  }
+  await verifyDelivery(composer, payload.verificationNeedle);
+  return { ok: true, conversationId, fallback: strategy, navigation, verified: "target-thread-readback" };
 })()`, string(encoded))
 }
