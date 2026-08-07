@@ -1089,6 +1089,105 @@ func TestHandleIncomingCodexAppCDPBridgeRejectionFallsBackToInbox(t *testing.T) 
 	}
 }
 
+func TestHandleIncomingCodexAppCDPBridgeRejectionUsesVisibleComposerFallback(t *testing.T) {
+	var expressions []string
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/page/1"
+	mux.HandleFunc("/json/list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]cdpTarget{{
+			Type:                 "page",
+			Title:                "Codex",
+			URL:                  "app://-/index.html",
+			WebSocketDebuggerURL: wsURL,
+		}})
+	})
+	mux.HandleFunc("/devtools/page/1", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Expression string `json:"expression"`
+			} `json:"params"`
+		}
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Fatalf("read cdp request: %v", err)
+		}
+		expressions = append(expressions, req.Params.Expression)
+		value := map[string]interface{}{
+			"ok":             true,
+			"conversationId": "thread-123",
+		}
+		if len(expressions) == 1 {
+			value["result"] = map[string]interface{}{
+				"error": map[string]interface{}{"message": "start-turn-for-host not implemented"},
+			}
+		} else {
+			value["fallback"] = "visible-composer-button"
+			value["verified"] = "target-thread-readback"
+		}
+		if err := conn.WriteJSON(map[string]interface{}{
+			"id": req.ID,
+			"result": map[string]interface{}{
+				"result": map[string]interface{}{"type": "object", "value": value},
+			},
+		}); err != nil {
+			t.Fatalf("write cdp response: %v", err)
+		}
+	})
+
+	manager := NewManager(&config.AgentsConfig{
+		Router: "codexAppCDP",
+		CodexAppCDP: &config.CodexAppCDPConfig{
+			Enabled:        true,
+			CDPEndpoint:    server.URL,
+			TargetSelector: "Codex",
+			ConversationID: "thread-123",
+			InboxPath:      filepath.Join(t.TempDir(), "inbox"),
+			DefaultAgent:   "main",
+			RepairPolicy:   "off",
+		},
+	})
+
+	reply, err := manager.HandleIncoming(context.Background(), &protocol.Message{
+		Data: map[string]interface{}{
+			"channel": "feishu",
+			"text":    "deliver through visible composer",
+			"chat_id": "oc_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	if reply != codexAppAssignAckMessage {
+		t.Fatalf("reply=%q", reply)
+	}
+	if len(expressions) != 2 {
+		t.Fatalf("expected bridge and composer evaluations, got %d", len(expressions))
+	}
+	for _, expected := range []string{
+		"Target App composer already contains an unsent draft",
+		"visible-composer-button",
+		"target-thread-readback",
+		"- envelope_id:",
+	} {
+		if !strings.Contains(expressions[1], expected) {
+			t.Fatalf("visible composer fallback missing %q:\n%s", expected, expressions[1])
+		}
+	}
+	telemetry := manager.LastRoutingOutcome()
+	if telemetry == nil || telemetry.Status != "delivered" || telemetry.InboxPath != "" {
+		t.Fatalf("expected delivered telemetry without inbox fallback, got %#v", telemetry)
+	}
+}
+
 func TestHandleIncomingCodexAppCDPChecksReadinessAndFallsBackToInbox(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)

@@ -46,7 +46,7 @@ The workspace requires Python, tmux, and agent-manager. If routed agents need to
 
 ## ChatGPT / Codex App
 
-The `codexAppCDP` router delivers into a project conversation managed by the ChatGPT/Codex desktop app. The configuration key keeps its historical `codexAppCDP` name. Delivery uses the running renderer's CDP endpoint and in-process `start-turn-for-host` bridge; it does not start a separate `codex app-server --listen` backend.
+The `codexAppCDP` router delivers into a project conversation managed by the ChatGPT/Codex desktop app. The configuration key keeps its historical `codexAppCDP` name. Delivery first uses the running renderer's in-process `start-turn-for-host` bridge through CDP. If an upgraded App no longer exposes that handler, FractalBot uses a guarded visible-composer fallback in the exact resolved thread, protects an unrelated draft, and requires target-thread readback. It does not start a separate `codex app-server --listen` backend.
 
 ```yaml
 agents:
@@ -87,7 +87,7 @@ Prefer `targetProject.cwd` plus `targetProject.session` over a pinned `conversat
 
 Repair policies are `off`, `status-only`, `new-instance`, and `relaunch`. The default for an enabled route is `relaunch`, with the watchdog enabled. Set `status-only` when FractalBot should report readiness without controlling the app lifecycle.
 
-When direct delivery fails and `fallbackToInbox` is true, FractalBot atomically writes the normalized envelope to `inboxPath` for later consumption.
+When both direct bridge delivery and the guarded composer fallback fail, and `fallbackToInbox` is true, FractalBot atomically writes the normalized envelope to `inboxPath` for later consumption.
 
 ## Claude Desktop
 

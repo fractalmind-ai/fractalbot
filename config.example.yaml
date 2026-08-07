@@ -187,7 +187,8 @@ agents:
     # Advanced override: pin to a specific /local/<conversationId>.
     # Empty uses targetProject when configured, then the active Codex App thread.
     conversationId: ""
-    # Durable MVP queue and fallback when CDP delivery is unavailable.
+    # Durable queue when both the CDP renderer bridge and guarded visible-composer
+    # fallback cannot complete with target-thread readback.
     inboxPath: "/Users/you/Develop/SuLabsOrg/CloudBank/.fractalbot/inbox"
     fallbackToInbox: true
     # CDP readiness policy:
