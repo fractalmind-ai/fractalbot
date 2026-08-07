@@ -89,7 +89,7 @@ The CLI calls the gateway's HTTP send endpoint. HTTP and in-process callers publ
 
 Heartbeat jobs bypass the selected Agent Router and address `ohMyCode`, `codexAppCDP`, or `claudeDesktop` explicitly. The scheduler sends an autonomous envelope with job, run, schedule, expiry, target Agent, and inline instruction metadata. It does not synthesize a channel or chat identity and never sends a channel acknowledgement.
 
-Desktop fallback inboxes coalesce queued heartbeats by job so an unavailable app does not accumulate stale wakeups. Agents normally do not report back to the scheduler. Only an Agent that finds no actionable work may select an operator-approved lower-frequency cron profile through the loopback API; matching user activity can restore the configured default cron. See [Agent heartbeats](heartbeat.md).
+Desktop fallback inboxes coalesce queued heartbeats by job so an unavailable app does not accumulate stale wakeups. Generic Runtime delivery normally reports acceptance rather than task completion. An `ohMyCode` job may opt into `dispatchMode: heartbeatRun`; that adapter delegates to agent-manager's native heartbeat lifecycle and holds the in-flight lease through its terminal result. Only an Agent that finds no actionable work may select an operator-approved lower-frequency cron profile through the loopback API; matching user activity can restore the configured default cron. See [Agent heartbeats](heartbeat.md).
 
 ## Reliability and security boundaries
 

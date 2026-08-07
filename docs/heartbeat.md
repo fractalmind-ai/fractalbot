@@ -31,6 +31,35 @@ agents:
 
 The configured `cron` remains the default. `agentCronProfiles` contains the only alternative schedules an Agent may select; arbitrary Agent-provided cron expressions are rejected.
 
+### Completion-aware ohMyCode heartbeats
+
+By default, an `ohMyCode` heartbeat uses the existing generic `agent-manager assign` delivery. That preserves custom `text` instructions, but successful delivery only means that agent-manager accepted the task; it does not mean the heartbeat work finished.
+
+Set `dispatchMode: heartbeatRun` when agent-manager's native heartbeat lifecycle should remain authoritative:
+
+```yaml
+agents:
+  ohMyCode:
+    enabled: true
+    workspace: "/absolute/path/to/workspace"
+    defaultAgent: "main"
+    allowedAgents: ["main"]
+  heartbeat:
+    enabled: true
+    jobs:
+      - id: "main"
+        runtime: "ohMyCode"
+        agent: "main"
+        dispatchMode: "heartbeatRun"
+        timeoutSeconds: 480
+        cron: "*/5 * * * *"
+        timezone: "Asia/Shanghai"
+```
+
+This mode calls `agent-manager heartbeat run <agent> --timeout <duration>`. The job stays in flight until agent-manager returns a terminal ACK, skip, or failure, so overlapping ticks are coalesced for the full lifecycle rather than only for task assignment. The HB ID printed by agent-manager is recorded as `last_envelope_id` in `/status`.
+
+`text` is optional and not delivered in this mode because agent-manager owns the canonical heartbeat prompt. `timeoutSeconds` defaults to 480 and may be set from 1 to 86400 seconds; zero selects the default. A terminal agent-manager failure is recorded as `heartbeat_failed` and is not retried by FractalBot, avoiding duplicate heartbeat execution. Generic runtime delivery errors keep the existing bounded retry behavior.
+
 ## Schedule adjustment
 
 A normal heartbeat requires no callback. Only when the Agent determines that there is no actionable work should it reduce the frequency:
@@ -71,10 +100,11 @@ When `resetCronOnInbound` is true, a normal user message successfully routed to 
 - Restart preserves the effective profile but calculates the next future occurrence. Missed heartbeats are never replayed.
 - Codex App and Claude Desktop inbox fallback uses a stable key per job. A newer queued heartbeat replaces the older unconsumed heartbeat.
 - Runtime delivery errors receive a bounded exponential-backoff retry. The final failure is recorded without changing the Agent-selected schedule.
+- `ohMyCode` jobs using `dispatchMode: heartbeatRun` hold the in-flight lease through agent-manager's terminal result and do not retry terminal heartbeat failures.
 
 ## Status
 
-`GET /status` includes a redacted `heartbeat` section with configured and effective cron, timezone, next run, in-flight state, last dispatch result, and schedule-change audit fields.
+`GET /status` includes a redacted `heartbeat` section with configured and effective cron, timezone, dispatch mode and timeout, next run, in-flight state, last dispatch result, and schedule-change audit fields.
 
 ```bash
 curl -sS http://127.0.0.1:18789/status | python3 -m json.tool

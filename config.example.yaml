@@ -244,3 +244,15 @@ agents:
   #         idle: "0 * * * *"
   #         deep-idle: "0 */6 * * *"
   #       resetCronOnInbound: true
+  #
+  #     # Optional completion-aware ohMyCode delivery. This calls
+  #     # `agent-manager heartbeat run main --timeout 8m0s` instead of generic
+  #     # `assign`, so the job remains in flight until the heartbeat reaches a
+  #     # terminal ACK, skip, or failure. `text` is not required in this mode.
+  #     - id: "main-native-heartbeat"
+  #       runtime: "ohMyCode"
+  #       agent: "main"
+  #       dispatchMode: "heartbeatRun"
+  #       timeoutSeconds: 480
+  #       cron: "*/5 * * * *"
+  #       timezone: "Asia/Shanghai"

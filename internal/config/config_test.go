@@ -485,6 +485,38 @@ func TestLoadConfigAcceptsHeartbeatJobs(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsOhMyCodeHeartbeatRunMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`agents:
+  ohMyCode:
+    enabled: true
+    workspace: /tmp/oh-my-code
+    defaultAgent: main
+    allowedAgents: [main]
+  heartbeat:
+    enabled: true
+    jobs:
+      - id: main
+        runtime: ohMyCode
+        agent: main
+        dispatchMode: heartbeatRun
+        timeoutSeconds: 480
+        cron: "*/5 * * * *"
+        timezone: Asia/Shanghai
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	job := cfg.Agents.Heartbeat.Jobs[0]
+	if job.DispatchMode != "heartbeatRun" || job.TimeoutSeconds != 480 || job.Text != "" {
+		t.Fatalf("unexpected heartbeatRun job: %#v", job)
+	}
+}
+
 func TestValidateHeartbeatConfigRejectsInvalidJobs(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -560,6 +592,34 @@ func TestValidateHeartbeatConfigRejectsInvalidJobs(t *testing.T) {
 				cfg.Agents.Heartbeat.Jobs[0].AgentCronProfiles[" idle "] = "0 */2 * * *"
 			},
 			wantError: "duplicate profile",
+		},
+		{
+			name: "unsupported dispatch mode",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].DispatchMode = "other"
+			},
+			wantError: "unsupported mode",
+		},
+		{
+			name: "heartbeat run requires oh my code",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].DispatchMode = "heartbeatRun"
+			},
+			wantError: "requires runtime ohMyCode",
+		},
+		{
+			name: "negative timeout",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].TimeoutSeconds = -1
+			},
+			wantError: "timeoutSeconds",
+		},
+		{
+			name: "timeout above one day",
+			mutate: func(cfg *Config) {
+				cfg.Agents.Heartbeat.Jobs[0].TimeoutSeconds = 86401
+			},
+			wantError: "timeoutSeconds",
 		},
 	}
 

@@ -486,10 +486,10 @@ func runOhMyCodeAgentManager(ctx context.Context, workspace, script, stdin strin
 
 	if err != nil {
 		if errText != "" {
-			return "", fmt.Errorf("oh-my-code agent-manager failed: %s", errText)
+			return outText, fmt.Errorf("oh-my-code agent-manager failed: %s", errText)
 		}
 		if outText != "" {
-			return "", fmt.Errorf("oh-my-code agent-manager failed: %s", outText)
+			return outText, fmt.Errorf("oh-my-code agent-manager failed: %s", outText)
 		}
 		return "", fmt.Errorf("oh-my-code agent-manager failed: %w", err)
 	}
